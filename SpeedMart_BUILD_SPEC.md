@@ -726,6 +726,8 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
                                        // 3 Grab items, 4 Scan exit). "sync" is sent to a (re)connecting kiosk
 {"type":"kiosk_cart","data":KioskShopper}  // 8.16, kiosk sockets only: the shopper panel, on every cart change
 {"type":"kiosk_say","data":Say}        // 8.16, kiosk sockets only: a spoken cart line (debounced 1.5 s)
+{"type":"kiosk_voice","data":{"active":bool}}  // 8.16, the shopper's own sockets: the kiosk is (no longer) in a
+                                       // conversation with them; the phone's voice button waits meanwhile
 ```
 
 A kiosk socket is `/ws?role=kiosk&k=<KIOSK_TOKEN>` (8.16). With a valid token it gets the public messages plus
@@ -1119,6 +1121,12 @@ voice and no shopper data. `GET /api/kiosk/qr/{which}` stays public.
 |---|---|---|---|
 | GET | `/api/kiosk/phrases?k=` | `{"speech":bool,"voice":bool,"tour":[Say + "step"],"phrases":{"offer":Say,"exit_reminder":Say}}` | The ~30 s tour (step 0 intro, then 1 to 4) and the fixed lines, worded for the flags. Warms the TTS file cache in the background |
 | GET | `/api/kiosk/shopper?k=` | `{"shopper":KioskShopper\|null,"greeting":Say\|null}` | The shopping visit holding the store (null while it is free or someone is returning items). `greeting` kind `greeting_first` (visit_count 1) or `greeting_returning` |
+| GET | `/api/kiosk/voice-session?k=` | `{"signed_url","dynamic_variables":{"first_name","budget_usd","remaining_usd","dietary","is_first_visit","mode":"kiosk"},"max_duration_s":300,"silence_timeout_s":120}` | Needs `voice`: 404 `not_available`. 409 `no_shopper` (nobody IN_STORE), 503 `voice_unavailable` (keys missing or ElevenLabs fails). The API key never leaves the backend; the signed URL is never logged |
+| POST | `/api/kiosk/conversation?k=` | `{"ok":true,"active":bool}` | Body `{"active":bool,"reason"?:str}`. The kiosk reports its conversation starting (after it connects; 409 `no_shopper`) and ending. Sends `kiosk_voice` to the shopper |
+| GET | `/api/kiosk/catalog?k=` | `{"products":[...]}` | Client tool `get_catalog`: the phone agent's catalog (price, tags, pairs_with, bay cards). Needs `voice` |
+| GET | `/api/kiosk/cart?k=` | `{"in_store","items":[{name,qty,line_total_usd}],"total_usd","budget_usd","remaining_usd","over_budget","payment"}` | Client tool `get_cart`, for the CURRENT shopper; spoken by the agent, never shown. `{"in_store":false,...}` while the store is free. Needs `voice` |
+| POST | `/api/kiosk/plan?k=` | `Plan` (8.8) | Client tool `make_plan`, body `{"goal_text":str}`: the F18 planner for the CURRENT shopper (the same errors as `POST /api/intent`, 409 `no_shopper`); its bays glow (`plan_bays`). Logged `intent_plan` with `via:"kiosk"`. Needs `voice` |
+| DELETE | `/api/kiosk/plan?k=` | `{"ok":true}` | Client tool `clear_plan` for the CURRENT shopper. Needs `voice` |
 | GET | `/api/kiosk/tts/{clip_id}?k=` | `audio/mpeg` | Audio of a line the backend registered. 404 `unknown_clip` (the browser can never choose the text), 503 `tts_unavailable` (speech off, ElevenLabs error or over 4 s): the kiosk shows the caption only |
 
 `Say` = `{"kind": str, "text": str, "audio_url": "/api/kiosk/tts/<clip_id>" | null}` (lines about the visit also
@@ -1143,7 +1151,18 @@ over budget (the policy's `over_budget`, "That's $1.34 over your budget. Putting
 picks ("See, the Chips are already in your cart. You're at $2.70." with the cart's own total), put backs ("Water is
 back on the shelf, removed from your cart."). After 60 s with items and no change: "When you're ready, scan the
 exit code to review and pay." (once per quiet spell). Only while IN_STORE. Prices come from the cart or the policy
-(7.4), never from the kiosk. Logged as `kiosk_say` (kind only). Fixed lines (no digits) are generated once and cached as files under `data/tts_cache/`;
+(7.4), never from the kiosk. Logged as `kiosk_say` (kind only).
+
+**Conversation** (`voice` on and an agent configured; `docs/voice.md`, "Phase 3"): when a shopper enters, the kiosk
+opens an ElevenLabs conversation with the same agent as the phone, in mode `"kiosk"`. While it is live, cart lines
+are sent to the agent as contextual updates instead of being spoken by the kiosk. It ends at the exit scan, when the
+visit ends, after 2 minutes of silence and after 5 minutes at most; the backend also clears it on the exit scan and
+at the end of the visit, and ignores one the kiosk never closed 30 s after the 5 minute cap. One conversation at a
+time per shopper: while it is active `GET /api/voice/session` answers **409 `kiosk_conversation_active`** ("You're
+talking to the kiosk by the shelf right now.") and the phone shows "Talk to the kiosk", disabled.
+`GET /api/voice/session` (F19) also returns `remaining_usd`, `is_first_visit` and `"mode":"phone"`, so the phone
+sends the same dynamic variables as the kiosk. Events: `kiosk_voice_session`, `kiosk_voice_session_error`,
+`kiosk_conversation`. Fixed lines (no digits) are generated once and cached as files under `data/tts_cache/`;
 lines with numbers are generated on demand with a 4 s timeout and kept in memory only. Speech needs `voice` on,
 `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`; without them `audio_url` is null and the kiosk is captions only.
 Events: `tts_generated`, `tts_error` (`reason`), `tts_cache_error`, `shelf_activity`, `kiosk_bad_token`.

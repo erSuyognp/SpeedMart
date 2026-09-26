@@ -3,6 +3,8 @@
 Shoppers tap **Talk to SpeedMart** on `intent.html` and talk to an ElevenLabs agent. The agent can only act
 through four client tools that run in the shopper's browser and call the store's own endpoints, so it cannot
 invent products or prices. The typed intent flow (F18) on the same page is still there as the fallback.
+The same agent also talks from the entrance kiosk (mode `"kiosk"`, see "Kiosk agent" below); one conversation
+at a time per shopper.
 
 - Flag: `config.json` → `features.voice` (default `true`). When it is `false` the button is hidden and
   `/api/voice/*` returns `404 not_available`. The text flow does not depend on voice at all.
@@ -22,7 +24,7 @@ phone (intent.html + js/pages/voice.js)             backend                     
 
 | Endpoint (new) | Auth | Returns |
 |---|---|---|
-| `GET /api/voice/session` | logged-in member | `{"signed_url", "member_first_name", "budget_usd", "dietary"}`. `401 not_logged_in`, `404 unknown_member`, `503 voice_unavailable` if the keys are missing or ElevenLabs fails |
+| `GET /api/voice/session` | logged-in member | `{"signed_url", "member_first_name", "budget_usd", "remaining_usd", "dietary", "is_first_visit", "mode": "phone"}`. `401 not_logged_in`, `404 unknown_member`, `409 kiosk_conversation_active` while the kiosk is talking with this shopper, `503 voice_unavailable` if the keys are missing or ElevenLabs fails |
 | `GET /api/voice/catalog` | logged-in member | `{"products": [{"sku","name","price_usd","tags","pairs_with","bays"}]}` for `get_catalog` |
 
 These are new routes, so no row in Section 8 of the spec was changed. Events logged: `voice_session` and
@@ -69,8 +71,11 @@ Create an agent in the ElevenLabs Agents dashboard, then set the following.
 ### Agent → First message
 
 ```
-Hi {{first_name}}! I'm the SpeedMart store agent. What do you need today?
+Hi {{first_name}}, you have ${{remaining_usd}} to spend. What are you looking for today?
 ```
+
+The phone and the kiosk both send `remaining_usd` (the budget minus the cart total, the whole budget before the
+shopper has picked anything), so this reads "Hi Maya, you have $10 to spend. What are you looking for today?".
 
 ### Agent → System prompt
 
@@ -78,7 +83,8 @@ Hi {{first_name}}! I'm the SpeedMart store agent. What do you need today?
 You are the SpeedMart store agent in a tiny smart store: one shelf with five numbered bays, watched by a camera.
 The products are drinks and snacks (for example a hydration drink, an energy drink, chips, water and a vegan
 snack), but always take names, prices and bays from get_catalog.
-The shopper is {{first_name}}. Their budget is ${{budget_usd}}. Their dietary need is: {{dietary}}.
+The shopper is {{first_name}}. Their budget is ${{budget_usd}} and ${{remaining_usd}} of it is left. Their dietary
+need is: {{dietary}}. First visit to SpeedMart: {{is_first_visit}}. You are talking through: {{mode}}.
 
 Style: friendly and brief. At most 2 short sentences per turn. Plain spoken words, no lists, no emoji.
 
@@ -99,6 +105,18 @@ Rules:
 - If asked about cards or payment, explain it's a demo: a test Visa card is linked automatically and no real money moves.
 - Do not ask for or collect personal information (no email, phone, address or card details).
 - If a tool returns an error, say sorry briefly and suggest typing the request on the screen.
+
+Kiosk mode (when {{mode}} is kiosk):
+- You are the kiosk by the shelf. Speak to the shopper standing at the shelf in front of you, not to a phone.
+- Keep every answer under two short sentences.
+- Always say bay numbers ("bay 2 and bay 4") when you point at products; the shelf map on the kiosk screen glows
+  them. Never say "your screen".
+- If {{is_first_visit}} is true, once in the conversation say they just take items off the shelf, the camera adds
+  them to their cart, and they scan the exit code when done.
+- You will receive store updates about the shopper's cart as context (picked, put back, over budget, wrong bay,
+  time to check out). Mention them briefly and naturally in your next turn; never read them out word for word and
+  never interrupt the shopper to say them. They contain the only prices you may quote besides tool results.
+- To check out they scan the exit code and approve on their phone. You cannot take payment.
 ```
 
 ### Agent → Dynamic variables (placeholders for testing in the dashboard)
@@ -107,9 +125,13 @@ Rules:
 |---|---|
 | `first_name` | `Maya` |
 | `budget_usd` | `20` |
+| `remaining_usd` | `20` |
 | `dietary` | `none` |
+| `is_first_visit` | `true` |
+| `mode` | `phone` |
 
-The page always sends all three. `dietary` is `"none"` when the member did not pick one.
+The phone and the kiosk always send all six, so no placeholder is ever used in a real conversation. `dietary` is
+`"none"` when the member did not pick one; `mode` is `"phone"` or `"kiosk"`.
 
 ### Agent → Tools → Add tool → Client tool (create four)
 
@@ -124,7 +146,7 @@ Tick **Wait for response** on every tool. Names and parameter identifiers are ca
    - Parameters: none
 
 3. **`make_plan`**
-   - Description: `Builds a shopping plan from the shopper's goal using only real products, stock and their budget. It shows the plan and a shelf map on their phone with the chosen bays glowing. Returns JSON: goal_summary, items (name, qty, unit_price_usd, reason; the reason says when an item has caffeine), est_total_usd with tax, budget_usd, fits_budget, bays_to_find (bay card numbers) and where_to_look (a sentence to say, e.g. "Look for bay 1 and bay 4, they're glowing on your screen.").`
+   - Description: `Builds a shopping plan from the shopper's goal using only real products, stock and their budget. It shows the plan and a shelf map with the chosen bays glowing (on their phone, or on the kiosk screen in kiosk mode). Returns JSON: goal_summary, items (name, qty, unit_price_usd, reason; the reason says when an item has caffeine), est_total_usd with tax, budget_usd, fits_budget, bays_to_find (bay card numbers) and where_to_look (a sentence to say, e.g. "Look for bay 1 and bay 4, they're glowing on your screen.").`
    - Parameter: type **String**, identifier **`goal_text`**, **Required**, description
      `The shopper's goal in their own words, for example "thirsty after a run, under 10 dollars" or "something for a study session".`
 
@@ -142,8 +164,9 @@ own LLM planner is on.
 - **Latency:** choose the lowest-latency / turbo or flash TTS model the voice tab offers, and keep streaming
   latency optimization at a high setting.
 - **Voice:** a warm, friendly voice from the library (a conversational, natural-sounding one, not a narrator).
-- **Advanced → Call limits → Max conversation duration:** `120` seconds. The page also ends the session itself
-  after 2 minutes.
+- **Advanced → Call limits → Max conversation duration:** `300` seconds (the kiosk's cap is 5 minutes). The phone
+  page still ends its own session after 2 minutes, and the kiosk ends its own after 5 minutes or 2 minutes of
+  silence.
 - **Security:** turn on **Enable authentication**. This makes the agent private, so it only works through a
   signed URL from our backend.
 - Copy the agent id (`agent_...`) into `.env` as `ELEVENLABS_AGENT_ID`, and create an API key (Developers →
@@ -269,3 +292,50 @@ Checked on 2026-09-26.
   line replaces an older one that has not started yet. When the visit ends, queued lines about it are dropped, a
   line about it that is still playing stops, and the caption goes back to the idle hint.
 - Narration stops at the exit scan (the cart is frozen) and starts again on "Keep shopping".
+
+## Phase 3: kiosk conversation
+
+When a shopper walks in, the kiosk starts a conversation with the same ElevenLabs agent, in mode `"kiosk"`.
+
+```
+kiosk (kiosk.html?k= + js/kiosk_agent.js)                  backend (kiosk.py)                     ElevenLabs
+  kiosk_visit "entered" ─ GET /api/kiosk/shopper ─────────▶ first name, budget, greeting
+  (first timer: the spoken welcome plays first)
+  GET /api/kiosk/voice-session?k= ────────────────────────▶ voice.signed_url_or_503 ─ get-signed-url ─▶ (xi-api-key)
+        ◀── {signed_url, dynamic_variables {first_name, budget_usd, remaining_usd, dietary, is_first_visit,
+             mode: "kiosk"}, max_duration_s: 300, silence_timeout_s: 120}
+  Conversation.startSession({signedUrl, dynamicVariables, clientTools}) ═══ websocket ═══▶ agent
+  POST /api/kiosk/conversation?k= {"active": true} ────────▶ kiosk_voice {active: true} ─▶ the shopper's phone
+  client tool ─▶ /api/kiosk/catalog | /api/kiosk/cart | POST, DELETE /api/kiosk/plan  (the CURRENT shopper)
+  kiosk_say (cart line) ─▶ conversation.sendContextualUpdate(...) instead of text to speech
+```
+
+- **Routes** (all kiosk token only, spec 8.16): `GET /api/kiosk/voice-session` (404 `not_available` with voice
+  off, 409 `no_shopper`, 503 `voice_unavailable`), `POST /api/kiosk/conversation {"active", "reason"?}`,
+  `GET /api/kiosk/catalog`, `GET /api/kiosk/cart`, `POST /api/kiosk/plan {"goal_text"}`, `DELETE /api/kiosk/plan`.
+  The API key stays on the backend; the kiosk only gets the 15 minute signed URL, which is never logged.
+- **First line:** the agent's first message is "Hi {{first_name}}, you have ${{remaining_usd}} to spend. What are
+  you looking for today?" A first timer hears the kiosk's fuller spoken welcome first (the conversation waits until
+  the kiosk is quiet); for a returning shopper the short greeting is only shown as a caption, because the agent's
+  first line says the same thing. If the conversation cannot start (voice off, no agent, network), the kiosk speaks
+  the greeting itself and keeps narrating with text to speech.
+- **Client tools** (same names and parameters as the phone, so the dashboard config does not change): `get_catalog`,
+  `get_cart`, `make_plan(goal_text)`, `clear_plan`. They act on the shopper in the store through the kiosk token
+  routes, never on whoever holds the tablet. `make_plan` uses the same planner as the phone (`intent.create_plan`,
+  logged with `via: "kiosk"`) and its bays glow on every shelf map, the kiosk's included (`plan_bays`).
+- **Cart lines during a conversation** are sent to the agent as contextual updates instead of being spoken by the
+  kiosk, so the agent mentions them naturally and never talks over itself. ElevenLabs: a `contextual_update` is
+  "incorporated as background information in the conversation" and "does not interrupt the current conversation
+  flow": https://elevenlabs.io/docs/agents-platform/customization/events/client-to-server-events. The SDK method
+  is `conversation.sendContextualUpdate(text)`, checked in `@elevenlabs/client@1.25.0`
+  `dist/BaseConversation.d.ts` (it sends `{"type": "contextual_update", "text"}`).
+- **Phone:** while the kiosk conversation is active, `intent.html`'s button reads **Talk to the kiosk** and is
+  disabled (`kiosk_voice` on the shopper's socket, also sent on connect), and `/api/voice/session` answers 409
+  `kiosk_conversation_active`. A phone conversation that is running when the kiosk starts is ended. When there is
+  no kiosk conversation the phone voice works exactly as before.
+- **Ending:** the kiosk ends the conversation when the shopper scans the exit, when the visit ends (paid, empty
+  exit, cancelled), after 2 minutes of silence (no message from either side), and after 5 minutes at most. The
+  backend also frees the phone on the exit scan and at the end of the visit, and forgets a conversation the kiosk
+  never closed (a crashed tablet) 30 s after the 5 minute cap. Afterwards the kiosk narrates the cart with text to
+  speech again. Events: `kiosk_voice_session`, `kiosk_voice_session_error` (`reason`), `kiosk_conversation`
+  (`active`, `reason`, `duration_s`).

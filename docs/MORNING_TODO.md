@@ -21,7 +21,10 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
       ```powershell
       Remove-Item scripts\*.sh; git checkout -- scripts
       ```
-- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **506 passed, 1 skipped**.
+- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **633 passed, 1 skipped** with the committed
+      `config.json`. With a local YOLO-only config (`"yolo": true` and `vision.mode` `"yolo"`), tag-based tests fail
+      and `tests\test_live.py` waits forever for a cart change, because tag snapshots no longer move the cart; run
+      the suite with the committed config (`git stash push config.json`, run, `git stash pop`).
 - [ ] **Try the new Windows runner** (it replaces the two-window fallback the overnight notes described).
       It starts uvicorn, ngrok and the vision worker, prefixes their output, and stops all three on Ctrl+C.
       ```powershell
@@ -332,31 +335,86 @@ With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
       a charge on its own.
 - [ ] Set `auto_refund_max_usd` to `0`, restart → every dispute waits for a person. Set it back to `2.00`.
 
-### 7e. The kiosk tablet (Dell Venue, 10", landscape)
+### 7e. The kiosk tablet (Dell Venue, 10", landscape): the talking guide
 
-- [ ] Open the entrance kiosk in Edge kiosk mode:
+The entrance tablet is now a guide (docs\voice.md, "Kiosk agent"): a step tracker, a spoken 30 s tour, the
+shopper's panel, spoken cart lines and (with voice on) a conversation with the ElevenLabs agent. Without the token
+it is the old public page.
+
+**Setup on the laptop**
+- [ ] `.env`: set `KIOSK_TOKEN` to a long random value and `ELEVENLABS_VOICE_ID` to the voice to speak with
+      (ElevenLabs → Voices → pick a warm, clear voice → copy its ID). `ELEVENLABS_API_KEY` is the one voice already uses.
       ```powershell
-      start msedge --kiosk "http://<laptop-ip>:8000/kiosk.html" --edge-kiosk-type=fullscreen
+      .venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(24))"
       ```
-      (exit side: add `?side=exit`).
+- [ ] Restart the stack, then `.venv\Scripts\python.exe scripts\check_env.py` → `PASS KIOSK_TOKEN` and
+      `PASS ELEVENLABS_VOICE_ID  voice '<name>'`.
+- [ ] **Agent dashboard** (docs\voice.md, "Dashboard setup"): paste the new **first message**
+      ("Hi {{first_name}}, you have ${{remaining_usd}} to spend. …"), the new system prompt (it has a "Kiosk mode"
+      block at the end), add the dynamic variables `remaining_usd`, `is_first_visit`, `mode`, and set **Max
+      conversation duration to 300 s**. Without the new variables the agent can't start from either device.
+
+**Open the kiosk (on the tablet)**
+- [ ] The microphone only works on a secure page, so use the **tunnel URL, not `http://<laptop-ip>:8000`**:
+      ```powershell
+      Start-Process msedge -ArgumentList '--kiosk', 'https://stump-isotope-glorious.ngrok-free.dev/kiosk.html?k=<KIOSK_TOKEN>', '--edge-kiosk-type=fullscreen'
+      ```
+      (exit side, second tablet only: `https://…/kiosk.html?side=exit`, no token, it stays public.) If ngrok's
+      "Visit Site" page shows first, tap it once.
+- [ ] Expect a full screen **Start kiosk** button. **Tap it once.** Edge asks for the microphone: tap **Allow**.
+      The step tracker (1 Join, 2 Enter, 3 Grab items, 4 Scan exit) appears with step 1 pulsing, and the guide
+      panel says "Scan a code with your phone camera to start." The Start button comes back on every reload
+      (browsers only allow sound after a tap); tap it again each time.
+- [ ] If Edge asks for the microphone again after every restart, kiosk mode is running a private session. Tap
+      Allow each time, or pre-allow the tunnel origin with the Edge policy `AudioCaptureAllowedUrls` (an IT
+      setting on the tablet; only if you want it).
+- [ ] **Wrong or missing token check:** open the same URL with `?k=wrong`. Expect the old page (QR codes, status,
+      shelf map), no Start button, no steps, no voice.
+
+**Sound**
+- [ ] Tablet volume about 70 to 80 % (Windows: Settings → System → Sound; not muted, output = the tablet's
+      speakers or the USB speaker you'll use). Tap **New here? Tap to learn how SpeedMart works**: the tour
+      speaks for about 30 s and highlights steps 1 to 4 in turn. **Listen from where a shopper stands in front
+      of the shelf** and from the queue; raise the volume or add a small USB speaker if the venue is loud.
+- [ ] First tour after a restart: the lines may appear as captions only for a few seconds while the fixed
+      phrases are generated once; they are then cached in `data\tts_cache\`. Run the tour once before judging.
+- [ ] Captions only (no sound at all) means speech is off: check `ELEVENLABS_VOICE_ID`, the key and
+      `features.voice`, and look for `tts_error` in `data\events.log.jsonl`.
+
+**Walk it through as a first timer** (docs\DEMO.md has the full walkthrough)
+- [ ] Store empty, stand at the shelf and wave a hand over a bay: within a few seconds the kiosk says "Hi! New
+      here? Tap the screen, and I'll show you how SpeedMart works." and the tour button pulses (at most once
+      every 2 minutes; needs `motion_freeze` on).
+- [ ] Sign up a **new** member and enter: steps 1 and 2 get checks, step 3 pulses, the JOIN/ENTER codes make way
+      for "Hi, <name>" (budget left, cart total, items) and the EXIT code, and the kiosk says "Welcome to your
+      first visit, <name>. Just grab what you want; …". Then the agent: "Hi <name>, you have $10 to spend. What
+      are you looking for today?"
+- [ ] Say "I'm thirsty after a run": the agent plans (Hydration drink and Water), says bay 1 and bay 4, and those
+      bays glow on the kiosk's shelf map. On the phone, `intent.html` now shows **Talk to the kiosk**, disabled.
+- [ ] Take the chips: about 1.5 s after the cart settles the agent mentions it (a contextual update, it does not
+      cut you off). Stop talking for 2 minutes: the conversation ends and the kiosk itself then says cart lines
+      ("See, the Chips are already in your cart. You're at $2.70."). The phone's button is back.
+- [ ] Leave items in the cart and do nothing for 60 s: "When you're ready, scan the exit code to review and pay."
+- [ ] Scan the exit: step 4 pulses, the conversation stops. Pay: all four steps get checks, and the name and
+      totals disappear from the screen at once.
+- [ ] Enter again as the same member: "Welcome back, <name>. You have $… to spend." (shown as a caption when the
+      agent greets, spoken when voice is off).
+- [ ] Reload the kiosk mid-visit (tap Start again): it comes back on the right step with the panel, and says no
+      greeting a second time.
+
+**Screen basics (unchanged from before)**
 - [ ] **Set the Venue to never sleep and brightness high** (Settings → System → Power & battery → Screen and
       sleep → **Never** on both). A dimmed screen kills QR scanning.
 - [ ] **Lock rotation in landscape**, or the layout fights auto-rotate.
-- [ ] **Read the status banner from where the judges will queue** (about 2 m). "Open" / "Someone is shopping"
-      is ~42 px tall on the Venue's 1280×800 panel.
+- [ ] **Read the status banner and the step tracker from where the judges will queue** (about 2 m).
 - [ ] Scan the on-screen codes with a phone from that same distance.
-- [ ] **Shelf map** at the bottom: five bays with the card numbers 1 to 5, product names and "2 on shelf",
-      readable from about 2 m. Take an item off the shelf → its count drops within ~5 s. Make a plan on a phone
-      (store occupied by that shopper, or empty) → the planned bays glow **immediately** and the hint reads
-      "Glowing: bay 1 and bay 4 are on a shopper's list." **Start over** on the phone → the glow stops. No name
-      ever appears on this screen.
-- [ ] Start a session → the banner goes amber. Kill the backend → grey "Reconnecting…" **and the QR codes stay
-      on screen**. Restart → green "Open" with no reload.
+- [ ] Kill the backend → grey "Reconnecting…" **and the QR codes stay on screen**. Restart → green "Open" with
+      no reload.
 - [ ] **Decide about the NFC hint.** "Tap your phone here" is printed text with an animated glyph — there is
-      **no NFC hardware and no Web NFC code anywhere**. Right now tapping does nothing. Either put an NFC tag
-      behind the bezel programmed with the same URL the ENTER QR carries, or remove the text. **Decide before
-      the demo.**
-- [ ] If there is only one tablet, run the **entrance** page; the exit variant assumes a second screen.
+      **no NFC hardware and no Web NFC code anywhere**. Either put an NFC tag behind the bezel programmed with
+      the same URL the ENTER QR carries, or remove the text. **Decide before the demo.**
+- [ ] If there is only one tablet, run the **entrance** page with the token: during a visit it shows the EXIT
+      code itself (gates on).
 
 ### 7f. The phone UI on real devices
 
@@ -424,6 +482,23 @@ a Hydration drink enters the cart. Type `1` + Enter (really remove unit 1): it e
       words in the reply. No plan means no `goal` key, exactly as before.
 - [ ] **Gate tokens in `.env` are still the spec's public example values** until you do section 2.
 - [ ] Decide whether the kiosk's **NFC hint** stays (section 7e).
+- [ ] **Kiosk agent: Section 8 changed (pre-approved).** New 8.16 (every `/api/kiosk/*` route except the QR
+      codes needs `?k=<KIOSK_TOKEN>`), new socket messages in 8.4 (`shelf_activity` public, `kiosk_visit`,
+      `kiosk_cart`, `kiosk_say` for the kiosk, `kiosk_voice` for the shopper's phone), and `GET /api/voice/session`
+      now also returns `remaining_usd`, `is_first_visit`, `mode` and can answer 409 `kiosk_conversation_active`.
+      Two new `.env` keys (5.1). Review the spec diff.
+- [ ] **Kiosk agent decisions to sign off:**
+      - One ElevenLabs agent serves phone and kiosk. Its **first message changed** to "Hi {{first_name}}, you have
+        ${{remaining_usd}} to spend. What are you looking for today?" for both, and the phone now sends the same
+        six dynamic variables. Max duration 300 s (the phone still stops itself at 2 minutes).
+      - During a visit the entrance kiosk shows the **EXIT QR code** (gates on), so a single tablet covers step 4.
+      - A **cancelled visit does not count** toward "welcome back", so a first timer whose visit was reset is still
+        greeted as new. Returns never count.
+      - Kiosk speech is ElevenLabs too, so it follows `features.voice`: voice off = captions only, no conversation.
+      - Captions of spoken lines name products and prices (the shopper's own picks); the panel itself only shows
+        first name, budget left, cart total and item count, and clears when the visit ends.
+      - With a conversation, a returning shopper's short greeting is only a caption (the agent's first line says it);
+        a first timer hears the kiosk's fuller welcome first, then the agent.
 
 ---
 

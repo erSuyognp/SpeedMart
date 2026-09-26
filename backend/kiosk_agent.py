@@ -10,6 +10,8 @@ This module decides what the kiosk says and when; backend/kiosk.py serves it and
   total, item count and visit count, plus a greeting (fuller on a first visit).
 - Narration: short spoken lines about cart changes, debounced 1.5 s, chosen from the agent policy's decisions (7.4)
   and the cart's own totals, so a price is never invented. {"type": "kiosk_say"} on kiosk sockets.
+- The kiosk conversation (features.voice): which shopper the kiosk is talking with, so the phone's voice waits
+  ({"type": "kiosk_voice"} to that shopper's sockets) and the conversation ends with the visit.
 
 Everything here is decoration on top of the core loop: every hook is wrapped so a failure is logged, never raised.
 """
@@ -98,7 +100,14 @@ def script() -> dict[str, Any]:
     fixed = {key: say_item(key, text) for key, text in phrases().items()}
     tts.warm([t["text"] for t in tour] + [p["text"] for p in fixed.values()])
     # speech: lines come with audio. voice: ElevenLabs is on, so the Start tap also asks for the microphone.
-    return {"speech": tts.available(), "voice": settings.features.voice, "tour": tour, "phrases": fixed}
+    # conversation: an agent is configured, so the kiosk talks with each shopper who walks in.
+    return {"speech": tts.available(), "voice": settings.features.voice, "conversation": conversation_available(),
+            "tour": tour, "phrases": fixed}
+
+
+def conversation_available() -> bool:
+    env = settings.env
+    return bool(settings.features.voice and env.elevenlabs_api_key and env.elevenlabs_agent_id)
 
 
 # --- the shopper in the store (kiosk only) ---
@@ -375,6 +384,58 @@ class Narrator:
 narrator = Narrator()
 
 
+# --- the kiosk conversation: an ElevenLabs agent session with the shopper in the store, one at a time ---
+
+MAX_CONVERSATION_S = 300.0  # the kiosk caps a conversation at 5 minutes
+SILENCE_S = 120.0  # and ends it after 2 minutes of silence
+CONVERSATION_GRACE_S = 30.0  # a kiosk that died mid-conversation stops blocking the phone after cap + grace
+
+_conv_lock = threading.Lock()
+_conversation: dict[str, Any] | None = None  # {"member_id", "session_id", "since": time.monotonic()}
+
+
+def voice_message(active: bool) -> dict[str, Any]:
+    """To the shopper's own sockets: the phone shows "Talk to the kiosk" (disabled) while this is true."""
+    return {"type": "kiosk_voice", "data": {"active": active}}
+
+
+def conversation_active_for(member_id: str | None, now: float | None = None) -> bool:
+    """True while the kiosk is in a conversation with this member (the phone's voice waits meanwhile)."""
+    now = time.monotonic() if now is None else now
+    with _conv_lock:
+        c = _conversation
+        return (c is not None and member_id is not None and c["member_id"] == member_id
+                and now - c["since"] < MAX_CONVERSATION_S + CONVERSATION_GRACE_S)
+
+
+def start_conversation(session_id: str, member_id: str, now: float | None = None) -> None:
+    """The kiosk connected a conversation with this visit's shopper."""
+    global _conversation
+    now = time.monotonic() if now is None else now
+    with _conv_lock:
+        previous = _conversation
+        _conversation = {"member_id": member_id, "session_id": session_id, "since": now}
+    if previous is not None and previous["member_id"] != member_id:
+        ws.manager.publish(voice_message(False), member_id=previous["member_id"])
+    ws.manager.publish(voice_message(True), member_id=member_id)
+    eventlog.log("kiosk_conversation", session_id=session_id, member_id=member_id, active=True)
+
+
+def end_conversation(reason: str, now: float | None = None) -> bool:
+    """The kiosk ended its conversation (silence, 5 minute cap, exit scan, error) or the visit is over. Returns
+    False when there was none."""
+    global _conversation
+    now = time.monotonic() if now is None else now
+    with _conv_lock:
+        ended, _conversation = _conversation, None
+    if ended is None:
+        return False
+    ws.manager.publish(voice_message(False), member_id=ended["member_id"])
+    eventlog.log("kiosk_conversation", session_id=ended["session_id"], member_id=ended["member_id"], active=False,
+                 reason=reason, duration_s=round(now - ended["since"], 1))
+    return True
+
+
 # --- visit events for the step tracker (kiosk sockets only) ---
 
 def visit_message(event: str, step: int | None) -> dict[str, Any]:
@@ -417,6 +478,8 @@ def _on_event(entry: dict[str, Any]) -> None:
         narrator.visit_resumed(entry["session_id"])
     else:  # paid, ended
         narrator.visit_ended()
+    if event in ("exit_pending", "paid", "ended"):  # the kiosk hangs up too; this frees the phone at once
+        end_conversation(reason=event)
 
 
 def initial_messages() -> list[dict[str, Any]]:
@@ -453,9 +516,11 @@ def note_shelf_motion(any_motion: bool, occupied: bool, now: float | None = None
 
 def reset() -> None:
     """Forget throttles and state (tests)."""
-    global _last_activity_at
+    global _last_activity_at, _conversation
     with _activity_lock:
         _last_activity_at = None
+    with _conv_lock:
+        _conversation = None
     narrator.visit_ended()
 
 

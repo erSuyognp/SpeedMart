@@ -153,6 +153,8 @@ async def websocket_endpoint(websocket: WebSocket):
         initial.append({"type": "shelf", "data": shelf_state.state()})
     elif tag not in (None, KIOSK):  # a signed-in shopper: their demo balance, so the bank card is live from the start
         initial.append({"type": "bank", "data": await asyncio.to_thread(bank.summary, tag)})
+        if kiosk_agent.conversation_active_for(tag):  # the phone's voice button waits while the kiosk talks
+            initial.append(kiosk_agent.voice_message(True))
     glowing = intent.shown_bays()
     if glowing:  # clients start with nothing glowing, so an empty list needs no message
         initial.append({"type": "plan_bays", "data": {"bays": glowing}})

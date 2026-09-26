@@ -101,6 +101,7 @@ app.include_router(disputes.admin_router)
 app.include_router(review.router)  # /admin/disputes/{id}/approve | keep (8.3)
 app.include_router(intent.router)
 app.include_router(kiosk.router)
+app.include_router(kiosk.agent_router)  # ?k=<KIOSK_TOKEN> only (8.16)
 app.include_router(voice.router)
 app.include_router(ws.router)
 

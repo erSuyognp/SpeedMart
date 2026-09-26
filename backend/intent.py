@@ -496,28 +496,56 @@ def current_plan(member_id: str) -> dict[str, Any] | None:
         return _plans.get(member_id)
 
 
-@router.post("/api/intent")
-def post_intent(body: IntentIn, request: Request):
-    member_id = request.session.get("member_id")
-    if not member_id:
-        return _error(401, "not_logged_in", "Please sign in first.")
-    text = " ".join(body.text.split())
+class IntentError(Exception):
+    """A request the planner refuses; the routes turn it into {"error": code, "message": message}."""
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
+def create_plan(member_id: str, text: str, via: str | None = None) -> dict[str, Any]:
+    """Plan for this member from their words, remembered as their current plan, its bays glowing. Used by
+    POST /api/intent (the phone) and the kiosk's make_plan tool (via="kiosk"). Raises IntentError."""
+    text = " ".join(text.split())
     if not text:
-        return _error(400, "empty_text", "Tell us what you need, for example \"a vegan snack and a drink\".")
+        raise IntentError(400, "empty_text", "Tell us what you need, for example \"a vegan snack and a drink\".")
     if len(text) > MAX_TEXT_CHARS:
-        return _error(400, "text_too_long", f"Please keep it under {MAX_TEXT_CHARS} characters.")
+        raise IntentError(400, "text_too_long", f"Please keep it under {MAX_TEXT_CHARS} characters.")
     member = _load_member(member_id)
     if member is None:
-        return _error(404, "unknown_member", "We couldn't find your membership. Please sign in again.")
+        raise IntentError(404, "unknown_member", "We couldn't find your membership. Please sign in again.")
 
     plan, fallback_reason = make_plan(text, member)
     with _lock:
         _plans[member_id] = plan
     eventlog.log("intent_plan", member_id=member_id, text=text, plan_id=plan["plan_id"], source=plan["source"],
                  fallback_reason=fallback_reason, items={i["sku"]: i["qty"] for i in plan["items"]},
-                 est_total_usd=plan["est_total_usd"], budget_usd=plan["budget_usd"], bays=plan["bays"])
+                 est_total_usd=plan["est_total_usd"], budget_usd=plan["budget_usd"], bays=plan["bays"],
+                 **({"via": via} if via else {}))
     show_on_shelf(plan, member_id)
     return plan
+
+
+def clear_plan(member_id: str, via: str | None = None) -> None:
+    """Forget this member's plan; its bays stop glowing unless someone else is in the store."""
+    with _lock:
+        plan = _plans.pop(member_id, None)
+    if plan is not None:
+        eventlog.log("intent_cleared", member_id=member_id, plan_id=plan["plan_id"], **({"via": via} if via else {}))
+        if not _someone_else_inside(member_id):
+            clear_shelf()
+
+
+@router.post("/api/intent")
+def post_intent(body: IntentIn, request: Request):
+    member_id = request.session.get("member_id")
+    if not member_id:
+        return _error(401, "not_logged_in", "Please sign in first.")
+    try:
+        return create_plan(member_id, body.text)
+    except IntentError as e:
+        return _error(e.status, e.code, e.message)
 
 
 @router.get("/api/intent/current")
@@ -533,10 +561,5 @@ def delete_intent(request: Request):
     member_id = request.session.get("member_id")
     if not member_id:
         return _error(401, "not_logged_in", "Please sign in first.")
-    with _lock:
-        plan = _plans.pop(member_id, None)
-    if plan is not None:
-        eventlog.log("intent_cleared", member_id=member_id, plan_id=plan["plan_id"])
-        if not _someone_else_inside(member_id):
-            clear_shelf()
+    clear_plan(member_id)
     return {"ok": True}

@@ -2,6 +2,8 @@
 // The API key stays on the backend; this page gets a short-lived signed URL from /api/voice/session.
 // Every client tool is a thin wrapper over an existing endpoint and returns a short JSON string.
 // Any failure (flag off, no mic, SDK blocked, session error) falls back to the text form on the same page.
+// While the entrance kiosk is in a conversation with this shopper (kiosk_voice on /ws), the button reads
+// "Talk to the kiosk" and is disabled: one conversation at a time. It comes back when the kiosk hangs up.
 // SDK API: see docs/voice.md (checked against @elevenlabs/client 1.25.0 type definitions).
 
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.25.0/+esm";
@@ -14,6 +16,7 @@ let sdkPromise = null;
 let conversation = null;
 let active = false; // true from the tap until the session ends, fails or is cancelled
 let stopTimer = null;
+let kioskActive = false; // the kiosk by the shelf is talking with this shopper
 
 function loadSdk() {
   if (!sdkPromise) sdkPromise = import(SDK_URL).catch((e) => { sdkPromise = null; throw e; });
@@ -26,6 +29,7 @@ const STATE_TEXT = {
   listening: "Listening. Say what you need.",
   speaking: "SpeedMart is speaking…",
   ended: "Conversation ended. Tap to talk again.",
+  kiosk: "You're talking to the kiosk by the shelf. This button comes back when that conversation ends.",
 };
 
 function setState(state) {
@@ -33,7 +37,20 @@ function setState(state) {
   $("voice-state-text").textContent = STATE_TEXT[state];
   const live = state === "connecting" || state === "listening" || state === "speaking";
   $("voice-btn").classList.toggle("live", live);
-  $("voice-btn-label").textContent = live ? "End conversation" : "Talk to SpeedMart";
+  $("voice-btn").disabled = state === "kiosk";
+  $("voice-btn-label").textContent = state === "kiosk" ? "Talk to the kiosk" : live ? "End conversation" : "Talk to SpeedMart";
+}
+
+// kiosk_voice from the backend: the kiosk started or ended its conversation with this shopper.
+function setKioskActive(on) {
+  if (on === kioskActive) return;
+  kioskActive = on;
+  if (on) {
+    if (active) endConversation(); // never two agents talking to the same shopper
+    setState("kiosk");
+  } else {
+    setState("idle");
+  }
 }
 
 function addTurn(role, text) {
@@ -166,6 +183,7 @@ async function startConversation() {
     try {
       [session, sdk] = await Promise.all([api.get("/api/voice/session"), loadSdk()]);
     } catch (e) {
+      if (e && e.code === "kiosk_conversation_active") { active = false; setKioskActive(true); return; }
       if (e instanceof api.ApiError) return fail(e.message);
       return fail("Voice couldn't load on this network. Please type what you need below.");
     }
@@ -175,10 +193,14 @@ async function startConversation() {
     const started = await sdk.Conversation.startSession({
       signedUrl: session.signed_url,
       connectionType: "websocket",
+      // The same variables the kiosk sends (docs/voice.md): one agent, and mode tells it where it is talking.
       dynamicVariables: {
         first_name: session.member_first_name,
         budget_usd: Number(session.budget_usd),
+        remaining_usd: Number(session.remaining_usd),
         dietary: session.dietary || "none",
+        is_first_visit: !!session.is_first_visit,
+        mode: session.mode || "phone",
       },
       clientTools,
       onModeChange: ({ mode }) => { if (active) setState(mode === "speaking" ? "speaking" : "listening"); },
@@ -215,7 +237,13 @@ async function init() {
   $("voice").hidden = false;
   setState("idle");
   $("voice-btn").addEventListener("click", () => {
+    if (kioskActive) return;
     if (active) endConversation(); else startConversation();
+  });
+  // The shopper's own socket says when the kiosk is talking with them (sent on connect too, if it already is).
+  connectSocket({
+    onStatus: (connected) => { if (connected) setKioskActive(false); },
+    onMessage: (msg) => { if (msg && msg.type === "kiosk_voice" && msg.data) setKioskActive(!!msg.data.active); },
   });
   loadSdk().catch(() => { /* retried on tap; the tap path shows the friendly message */ });
 }

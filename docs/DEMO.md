@@ -17,8 +17,10 @@ Run through this before **every** judge.
 - [ ] **Overlay:** the `SpeedMart shelf cam` window is visible to the judge, all bays are green, and every tag ID is shown.
 - [ ] **Vision age:** the admin badge is green (under 500 ms).
 - [ ] **Gate screen:** serial badge connected, the T-Display at the gate shows the SpeedMart idle screen.
-- [ ] **Kiosk:** the tablet shows the QR codes and the shelf map with all five bays and their counts, nothing
-      glowing.
+- [ ] **Kiosk:** the tablet runs the guide (`https://<domain>/kiosk.html?k=<KIOSK_TOKEN>`, **Start kiosk** tapped,
+      microphone allowed): step 1 pulsing, the JOIN and ENTER codes, the shelf map with all five bays and their
+      counts, nothing glowing, no name on screen. Volume up; the tour has played once since the last restart (so
+      its audio is cached).
 - [ ] **Tunnel:** `https://<domain>/api/health` loads on a phone using cellular data.
 - [ ] **Agent:** admin health shows LLM on (or templates only, which is fine; say so if asked).
 - [ ] **Voice:** on the demo phone, `intent.html` shows **Talk to SpeedMart**. One test tap: it greets by name. Then
@@ -34,6 +36,42 @@ Run through this before **every** judge.
 - [ ] **Lighting:** no glare on the tags from overhead lights. Tilt the matte spares in if needed.
 - [ ] **Sticky note:** a small blank note (no printing on it) ready for the Water's tag in step 7.
 - [ ] **Spokesperson** knows the close line and the Q&A table below.
+
+## First timer walkthrough (the kiosk guides them, nobody on the team helps)
+
+Use this when a judge wants to try SpeedMart alone, or as the opening of the script below. Stand back; the kiosk
+does the talking. (Details and the ElevenLabs calls: `docs/voice.md`, "Kiosk agent".)
+
+1. **Walk up.** The judge steps to the shelf while the store is empty. The shelf camera sees the motion and the
+   kiosk says "Hi! New here? Tap the screen, and I'll show you how SpeedMart works." The tour button pulses.
+2. **Tour (30 s).** The judge taps **New here? Tap to learn how SpeedMart works**. The kiosk explains that the
+   shelf camera builds your cart and you approve with your phone, then walks through **1 Join, 2 Enter, 3 Grab
+   items, 4 Scan exit**, lighting up each step on the tracker as it speaks. Every line is also a big caption.
+3. **Join and enter.** Following step 1 they scan JOIN, type a first name, set a budget ($10) and save a passkey;
+   following step 2 they scan ENTER and use Face ID. The tracker ticks 1 and 2 and pulses 3. The codes make way for
+   "Hi, Maya", **Budget left $10.00**, **Cart total $0.00**, **Items 0**, and the EXIT code.
+4. **Welcome.** "Welcome to your first visit, Maya. Just grab what you want; the camera adds it to your cart. When
+   you're done, scan the exit code." Then the agent: "Hi Maya, you have $10 to spend. What are you looking for
+   today?"
+5. **Ask.** "I just finished a run and I'm thirsty." The agent plans with the store's own tools (Hydration drink and
+   Water), says "Look for bay 1 and bay 4", and those bays glow on the kiosk's shelf map. Their phone's voice
+   button now reads **Talk to the kiosk** (one conversation at a time).
+6. **Grab.** They take the Hydration drink: the panel updates at once and the agent mentions it in its next turn
+   without cutting them off. If the conversation has ended (2 minutes of silence), the kiosk says it itself: "See,
+   the Hydration drink is already in your cart. You're at $3.78."
+7. **Over budget (optional).** Add the Energy drink and the Vegan snack: "That's $1.34 over your budget. Putting
+   back the Vegan snack fixes it." Put it back: "Vegan snack is back on the shelf, removed from your cart. You're
+   back under your budget."
+8. **Linger.** A minute with items and no change: "When you're ready, scan the exit code to review and pay."
+9. **Exit.** They scan the EXIT code on the kiosk (step 4 pulses, the conversation ends) and approve on the phone.
+   All four steps get a check and the name and totals vanish from the screen at once.
+
+Say it if a judge asks: the screen only ever shows the first name, budget left, cart total and item count; never a
+card, a balance or a receipt. The voice agent can only use the store's catalog, cart and planner, and every price
+the kiosk says comes from the cart or the budget policy.
+
+If the kiosk is silent: captions still show every line (speech is optional). If the agent can't connect, the kiosk
+greets and narrates on its own, and the phone's **Talk to SpeedMart** still works.
 
 ## Script
 

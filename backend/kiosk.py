@@ -24,10 +24,11 @@ import threading
 from urllib.parse import quote
 
 import qrcode
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
-from backend import eventlog, kiosk_agent, tts
+from backend import eventlog, intent, kiosk_agent, tts, voice
 from backend.routes_api import ApiError
 from backend.settings import settings
 
@@ -121,28 +122,30 @@ def require_kiosk(request: Request) -> None:
         raise ApiError(403, "kiosk_only", KIOSK_ONLY_MESSAGE)
 
 
-@router.get("/api/kiosk/phrases")
-def kiosk_phrases(request: Request):
+# Every route on agent_router needs the token; the check runs before the body is even parsed, so a request
+# without it gets 403 whatever it sends.
+agent_router = APIRouter(dependencies=[Depends(require_kiosk)])
+
+
+@agent_router.get("/api/kiosk/phrases")
+def kiosk_phrases():
     """The spoken tour (Join, Enter, Grab items, Scan exit) and the fixed phrases, each with its caption text and
     an audio URL (null when speech is off). The kiosk calls this once at start; it also checks the token."""
-    require_kiosk(request)
     return kiosk_agent.script()
 
 
-@router.get("/api/kiosk/shopper")
-def kiosk_shopper(request: Request):
+@agent_router.get("/api/kiosk/shopper")
+def kiosk_shopper():
     """The shopper in the store, for the kiosk's panel and greeting: first name, budget, what is left, cart total,
     item count and visit count, plus the greeting to say (fuller on a first visit). Both null while the store is
     free or someone is returning items. Never a card, a balance, a receipt or item names."""
-    require_kiosk(request)
     return kiosk_agent.shopper_payload()
 
 
-@router.get("/api/kiosk/tts/{clip_id}", responses={200: {"content": {"audio/mpeg": {}}}})
-def kiosk_tts(clip_id: str, request: Request):
+@agent_router.get("/api/kiosk/tts/{clip_id}", responses={200: {"content": {"audio/mpeg": {}}}})
+def kiosk_tts(clip_id: str):
     """MP3 for a line the backend registered (tts.register). Unknown ids are 404: the browser can never choose the
     text. 503 `tts_unavailable` when speech is off or ElevenLabs fails or takes over 4 s: show the caption only."""
-    require_kiosk(request)
     text = tts.text_for(clip_id) if _CLIP_ID.match(clip_id) else None
     if text is None:
         raise ApiError(404, "unknown_clip", "No such line.")
@@ -152,3 +155,114 @@ def kiosk_tts(clip_id: str, request: Request):
     # Same text, same voice, same bytes: let the tablet keep fixed phrases across the tour's repeats.
     cache = "private, max-age=86400" if tts.is_fixed(text) else "no-store"
     return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": cache})
+
+
+# --- the kiosk conversation (features.voice): an ElevenLabs agent talking with the shopper in the store ---
+
+NO_SHOPPER_MESSAGE = "Nobody is shopping right now."
+# Sent with every get_cart result so the agent answers "is this my card?" from a tool, not from memory
+# (the same wording as the phone's voice.js).
+PAYMENT_NOTE = ("Demo card: every member gets a test Visa card (•••• 4242) in Stripe test mode, linked "
+                "automatically. It is not the shopper's card, SpeedMart never asks for a card, and no real money moves.")
+
+
+def _shopper_or_409(in_store_only: bool = False):
+    """(session, cart, member) of the shopping visit holding the store, else 409 no_shopper."""
+    visit = kiosk_agent.current_visit()
+    if visit is None or (in_store_only and visit[0]["state"] != "IN_STORE"):
+        raise ApiError(409, "no_shopper", NO_SHOPPER_MESSAGE)
+    return visit
+
+
+@agent_router.get("/api/kiosk/voice-session")
+def kiosk_voice_session():
+    """A signed URL for the ElevenLabs agent (the API key stays here) and the dynamic variables for the shopper in
+    the store, with mode "kiosk". 404 `not_available` (voice off), 409 `no_shopper`, 503 `voice_unavailable`."""
+    voice.require_voice()
+    session, cart, member = _shopper_or_409(in_store_only=True)
+    signed_url = voice.signed_url_or_503("kiosk_voice_session", session_id=session["id"])
+    view = kiosk_agent.shopper_view(cart, member, kiosk_agent.visit_count(member["id"]))
+    eventlog.log("kiosk_voice_session", session_id=session["id"])  # never the signed URL: it is a bearer token
+    return {
+        "signed_url": signed_url,
+        "dynamic_variables": {
+            "first_name": view["first_name"],
+            "budget_usd": view["budget_usd"],
+            "remaining_usd": view["remaining_usd"],
+            "dietary": member.get("dietary") or "none",
+            "is_first_visit": view["visit_count"] <= 1,
+            "mode": "kiosk",
+        },
+        "max_duration_s": kiosk_agent.MAX_CONVERSATION_S,
+        "silence_timeout_s": kiosk_agent.SILENCE_S,
+    }
+
+
+class ConversationIn(BaseModel):
+    active: bool
+    reason: str = ""
+
+
+@agent_router.post("/api/kiosk/conversation")
+def kiosk_conversation(body: ConversationIn):
+    """The kiosk reports its conversation starting (after it connects) and ending. While it is active the
+    shopper's phone shows "Talk to the kiosk" and /api/voice/session answers 409 kiosk_conversation_active."""
+    if body.active:
+        session, _, member = _shopper_or_409(in_store_only=True)
+        kiosk_agent.start_conversation(session["id"], member["id"])
+    else:
+        kiosk_agent.end_conversation(reason=(body.reason or "kiosk")[:40])
+    return {"ok": True, "active": body.active}
+
+
+# Client tools on the kiosk. They act on the CURRENT shopper, never on whoever holds the kiosk.
+
+@agent_router.get("/api/kiosk/catalog")
+def kiosk_catalog():
+    """get_catalog: the same products, prices, tags and bay cards the phone's agent gets."""
+    voice.require_voice()
+    return {"products": voice.catalog_products()}
+
+
+@agent_router.get("/api/kiosk/cart")
+def kiosk_cart():
+    """get_cart: the shopper's live cart for the agent (names, quantities, totals, budget). Spoken, not shown."""
+    voice.require_voice()
+    visit = kiosk_agent.current_visit()
+    if visit is None:
+        return {"in_store": False, "items": [], "note": NO_SHOPPER_MESSAGE, "payment": PAYMENT_NOTE}
+    session, cart, member = visit
+    view = kiosk_agent.shopper_view(cart, member, 0)
+    return {
+        "in_store": True,
+        "items": [{"name": i["name"], "qty": i["qty"], "line_total_usd": i["line_total_usd"]} for i in cart["items"]],
+        "total_usd": cart["total_usd"],
+        "budget_usd": view["budget_usd"],
+        "remaining_usd": view["remaining_usd"],
+        "over_budget": cart["over_budget"],
+        "payment": PAYMENT_NOTE,
+    }
+
+
+class PlanIn(BaseModel):
+    goal_text: str
+
+
+@agent_router.post("/api/kiosk/plan")
+def kiosk_make_plan(body: PlanIn):
+    """make_plan: the F18 planner for the shopper in the store (a Plan, 8.8). Its bays glow on every shelf map."""
+    voice.require_voice()
+    session, _, member = _shopper_or_409()
+    try:
+        return intent.create_plan(member["id"], body.goal_text, via="kiosk")
+    except intent.IntentError as e:
+        raise ApiError(e.status, e.code, e.message) from None
+
+
+@agent_router.delete("/api/kiosk/plan")
+def kiosk_clear_plan():
+    """clear_plan: forget the shopper's plan; the bays stop glowing."""
+    voice.require_voice()
+    session, _, member = _shopper_or_409()
+    intent.clear_plan(member["id"], via="kiosk")
+    return {"ok": True}

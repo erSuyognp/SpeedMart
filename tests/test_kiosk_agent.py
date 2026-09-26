@@ -29,6 +29,12 @@ KIOSK_ONLY = [
     ("GET", "/api/kiosk/phrases"),
     ("GET", "/api/kiosk/tts/" + "0" * 32),
     ("GET", "/api/kiosk/shopper"),
+    ("GET", "/api/kiosk/voice-session"),
+    ("POST", "/api/kiosk/conversation"),
+    ("GET", "/api/kiosk/catalog"),
+    ("GET", "/api/kiosk/cart"),
+    ("POST", "/api/kiosk/plan"),
+    ("DELETE", "/api/kiosk/plan"),
 ]
 
 
@@ -728,3 +734,226 @@ def test_a_visit_already_under_way_is_joined_without_narrating_its_past():
     n.run_due(20.0)
     assert [m["data"]["text"] for m in sent if m["type"] == "kiosk_say"] == \
         ["See, the Water is already in your cart. You're at $7.02."]
+
+
+# --- Phase 3: the kiosk conversation (ElevenLabs agent, mode "kiosk") ---
+
+AGENT_ID = "agent_kiosk_test"
+SIGNED = "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_kiosk_test&conversation_signature=sig"
+
+
+@pytest.fixture
+def agent_on(monkeypatch):
+    set_env(monkeypatch, elevenlabs_api_key=XI_KEY, elevenlabs_agent_id=AGENT_ID)
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"signed_url": SIGNED}, request=httpx.Request("GET", url))
+    from backend import voice
+    monkeypatch.setattr(voice.httpx, "get", fake_get)
+    return calls
+
+
+def test_voice_session_needs_a_shopper(agent_on):
+    r = TestClient(app).get(k("/api/kiosk/voice-session"))
+    assert r.status_code == 409 and r.json()["error"] == "no_shopper"
+    assert agent_on == []  # no signed URL is fetched for nobody
+
+
+def test_voice_session_dynamic_variables(agent_on):
+    maya = add_member(budget=10.0)
+    from backend import db
+    conn = db.connect()
+    conn.execute("UPDATE members SET dietary = 'vegan' WHERE id = ?", (maya,))
+    conn.commit()
+    conn.close()
+    c = TestClient(app)
+    enter_as(c, maya)
+    c.cookies.clear()
+    r = c.get(k("/api/kiosk/voice-session"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body == {
+        "signed_url": SIGNED,
+        "dynamic_variables": {"first_name": "Maya", "budget_usd": 10.0, "remaining_usd": 10.0, "dietary": "vegan",
+                              "is_first_visit": True, "mode": "kiosk"},
+        "max_duration_s": 300.0,
+        "silence_timeout_s": 120.0,
+    }
+    url, kwargs = agent_on[0]
+    assert url == "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url"
+    assert kwargs["params"] == {"agent_id": AGENT_ID} and kwargs["headers"] == {"xi-api-key": XI_KEY}
+    assert XI_KEY not in r.text
+    assert events("kiosk_voice_session") and SIGNED not in json.dumps(events("kiosk_voice_session"))
+
+
+def test_voice_session_returning_shopper_and_no_dietary(agent_on):
+    maya = add_member(budget=10.0)
+    finish_visit(maya)
+    c = TestClient(app)
+    enter_as(c, maya)
+    variables = c.get(k("/api/kiosk/voice-session")).json()["dynamic_variables"]
+    assert variables["is_first_visit"] is False and variables["dietary"] == "none"
+
+
+def test_voice_session_off_or_unconfigured(agent_on, monkeypatch):
+    maya = add_member()
+    c = TestClient(app)
+    enter_as(c, maya)
+    set_env(monkeypatch, elevenlabs_agent_id="")
+    r = c.get(k("/api/kiosk/voice-session"))
+    assert r.status_code == 503 and r.json()["error"] == "voice_unavailable"
+    assert events("kiosk_voice_session_error")[-1]["reason"] == "not_configured"
+    set_features(monkeypatch, voice=False)
+    assert c.get(k("/api/kiosk/voice-session")).status_code == 404
+    assert c.get(k("/api/kiosk/phrases")).json()["conversation"] is False
+
+
+def test_phrases_say_whether_a_conversation_is_possible(agent_on):
+    assert TestClient(app).get(k("/api/kiosk/phrases")).json()["conversation"] is True
+
+
+def test_voice_session_upstream_failure_is_503(agent_on, monkeypatch):
+    from backend import voice
+    maya = add_member()
+    c = TestClient(app)
+    enter_as(c, maya)
+
+    def boom(url, **kwargs):
+        raise httpx.ConnectTimeout("slow")
+    monkeypatch.setattr(voice.httpx, "get", boom)
+    r = c.get(k("/api/kiosk/voice-session"))
+    assert r.status_code == 503 and XI_KEY not in r.text
+    assert events("kiosk_voice_session_error")[-1]["reason"] == "ConnectTimeout"
+
+
+# client tools: they act on the CURRENT shopper through kiosk token routes
+
+def test_catalog_tool_is_the_phone_agents_catalog():
+    from backend import voice
+    assert TestClient(app).get(k("/api/kiosk/catalog")).json() == {"products": voice.catalog_products()}
+
+
+def test_cart_tool_reads_the_current_shoppers_cart():
+    c = TestClient(app)
+    assert c.get(k("/api/kiosk/cart")).json()["in_store"] is False
+    maya = add_member(budget=10.0)
+    enter_as(c, maya)
+    c.post("/internal/shelf", json=snap(with_bays(b2=list(FULL[2])[1:]), frame_id=5), headers=HEADERS)
+    c.cookies.clear()
+    body = c.get(k("/api/kiosk/cart")).json()
+    assert body["in_store"] is True
+    assert body["items"] == [{"name": "Chips", "qty": 1, "line_total_usd": 2.5}]
+    assert (body["total_usd"], body["budget_usd"], body["remaining_usd"], body["over_budget"]) == (2.7, 10.0, 7.3, False)
+    assert "not the shopper's card" in body["payment"]
+
+
+def test_plan_tools_plan_for_the_current_shopper_and_light_the_shelf():
+    from backend import intent
+    c = TestClient(app)
+    r = c.post(k("/api/kiosk/plan"), json={"goal_text": "thirsty after a run"})
+    assert r.status_code == 409 and r.json()["error"] == "no_shopper"
+    maya = add_member(budget=10.0)
+    enter_as(c, maya)
+    c.cookies.clear()  # the kiosk is nobody: the plan is the shopper's
+    plan = c.post(k("/api/kiosk/plan"), json={"goal_text": "thirsty after a run"}).json()
+    assert {i["sku"] for i in plan["items"]} == {"elx", "wat"}
+    assert intent.current_plan(maya) == plan
+    assert intent.shown_bays() == sorted(plan["bays"]) and plan["bays"]
+    assert events("intent_plan")[-1]["via"] == "kiosk"
+    r = c.post(k("/api/kiosk/plan"), json={"goal_text": "   "})
+    assert r.status_code == 400 and r.json()["error"] == "empty_text"
+    assert c.delete(k("/api/kiosk/plan")).json() == {"ok": True}
+    assert intent.current_plan(maya) is None and intent.shown_bays() == []
+
+
+def test_tools_need_voice(monkeypatch):
+    set_features(monkeypatch, voice=False)
+    c = TestClient(app)
+    for method, path in (("GET", "/api/kiosk/catalog"), ("GET", "/api/kiosk/cart"), ("DELETE", "/api/kiosk/plan")):
+        assert c.request(method, k(path)).status_code == 404
+
+
+# one conversation at a time: the phone waits while the kiosk talks
+
+def test_phone_voice_is_disabled_while_a_kiosk_conversation_is_active(agent_on):
+    from backend import voice
+    maya = add_member()
+    phone = TestClient(app)
+    enter_as(phone, maya)
+    assert phone.get("/api/voice/session").status_code == 200
+    kiosk_client = TestClient(app)
+    assert kiosk_client.post(k("/api/kiosk/conversation"), json={"active": True}).json() == {"ok": True,
+                                                                                             "active": True}
+    r = phone.get("/api/voice/session")
+    assert r.status_code == 409
+    assert r.json() == {"error": "kiosk_conversation_active", "message": voice.KIOSK_ACTIVE_MESSAGE}
+    assert kiosk_client.post(k("/api/kiosk/conversation"), json={"active": False, "reason": "silence"}).status_code \
+        == 200
+    assert phone.get("/api/voice/session").status_code == 200
+    ended = [e for e in events("kiosk_conversation") if e["active"] is False]
+    assert ended[-1]["reason"] == "silence"
+
+
+def test_kiosk_conversation_needs_a_shopper():
+    r = TestClient(app).post(k("/api/kiosk/conversation"), json={"active": True})
+    assert r.status_code == 409 and r.json()["error"] == "no_shopper"
+
+
+def test_only_the_shopper_in_the_store_is_blocked():
+    maya, sam = add_member(), add_member("Sam")
+    enter_as(TestClient(app), maya)
+    TestClient(app).post(k("/api/kiosk/conversation"), json={"active": True})
+    assert kiosk_agent.conversation_active_for(maya) is True
+    assert kiosk_agent.conversation_active_for(sam) is False
+
+
+def test_a_forgotten_conversation_expires_after_the_cap(monkeypatch):
+    kiosk_agent.start_conversation("ses_x", "mem_x", now=1000.0)
+    assert kiosk_agent.conversation_active_for("mem_x", now=1000.0 + 300)
+    assert not kiosk_agent.conversation_active_for("mem_x", now=1000.0 + 300 + kiosk_agent.CONVERSATION_GRACE_S)
+
+
+def test_the_visit_ending_or_the_exit_scan_frees_the_phone():
+    maya = add_member()
+    c = TestClient(app)
+    enter_as(c, maya)
+    TestClient(app).post(k("/api/kiosk/conversation"), json={"active": True})
+    assert kiosk_agent.conversation_active_for(maya)
+    c.post("/internal/shelf", json=snap(with_bays(b2=list(FULL[2])[1:]), frame_id=5), headers=HEADERS)
+    assert c.post("/api/dev/checkout").status_code == 200  # the exit scan (gates off: the Checkout button)
+    assert not kiosk_agent.conversation_active_for(maya)
+    assert events("kiosk_conversation")[-1]["reason"] == "exit_pending"
+
+
+def test_phone_socket_hears_when_the_kiosk_talks():
+    maya = add_member()
+    with TestClient(app) as client:
+        enter_as(client, maya)
+        with client.websocket_connect("/ws") as sock:  # the shopper's phone
+            kiosk_client = TestClient(app)
+            kiosk_client.post(k("/api/kiosk/conversation"), json={"active": True})
+            on = read_until(sock, lambda m, out: m["type"] == "kiosk_voice")[-1]
+            kiosk_client.post(k("/api/kiosk/conversation"), json={"active": False})
+            off = read_until(sock, lambda m, out: m["type"] == "kiosk_voice")[-1]
+        TestClient(app).post(k("/api/kiosk/conversation"), json={"active": True})
+        with client.websocket_connect("/ws") as sock:  # a phone that connects mid-conversation
+            first = read_until(sock, lambda m, out: m["type"] == "kiosk_voice")
+    assert on == {"type": "kiosk_voice", "data": {"active": True}}
+    assert off == {"type": "kiosk_voice", "data": {"active": False}}
+    assert first[-1] == {"type": "kiosk_voice", "data": {"active": True}}
+
+
+def test_phone_session_carries_the_same_variables_as_the_kiosk(agent_on):
+    maya = add_member(budget=10.0)
+    finish_visit(maya)
+    c = TestClient(app)
+    login_as(c, maya)
+    body = c.get("/api/voice/session").json()  # not in the store yet
+    assert (body["remaining_usd"], body["is_first_visit"], body["mode"]) == (10.0, False, "phone")
+    fresh = add_member("Noor", budget=20.0)
+    enter_as(c, fresh)
+    c.post("/internal/shelf", json=snap(with_bays(b2=list(FULL[2])[1:]), frame_id=9), headers=HEADERS)
+    body = c.get("/api/voice/session").json()  # inside, one Chips in the cart
+    assert (body["remaining_usd"], body["is_first_visit"]) == (17.3, True)

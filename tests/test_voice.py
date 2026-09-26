@@ -78,7 +78,9 @@ def test_session_success(keys, monkeypatch):
     monkeypatch.setattr(voice.httpx, "get", get)
     r = client_for(add_member()).get("/api/voice/session")
     assert r.status_code == 200, r.text
-    assert r.json() == {"signed_url": SIGNED, "member_first_name": "Maya", "budget_usd": 15.0, "dietary": "vegan"}
+    # remaining_usd, is_first_visit and mode: the same dynamic variables the kiosk sends (one agent for both)
+    assert r.json() == {"signed_url": SIGNED, "member_first_name": "Maya", "budget_usd": 15.0, "remaining_usd": 15.0,
+                        "dietary": "vegan", "is_first_visit": True, "mode": "phone"}
     url, kwargs = get.calls[0]
     assert url == "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url"
     assert kwargs["params"] == {"agent_id": AGENT}
