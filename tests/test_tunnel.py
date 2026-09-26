@@ -94,7 +94,10 @@ def test_only_the_session_cookie_is_touched():
 
 def test_run_all_ps1_starts_and_stops_all_three():
     text = RUN_ALL_PS1.read_text(encoding="utf-8")
-    assert "--proxy-headers" in text and "--forwarded-allow-ips" in text
+    assert "--proxy-headers" in text
+    # Deliberately absent: on Windows "*" is glob expanded into file names, and uvicorn's default
+    # (127.0.0.1) already trusts the local ngrok agent's X-Forwarded-* headers.
+    assert "--forwarded-allow-ips" not in text
     assert "uvicorn" in text and "vision.worker" in text and "ngrok" in text
     assert "https_tunnel" in text and "PUBLIC_ORIGIN" in text
     assert "taskkill.exe" in text and "Stop-Children" in text  # every child stopped on Ctrl+C
