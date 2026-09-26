@@ -25,8 +25,8 @@ pytestmark = pytest.mark.usefixtures("tmp_data")
 HEADERS = {"X-Internal-Token": TOKEN}
 ENTRY = {"gate_token": "test-entry-token"}
 EXIT = {"gate_token": "test-exit-token"}
-ELX_TAKEN = with_bays(b0=[1])              # 1 elx off the shelf: $8.00 + $0.64 tax
-ELX_AND_BAR_TAKEN = with_bays(b0=[1], b2=[5])  # 1 elx + 1 bar: $11.50 + $0.92 = $12.42
+ELX_TAKEN = with_bays(b0=[1])              # 1 elx off the shelf: $3.50 + $0.28 tax
+ELX_AND_BAR_TAKEN = with_bays(b0=[1], b2=[5])  # 1 elx + 1 bar: $6.00 + $0.48 = $6.48
 
 
 @pytest.fixture(autouse=True)
@@ -103,13 +103,13 @@ def age_payment(minutes: float) -> None:
 # --- refund amount math (pure, in cents) ---
 
 def test_refund_amount_is_items_plus_tax_in_cents():
-    units = {"elx": 800, "bar": 350}
+    units = {"elx": 350, "bar": 250}
     # one elx of one: exactly what was paid for it
-    assert returns.refund_amount({"elx": 1}, {"elx": 1}, units, 864, 0, 0.08) == (800, 64, 864)
-    # one bar of a two-item visit ($12.42 paid): 350 + round(28.0) = 378
-    assert returns.refund_amount({"bar": 1}, {"elx": 1, "bar": 1}, units, 1242, 0, 0.08) == (350, 28, 378)
+    assert returns.refund_amount({"elx": 1}, {"elx": 1}, units, 378, 0, 0.08) == (350, 28, 378)
+    # one bar of a two-item visit ($6.48 paid): 250 + round(20.0) = 270
+    assert returns.refund_amount({"bar": 1}, {"elx": 1, "bar": 1}, units, 648, 0, 0.08) == (250, 20, 270)
     # nothing back, nothing refunded
-    assert returns.refund_amount({}, {"elx": 1}, units, 864, 0, 0.08) == (0, 0, 0)
+    assert returns.refund_amount({}, {"elx": 1}, units, 378, 0, 0.08) == (0, 0, 0)
 
 
 def test_refund_rounding_never_exceeds_the_payment():
@@ -125,7 +125,7 @@ def test_refund_rounding_never_exceeds_the_payment():
 
 def test_detect_caps_at_purchase_and_ignores_the_rest():
     baseline = {"elx": 1, "rec": 2, "bar": 2}
-    shelf_now = {"elx": 2, "rec": 3, "bar": 2}  # elx back, plus a recovery drink that was never bought
+    shelf_now = {"elx": 2, "rec": 3, "bar": 2}  # elx back, plus an energy drink that was never bought
     assert returns.detect(baseline, shelf_now, {"elx": 1}) == ({"elx": 1}, {"rec": 1})
     # two elx appear but only one was bought: one refunded, one ignored
     assert returns.detect({"elx": 0}, {"elx": 2}, {"elx": 1}) == ({"elx": 1}, {"elx": 1})
@@ -138,7 +138,7 @@ def test_detect_caps_at_purchase_and_ignores_the_rest():
 def test_return_refunds_exactly_what_the_camera_sees(member_id):
     with TestClient(app) as client:
         sid = buy(client, member_id)
-        assert points_of(member_id) == 8
+        assert points_of(member_id) == 3
         r = start_return(client, member_id, sid)
         assert r.status_code == 200, r.text
         ret = r.json()["return"]
@@ -154,42 +154,42 @@ def test_return_refunds_exactly_what_the_camera_sees(member_id):
         shelf(client, FULL, 3)  # the elx goes back
         live = client.get("/api/returns/current").json()["return"]
         assert [(i["sku"], i["qty"]) for i in live["items"]] == [("elx", 1)]
-        assert (live["subtotal_usd"], live["tax_usd"], live["total_usd"]) == (8.0, 0.64, 8.64)
+        assert (live["subtotal_usd"], live["tax_usd"], live["total_usd"]) == (3.5, 0.28, 3.78)
 
         r = client.post("/api/returns/confirm")
         assert r.status_code == 200, r.text
         refund = r.json()["refund"]
         assert refund["status"] == "SUCCEEDED" and refund["provider"] == "mock"
         assert refund["provider_ref"].startswith("re_mock_") and refund["refund_id"].startswith("ref_")
-        assert refund["amount_usd"] == 8.64 and refund["items_text"] == "1 Electrolyte tabs"
-        assert r.json()["agent_line"] == "Refund of $8.64 is on its way to your Visa ending 4242."
+        assert refund["amount_usd"] == 3.78 and refund["items_text"] == "1 Hydration drink"
+        assert r.json()["agent_line"] == "Refund of $3.78 is on its way to your Visa ending 4242."
 
         assert store.get_session(ret["session_id"])["state"] == "CLOSED" and store.current_session() is None
-        assert points_of(member_id) == 0 and refund["points_removed"] == 8
+        assert points_of(member_id) == 0 and refund["points_removed"] == 3
         [row] = refund_rows()
-        assert row["amount_cents"] == 864 and row["payment_id"] == refund["payment_id"]
+        assert row["amount_cents"] == 378 and row["payment_id"] == refund["payment_id"]
         logged = [e for e in log_entries() if e.get("type") == "REFUND"]
-        assert len(logged) == 1 and logged[0]["refund_id"] == refund["refund_id"] and logged[0]["amount_usd"] == 8.64
+        assert len(logged) == 1 and logged[0]["refund_id"] == refund["refund_id"] and logged[0]["amount_usd"] == 3.78
 
         receipt = client.get(f"/api/receipt/{sid}").json()
         assert [f["refund_id"] for f in receipt["refunds"]] == [refund["refund_id"]]
-        assert receipt["refunded_usd"] == 8.64
+        assert receipt["refunded_usd"] == 3.78
         assert receipt["return"]["eligible"] is False and receipt["return"]["reason"] == "nothing_to_return"
 
 
 def test_other_items_are_not_from_this_purchase(member_id):
     with TestClient(app) as client:
         sid = buy(client, member_id)
-        shelf(client, with_bays(b0=[1], b1=[2]), 3)  # a recovery drink is off the shelf when the return starts
+        shelf(client, with_bays(b0=[1], b1=[2]), 3)  # an energy drink is off the shelf when the return starts
         assert start_return(client, member_id, sid).status_code == 200
         shelf(client, with_bays(b0=[1]), 4)  # it lands back on the shelf, but it was never bought
         live = client.get("/api/returns/current").json()["return"]
         assert live["items"] == [] and live["total_usd"] == 0
-        assert live["ignored"] == [{"sku": "rec", "name": "Recovery drink", "qty": 1, "message": "not from this purchase"}]
+        assert live["ignored"] == [{"sku": "rec", "name": "Energy drink", "qty": 1, "message": "not from this purchase"}]
         assert client.post("/api/returns/confirm").json()["error"] == "nothing_returned"
         shelf(client, FULL, 5)  # now the elx too: only the elx is refunded
         live = client.get("/api/returns/current").json()["return"]
-        assert [(i["sku"], i["qty"]) for i in live["items"]] == [("elx", 1)] and live["total_usd"] == 8.64
+        assert [(i["sku"], i["qty"]) for i in live["items"]] == [("elx", 1)] and live["total_usd"] == 3.78
         assert [i["sku"] for i in live["ignored"]] == ["rec"]
 
 
@@ -202,9 +202,9 @@ def test_cannot_refund_more_than_purchased(member_id):
         shelf(client, FULL, 4)  # both elx back: a rise of 2
         live = client.get("/api/returns/current").json()["return"]
         assert [(i["sku"], i["qty"]) for i in live["items"]] == [("elx", 1)]
-        assert live["ignored"] == [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1, "message": "not from this purchase"}]
+        assert live["ignored"] == [{"sku": "elx", "name": "Hydration drink", "qty": 1, "message": "not from this purchase"}]
         refund = client.post("/api/returns/confirm").json()["refund"]
-        assert refund["amount_usd"] == 8.64  # one unit, never two
+        assert refund["amount_usd"] == 3.78  # one unit, never two
 
 
 def test_cannot_refund_twice(member_id):
@@ -223,18 +223,18 @@ def test_cannot_refund_twice(member_id):
 
 def test_partial_returns_add_up_to_the_payment(member_id):
     with TestClient(app) as client:
-        sid = buy(client, member_id, taken=ELX_AND_BAR_TAKEN)  # $12.42
+        sid = buy(client, member_id, taken=ELX_AND_BAR_TAKEN)  # $6.48
         assert start_return(client, member_id, sid).status_code == 200
         shelf(client, with_bays(b0=[1]), 3)  # the bar comes back
         first = client.post("/api/returns/confirm").json()["refund"]
-        assert first["amount_usd"] == 3.78  # 3.50 + 0.28
+        assert first["amount_usd"] == 2.70  # 2.50 + 0.20
         r = start_return(client, member_id, sid)
-        assert r.status_code == 200 and r.json()["return"]["returnable"] == [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1}]
+        assert r.status_code == 200 and r.json()["return"]["returnable"] == [{"sku": "elx", "name": "Hydration drink", "qty": 1}]
         shelf(client, FULL, 4)
         second = client.post("/api/returns/confirm").json()["refund"]
-        assert second["amount_usd"] == 8.64
-        assert sum(r["amount_cents"] for r in refund_rows()) == 1242
-        assert points_of(member_id) == 12 - 3 - 8
+        assert second["amount_usd"] == 3.78
+        assert sum(r["amount_cents"] for r in refund_rows()) == 648
+        assert points_of(member_id) == 6 - 2 - 3
 
 
 # --- window, Face ID, lock ---
@@ -311,7 +311,7 @@ def test_cancel_closes_without_refund(member_id):
         shelf(client, FULL, 3)
         assert client.post("/api/returns/cancel").json() == {"ok": True}
         assert store.get_session(ret["session_id"])["state"] == "CLOSED" and store.current_session() is None
-        assert refund_rows() == [] and points_of(member_id) == 8
+        assert refund_rows() == [] and points_of(member_id) == 3
         assert client.get("/api/returns/current").json() == {"return": None}
 
 
@@ -361,11 +361,11 @@ def test_stripe_partial_refund_on_the_original_payment_intent(member_id, fake_st
         shelf(client, with_bays(b0=[1]), 3)
         refund = client.post("/api/returns/confirm").json()["refund"]
         [kw] = fake_stripe.named("Refund.create")
-        assert kw["payment_intent"] == "pi_3QabcdEFGH12xyz9" and kw["amount"] == 378
+        assert kw["payment_intent"] == "pi_3QabcdEFGH12xyz9" and kw["amount"] == 270
         assert kw["idempotency_key"] == f"speedmart-refund-{ret['session_id']}-1"
         assert kw["metadata"]["session_id"] == sid
         assert refund["provider"] == "stripe_test" and refund["provider_ref"] == "re_3QtestREFUND01"
-        assert refund["status"] == "SUCCEEDED" and refund["amount_usd"] == 3.78
+        assert refund["status"] == "SUCCEEDED" and refund["amount_usd"] == 2.70
 
 
 def test_stripe_error_falls_back_to_mock(member_id, fake_stripe):
@@ -376,7 +376,7 @@ def test_stripe_error_falls_back_to_mock(member_id, fake_stripe):
         shelf(client, FULL, 3)
         refund = client.post("/api/returns/confirm").json()["refund"]
         assert len(fake_stripe.named("Refund.create")) == 1
-        assert refund["provider"] == "mock" and refund["status"] == "SUCCEEDED" and refund["amount_usd"] == 8.64
+        assert refund["provider"] == "mock" and refund["status"] == "SUCCEEDED" and refund["amount_usd"] == 3.78
 
 
 def test_stripe_card_error_fails_and_keeps_the_return_open(member_id, fake_stripe):
@@ -387,7 +387,7 @@ def test_stripe_card_error_fails_and_keeps_the_return_open(member_id, fake_strip
         shelf(client, FULL, 3)
         body = client.post("/api/returns/confirm").json()
         assert body["refund"]["status"] == "FAILED" and body["message"] == "Refund refused."
-        assert store.current_session()["state"] == "RETURNING" and points_of(member_id) == 8
+        assert store.current_session()["state"] == "RETURNING" and points_of(member_id) == 3
         fake_stripe.refund_error = None  # retry uses a new idempotency key
         assert client.post("/api/returns/confirm").json()["refund"]["status"] == "SUCCEEDED"
         keys = [kw["idempotency_key"] for kw in fake_stripe.named("Refund.create")]
@@ -413,15 +413,15 @@ def test_mock_payment_refunds_through_mock_even_with_stripe_on(member_id, monkey
 def test_refund_event_shows_refund_screen_then_idle(shown, monkeypatch):
     monkeypatch.setattr(serial_bridge, "REFUND_HOLD_S", 0.1)
     d = serial_bridge.director
-    d.handle({"type": "refund", "status": "SUCCEEDED", "amount_usd": 8.64})
-    assert shown[-1] == ("REFUND", "$8.64")
+    d.handle({"type": "refund", "status": "SUCCEEDED", "amount_usd": 3.78})
+    assert shown[-1] == ("REFUND", "$3.78")
     d.handle({"type": "session_state", "from": "RETURNING", "to": "CLOSED"})
-    assert d.screen == ("REFUND", "$8.64")  # held, not cut to IDLE at once
+    assert d.screen == ("REFUND", "$3.78")  # held, not cut to IDLE at once
     time.sleep(0.3)
     assert shown[-1] == ("IDLE",)
-    d.handle({"type": "refund", "status": "FAILED", "amount_usd": 8.64})
+    d.handle({"type": "refund", "status": "FAILED", "amount_usd": 3.78})
     assert shown[-1] == ("IDLE",)
-    assert serial_bridge.display_command("REFUND", "$8.64") == "DISP,REFUND,$8.64"
+    assert serial_bridge.display_command("REFUND", "$3.78") == "DISP,REFUND,$3.78"
 
 
 # --- measured results ---
@@ -442,7 +442,7 @@ def test_receipt_and_metrics_measure_the_visit(member_id):
         m = client.get("/admin/state").json()["metrics"]
         assert m["sessions_today"] == 1 and m["paid_today"] == 1  # the return is not a shopping session
         assert m["avg_in_store_s"] is not None and m["avg_exit_to_approval_s"] is not None
-        assert m["refunds_today"] == 1 and m["refunded_usd_today"] == 8.64
+        assert m["refunds_today"] == 1 and m["refunded_usd_today"] == 3.78
         events = [json.loads(line)["type"] for line in
                   (db.DATA_DIR / "events.log.jsonl").read_text(encoding="utf-8").splitlines()]
         for kind in ("first_pick", "session_metrics", "return_started", "return_detected", "refund"):

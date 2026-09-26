@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 
 from pathlib import Path
 
@@ -112,10 +113,10 @@ def events(event_type: str) -> list[dict]:
     return [r for r in rows if r["type"] == event_type]
 
 
-GOOD = {"goal_summary": "run recovery",
-        "items": [{"sku": "elx", "qty": 1, "reason": "Replaces salts lost on your run"},
-                  {"sku": "rec", "qty": 1, "reason": "Pairs with electrolytes for recovery"}],
-        "budget_override_usd": 15}
+GOOD = {"goal_summary": "study session fuel",
+        "items": [{"sku": "rec", "qty": 1, "reason": "Caffeine to keep you focused"},
+                  {"sku": "bar", "qty": 1, "reason": "A crunchy snack while you study"}],
+        "budget_override_usd": 10}
 
 # --- LLM path ---
 
@@ -124,16 +125,17 @@ def test_llm_success_path(tmp_data, llm_openai, monkeypatch):
     fake = openai_reply("```json\n" + json.dumps(GOOD) + "\n```")  # fences must be stripped
     monkeypatch.setattr(intent.httpx, "post", fake)
     c = logged_in_client(add_member())
-    r = c.post("/api/intent", json={"text": "recovering from a run, under $15"})
+    r = c.post("/api/intent", json={"text": "something for a study session, under $10"})
     assert r.status_code == 200
     plan = r.json()
     assert plan["source"] == "llm"
-    assert plan["goal_summary"] == "run recovery"
-    assert [(i["sku"], i["qty"]) for i in plan["items"]] == [("elx", 1), ("rec", 1)]
-    assert plan["items"][0]["name"] == "Electrolyte tabs" and plan["items"][0]["unit_price_usd"] == 8.0
-    assert plan["est_total_usd"] == 12.96
-    assert plan["budget_usd"] == 15.0 and plan["fits_budget"] is True
-    assert plan["bays"] == [0, 1]
+    assert plan["goal_summary"] == "study session fuel"
+    assert [(i["sku"], i["qty"]) for i in plan["items"]] == [("rec", 1), ("bar", 1)]
+    assert plan["items"][0]["name"] == "Energy drink" and plan["items"][0]["unit_price_usd"] == 3.0
+    assert plan["items"][0]["reason"] == "Caffeine to keep you focused"  # already says caffeine: unchanged
+    assert plan["est_total_usd"] == 5.94
+    assert plan["budget_usd"] == 10.0 and plan["fits_budget"] is True
+    assert plan["bays"] == [1, 2]
     assert plan["plan_id"].startswith("pln_") and plan["created_at"]
     # request shape: OpenAI compatible, 3 s timeout, catalog + budget + text sent
     url, kwargs = fake.calls[0]
@@ -141,7 +143,7 @@ def test_llm_success_path(tmp_data, llm_openai, monkeypatch):
     assert kwargs["timeout"] == 3.0
     sent = json.loads(kwargs["json"]["messages"][1]["content"])
     assert {s["sku"] for s in sent["catalog"]} == {s["sku"] for s in CATALOG["skus"]}
-    assert sent["budget_usd"] == 20.0 and "run" in sent["text"]
+    assert sent["budget_usd"] == 20.0 and "study" in sent["text"]
     # stored and logged
     assert c.get("/api/intent/current").json()["plan_id"] == plan["plan_id"]
     logged = events("intent_plan")
@@ -159,16 +161,16 @@ def test_anthropic_provider(tmp_data, monkeypatch):
         return httpx.Response(200, json={"content": [{"type": "text", "text": json.dumps(GOOD)}]},
                               request=httpx.Request("POST", url))
     monkeypatch.setattr(intent.httpx, "post", fake_post)
-    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "run recovery"}).json()
+    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "study session fuel"}).json()
     assert plan["source"] == "llm"
 
 
 def test_invalid_llm_json_falls_back_to_rules(tmp_data, llm_openai, monkeypatch):
-    monkeypatch.setattr(intent.httpx, "post", openai_reply("Sure! Here is your plan: electrolytes."))
-    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Post run recovery under $15"}).json()
+    monkeypatch.setattr(intent.httpx, "post", openai_reply("Sure! Here is your plan: a hydration drink."))
+    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Rehydrate after a run under $10"}).json()
     assert plan["source"] == "rules"
-    assert [i["sku"] for i in plan["items"]] == ["elx", "rec"]
-    assert plan["est_total_usd"] <= plan["budget_usd"] == 15.0
+    assert [i["sku"] for i in plan["items"]] == ["elx", "wat"]
+    assert plan["est_total_usd"] <= plan["budget_usd"] == 10.0
     assert events("intent_plan")[-1]["fallback_reason"].startswith("invalid:not_json")
 
 
@@ -176,7 +178,7 @@ def test_llm_timeout_falls_back(tmp_data, llm_openai, monkeypatch):
     def slow(url, **kwargs):
         raise httpx.ReadTimeout("timed out")
     monkeypatch.setattr(intent.httpx, "post", slow)
-    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Quick protein snack"}).json()
+    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Quick snack"}).json()
     # the rules planner picks every snack on the shelf; all of them fit the $20 budget
     assert plan["source"] == "rules" and [i["sku"] for i in plan["items"]] == skus_tagged("snack")
     assert events("intent_plan")[-1]["fallback_reason"] == "llm_error:ReadTimeout"
@@ -215,10 +217,11 @@ def test_unknown_sku_via_route_falls_back(tmp_data, llm_openai, monkeypatch):
 
 
 def test_over_budget_rejected():
-    data = reply(items=[{"sku": "elx", "qty": 2, "reason": "Two"}, {"sku": "rec", "qty": 1, "reason": "One"}])
-    # 2 x 8.00 + 4.00 = 20.00, with 8% tax 21.60 > 20
+    data = reply(items=[{"sku": "mix", "qty": 2, "reason": "Two"}, {"sku": "elx", "qty": 2, "reason": "Two"},
+                        {"sku": "rec", "qty": 2, "reason": "Two"}])
+    # 2 x 4.00 + 2 x 3.50 + 2 x 3.00 = 21.00, with 8% tax 22.68 > 20
     with pytest.raises(intent.PlanInvalid, match="over_budget"):
-        intent.validate_llm_plan(data, "recovery", MEMBER)
+        intent.validate_llm_plan(data, "everything", MEMBER)
 
 
 def test_qty_above_stock_rejected():
@@ -264,33 +267,65 @@ def test_budget_override_only_lowers():
 
 
 def test_budget_override_applied_to_validation():
-    # elx + rec = 12.96 fits $20 but not "under $10"
+    # rec + bar = 5.94 fits $20 but not "under $5"
     with pytest.raises(intent.PlanInvalid, match="over_budget"):
-        intent.validate_llm_plan(reply(budget_override_usd=10), "recovery, ten max", MEMBER)
+        intent.validate_llm_plan(reply(budget_override_usd=5), "study, five max", MEMBER)
     with pytest.raises(intent.PlanInvalid, match="over_budget"):
-        intent.validate_llm_plan(reply(), "recovery under $10", MEMBER)
-    summary, lines, reasons, budget = intent.validate_llm_plan(reply(budget_override_usd=15), "recovery", MEMBER)
-    assert budget == 1500 and lines == {"elx": 1, "rec": 1}
+        intent.validate_llm_plan(reply(), "study fuel under $5", MEMBER)
+    summary, lines, reasons, budget = intent.validate_llm_plan(reply(budget_override_usd=15), "study", MEMBER)
+    assert budget == 1500 and lines == {"rec": 1, "bar": 1}
     with pytest.raises(intent.PlanInvalid, match="budget_override_not_a_number"):
-        intent.validate_llm_plan(reply(budget_override_usd="15"), "recovery", MEMBER)
+        intent.validate_llm_plan(reply(budget_override_usd="15"), "study", MEMBER)
 
 
 def test_rules_respect_budget():
-    _, lines, _, budget = intent.rules_plan("recovering from a run, under $10", MEMBER)
-    assert budget == 1000 and lines == {"elx": 1}
+    _, lines, _, budget = intent.rules_plan("thirsty after a run, under $4", MEMBER)
+    assert budget == 400 and lines == {"elx": 1}  # 3.78; adding the water (5.40) would not fit
     _, lines, _, _ = intent.rules_plan("vegan snacks for two", MEMBER)
-    assert lines == {sku: 2 for sku in skus_tagged("snack")}  # two of each snack still fits $20
-    _, lines, _, _ = intent.rules_plan("protein snack under $3", MEMBER)
+    assert lines == {sku: 2 for sku in skus_tagged("vegan")}  # two of each vegan item still fits $20
+    _, lines, _, _ = intent.rules_plan("snack under $2", MEMBER)
     assert lines == {}  # nothing fits: an empty plan, never an over-budget one
     _, lines, _, _ = intent.rules_plan("caviar", MEMBER)
     assert lines == {}
 
 
 def test_member_budget_from_db(tmp_data, llm_off):
-    plan = logged_in_client(add_member(budget=5.0)).post("/api/intent", json={"text": "recovery drink"}).json()
-    assert plan["budget_usd"] == 5.0
-    assert plan["est_total_usd"] <= 5.0
-    assert [i["sku"] for i in plan["items"]] == ["rec"]  # elx ($8.64) cannot fit
+    plan = logged_in_client(add_member(budget=3.5)).post("/api/intent", json={"text": "energy drink"}).json()
+    assert plan["budget_usd"] == 3.5
+    assert plan["est_total_usd"] <= 3.5
+    assert [i["sku"] for i in plan["items"]] == ["rec"]  # 3.24; the other drinks on top of it cannot fit
+
+
+# --- the chips on intent.html and the keyword planner ---
+
+
+@pytest.mark.parametrize("text, skus", [
+    ("Rehydrate after a run", ["elx", "wat"]),
+    ("Study session fuel", ["rec", "bar"]),  # caffeine, then its complement
+    ("Vegan snack and a drink", ["wat", "mix"]),  # vegan items only: never the chips or the energy drink
+    ("I'm thirsty", ["elx", "wat"]),
+    ("hungry", ["bar", "mix"]),
+    ("something with caffeine", ["rec", "bar"]),
+])
+def test_rules_planner_keywords(text, skus):
+    _, lines, _, _ = intent.rules_plan(text, MEMBER)
+    assert sorted(lines) == sorted(skus)
+
+
+def test_intent_chips_are_the_documented_ones():
+    html = (Path(__file__).resolve().parent.parent / "web" / "intent.html").read_text(encoding="utf-8")
+    chips = re.findall(r'<button type="button" class="chip">([^<]+)</button>', html)
+    assert chips == ["Rehydrate after a run", "Study session fuel", "Vegan snack and a drink"]
+
+
+def test_energy_drink_reason_always_mentions_caffeine():
+    plan = intent.build_plan("study", {"rec": 1}, {"rec": "Keeps you going"}, 2000, "llm")
+    assert plan["items"][0]["reason"] == "Keeps you going, has caffeine"
+    _, lines, reasons, budget = intent.rules_plan("a drink", MEMBER)
+    rec = next(i for i in intent.build_plan("a drink", lines, reasons, budget, "rules")["items"] if i["sku"] == "rec")
+    assert "caffeine" in rec["reason"].lower()
+    other = intent.build_plan("x", {"wat": 1}, {"wat": "Keeps you hydrated"}, 2000, "rules")["items"][0]
+    assert other["reason"] == "Keeps you hydrated"
 
 
 # --- routes ---
@@ -338,13 +373,13 @@ def test_plan_glows_bays_and_shows_find(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=True)
     calls = fake_outputs(monkeypatch)
     c = logged_in_client(add_member())
-    plan = c.post("/api/intent", json={"text": "Post run recovery under $15"}).json()
-    assert plan["bays"] == [0, 1]
-    assert calls == [("plan_bays", [0, 1]), ("find", [0, 1])]
-    assert intent.shown_bays() == [0, 1]
+    plan = c.post("/api/intent", json={"text": "Rehydrate after a run"}).json()
+    assert plan["bays"] == [0, 3]
+    assert calls == [("plan_bays", [0, 3]), ("find", [0, 3])]
+    assert intent.shown_bays() == [0, 3]
     calls.clear()
-    c.post("/api/intent", json={"text": "Post run recovery under $15"})  # same bays: no re-broadcast
-    assert calls == [("find", [0, 1])]
+    c.post("/api/intent", json={"text": "Rehydrate after a run"})  # same bays: no re-broadcast
+    assert calls == [("find", [0, 3])]
     calls.clear()
     c.delete("/api/intent")
     assert calls == [("plan_bays", [])] and intent.shown_bays() == []
@@ -364,14 +399,14 @@ def test_empty_plan_points_nowhere(tmp_data, llm_off, monkeypatch):
 def test_shelf_cleared_on_session_end_and_new_entry(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=True)
     calls = fake_outputs(monkeypatch)
-    logged_in_client(add_member()).post("/api/intent", json={"text": "Post run recovery under $15"})
+    logged_in_client(add_member()).post("/api/intent", json={"text": "Rehydrate after a run"})
     calls.clear()
     eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "IN_STORE"}, to="CHECKOUT_PENDING")
     assert calls == []
     eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "CHECKOUT_PENDING"}, to="PAID")
     assert calls == [("plan_bays", [])]
 
-    logged_in_client(add_member()).post("/api/intent", json={"text": "Post run recovery under $15"})
+    logged_in_client(add_member()).post("/api/intent", json={"text": "Rehydrate after a run"})
     calls.clear()
     eventlog.log("session_state", session_id="ses_y", member_id="m2", **{"from": None}, to="IN_STORE")
     assert calls == [("plan_bays", [])]  # someone else's plan stops glowing when a new shopper enters
@@ -391,7 +426,7 @@ def test_someone_else_inside_sees_no_glow(tmp_data, llm_off, monkeypatch):
     from backend import store
     monkeypatch.setattr(store, "current_session", lambda: {"member_id": "mem_someone_else"})
     c = logged_in_client(add_member())
-    assert c.post("/api/intent", json={"text": "Post run recovery under $15"}).status_code == 200
+    assert c.post("/api/intent", json={"text": "Rehydrate after a run"}).status_code == 200
     c.delete("/api/intent")
     assert calls == [] and intent.shown_bays() == []
 
@@ -412,16 +447,16 @@ def test_gate_screen_off_still_glows_the_maps(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=False)
     calls = fake_outputs(monkeypatch)
     c = logged_in_client(add_member())
-    c.post("/api/intent", json={"text": "Post run recovery under $15"})
+    c.post("/api/intent", json={"text": "Rehydrate after a run"})
     c.delete("/api/intent")
-    assert calls == [("plan_bays", [0, 1]), ("plan_bays", [])]  # never ("find", ...)
+    assert calls == [("plan_bays", [0, 3]), ("plan_bays", [])]  # never ("find", ...)
 
 
 # --- compare_cart_to_plan ---
 
-PLAN = {"goal_summary": "run recovery", "budget_usd": 15.0,
-        "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1},
-                  {"sku": "rec", "name": "Recovery drink", "qty": 1}]}
+PLAN = {"goal_summary": "rehydrate after a run", "budget_usd": 8.0,
+        "items": [{"sku": "elx", "name": "Hydration drink", "qty": 1},
+                  {"sku": "wat", "name": "Water", "qty": 1}]}
 
 
 def cart(*lines, total):
@@ -430,51 +465,51 @@ def cart(*lines, total):
 
 
 def test_compare_exact_match():
-    r = intent.compare_cart_to_plan(cart(("elx", 1), ("rec", 1), total=12.96), PLAN)
+    r = intent.compare_cart_to_plan(cart(("elx", 1), ("wat", 1), total=5.40), PLAN)
     assert r == {"matches": True, "missing": [], "extra": [],
-                 "summary": "You asked for run recovery under $15: you have both items, $12.96."}
+                 "summary": "You asked for rehydrate after a run under $8: you have both items, $5.40."}
 
 
 def test_compare_missing():
-    r = intent.compare_cart_to_plan(cart(("elx", 1), total=8.64), PLAN)
+    r = intent.compare_cart_to_plan(cart(("elx", 1), total=3.78), PLAN)
     assert r["matches"] is False
-    assert r["missing"] == [{"sku": "rec", "name": "Recovery drink", "qty": 1}] and r["extra"] == []
-    assert r["summary"] == "You asked for run recovery under $15: you still need Recovery drink, $8.64."
+    assert r["missing"] == [{"sku": "wat", "name": "Water", "qty": 1}] and r["extra"] == []
+    assert r["summary"] == "You asked for rehydrate after a run under $8: you still need Water, $3.78."
 
 
 def test_compare_extra_and_over_budget():
-    r = intent.compare_cart_to_plan(cart(("elx", 1), ("rec", 1), ("bar", 1), total=16.74), PLAN)
+    r = intent.compare_cart_to_plan(cart(("elx", 1), ("wat", 1), ("mix", 1), total=9.72), PLAN)
     assert r["matches"] is False and r["missing"] == []
-    assert r["extra"] == [{"sku": "bar", "name": "Protein bar", "qty": 1}]
-    assert r["summary"] == ("You asked for run recovery under $15: you have everything, plus Protein bar, "
-                            "$16.74, over your $15 budget.")
+    assert r["extra"] == [{"sku": "mix", "name": "Vegan snack", "qty": 1}]
+    assert r["summary"] == ("You asked for rehydrate after a run under $8: you have everything, plus Vegan snack, "
+                            "$9.72, over your $8 budget.")
 
 
 def test_compare_missing_and_extra_and_qty_diff():
-    r = intent.compare_cart_to_plan(cart(("elx", 2), ("bar", 1), total=21.06), PLAN)
-    assert r["missing"] == [{"sku": "rec", "name": "Recovery drink", "qty": 1}]
-    assert r["extra"] == [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1},
-                          {"sku": "bar", "name": "Protein bar", "qty": 1}]
-    assert "you're missing Recovery drink and also picked Electrolyte tabs and Protein bar" in r["summary"]
+    r = intent.compare_cart_to_plan(cart(("elx", 2), ("bar", 1), total=10.26), PLAN)
+    assert r["missing"] == [{"sku": "wat", "name": "Water", "qty": 1}]
+    assert r["extra"] == [{"sku": "elx", "name": "Hydration drink", "qty": 1},
+                          {"sku": "bar", "name": "Chips", "qty": 1}]
+    assert "you're missing Water and also picked Hydration drink and Chips" in r["summary"]
 
 
 def test_compare_empty_cart_and_no_plan():
     r = intent.compare_cart_to_plan(cart(total=0), PLAN)
     assert r["matches"] is False and len(r["missing"]) == 2
-    assert r["summary"] == "You asked for run recovery under $15: you haven't picked anything up yet."
+    assert r["summary"] == "You asked for rehydrate after a run under $8: you haven't picked anything up yet."
     assert intent.compare_cart_to_plan(cart(total=0), None)["matches"] is False
     assert intent.compare_cart_to_plan(None, None)["summary"] == "No shopping plan for this visit."
 
 
 def test_compare_single_item_and_cents_budget():
     plan = {"goal_summary": "a quick snack", "budget_usd": 7.5,
-            "items": [{"sku": "bar", "name": "Protein bar", "qty": 1}]}
-    r = intent.compare_cart_to_plan(cart(("bar", 1), total=3.78), plan)
-    assert r["summary"] == "You asked for a quick snack under $7.50: you have it, $3.78."
+            "items": [{"sku": "bar", "name": "Chips", "qty": 1}]}
+    r = intent.compare_cart_to_plan(cart(("bar", 1), total=2.70), plan)
+    assert r["summary"] == "You asked for a quick snack under $7.50: you have it, $2.70."
 
 
 def test_compare_is_pure():
-    snap = cart(("elx", 1), total=8.64)
+    snap = cart(("elx", 1), total=3.78)
     before = json.dumps([snap, PLAN], sort_keys=True)
     intent.compare_cart_to_plan(snap, PLAN)
     assert json.dumps([snap, PLAN], sort_keys=True) == before

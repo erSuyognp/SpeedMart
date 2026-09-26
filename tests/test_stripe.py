@@ -181,13 +181,13 @@ def test_approve_creates_payment_intent(fake_stripe, member_id):
     sid, iid = q["cart"]["session_id"], q["instruction"]["instruction_id"]
     [kw] = fake_stripe.named("PaymentIntent.create")
     assert kw == {
-        "amount": 864, "currency": "usd", "customer": f"cus_{member_id}", "payment_method": "pm_1TestVisa",
+        "amount": 378, "currency": "usd", "customer": f"cus_{member_id}", "payment_method": "pm_1TestVisa",
         "payment_method_types": ["card"], "off_session": True, "confirm": True, "description": "SpeedMart #01",
         "metadata": {"session_id": sid, "instruction_id": iid}, "idempotency_key": f"speedmart-{sid}-1",
     }
     assert p["status"] == "AUTHORIZED" and p["provider"] == "stripe_test"
     assert p["provider_ref"] == "pi_3QabcdEFGH12xyz9" and p["auth_code"] == "12XYZ9"
-    assert p["points_earned"] == 8
+    assert p["points_earned"] == 3
 
 
 def test_card_error_is_declined_and_retry_uses_new_idempotency_key(fake_stripe, member_id):

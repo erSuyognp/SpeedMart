@@ -148,18 +148,18 @@ def enter(client: TestClient, mid: str) -> str:
 def test_quote_freezes_cart_and_cancel_unfreezes(member_id):
     with TestClient(app) as client:
         session_id = enter(client, member_id)
-        shelf(client, with_bays(b0=[1]), frame_id=2)  # one electrolyte picked
+        shelf(client, with_bays(b0=[1]), frame_id=2)  # one hydration drink picked
 
         r = client.post("/api/gate/exit/quote", json={"gate_token": "nope"})
         assert r.status_code == 403
         r = client.post("/api/gate/exit/quote", json=EXIT)
         assert r.status_code == 200, r.text
         cart = r.json()["cart"]
-        assert cart["state"] == "CHECKOUT_PENDING" and cart["session_id"] == session_id and cart["total_usd"] == 8.64
+        assert cart["state"] == "CHECKOUT_PENDING" and cart["session_id"] == session_id and cart["total_usd"] == 3.78
 
         shelf(client, FULL, frame_id=3)  # put back after the quote: the frozen cart does not change
         again = client.post("/api/gate/exit/quote", json=EXIT).json()["cart"]
-        assert again["total_usd"] == 8.64 and again["state"] == "CHECKOUT_PENDING"
+        assert again["total_usd"] == 3.78 and again["state"] == "CHECKOUT_PENDING"
 
         assert client.post("/api/gate/exit/cancel").json() == {"ok": True}
         current = client.get("/api/store/current").json()

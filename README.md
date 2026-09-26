@@ -8,6 +8,10 @@ item and it appears in your phone cart in about a second, put it back and it dis
 your cart in one sentence and suggests complements that fit your budget. At the exit you review the total and
 approve it with Face ID against a scoped, single-use agent token. The shelf lights up green.
 
+The shelf holds five products, bays 1 to 5 from left to right: Hydration drink ($3.50), Energy drink ($3.00),
+Chips ($2.50), Water ($1.50) and Vegan snack ($4.00). Names, prices, tags and YOLO classes live in
+`catalog.json`; the printed bay cards and every screen read them from there.
+
 Everything payment-related is **sandbox**: Stripe test mode with a test Visa card, or a mock provider. The
 authorization object is modeled on Visa Intelligent Commerce concepts. It is not a Visa API call.
 

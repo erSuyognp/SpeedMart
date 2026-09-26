@@ -102,9 +102,9 @@ The shopper tells you what they need. Build a short shopping plan using ONLY the
 Reply with JSON only, no prose, no code fences, exactly this shape:
 {"goal_summary": str, "items": [{"sku": str, "qty": int, "reason": str}], "budget_override_usd": number or null}
 Rules:
-- goal_summary: a short lowercase phrase of at most 6 words, e.g. "run recovery" or "vegan snacks for two".
+- goal_summary: a short lowercase phrase of at most 6 words, e.g. "rehydrate after a run" or "study session fuel".
 - sku must be one of the catalog skus. qty from 1 to units_available.
-- reason: at most 10 words, why this item fits the goal.
+- reason: at most 10 words, why this item fits the goal. For an item tagged caffeine, say it has caffeine.
 - The total of price_usd * qty plus tax (tax_rate) must not exceed the budget.
 - budget_override_usd: the budget the shopper states in their text (e.g. "under $15" -> 15), else null.
 - Respect the dietary tag when it is set. Pick only items that fit the goal; fewer is fine."""
@@ -216,21 +216,27 @@ def validate_llm_plan(data: dict[str, Any], text: str, member: dict[str, Any]) -
 # --- rules planner (fallback, and the only planner when the LLM is off) ---
 
 TAG_WORDS: dict[str, list[str]] = {
-    "recovery": ["recovery", "recover", "run", "running", "ran", "jog", "jogging", "workout", "gym", "exercise",
-                 "sweat", "marathon", "training", "hydrate", "hydration", "electrolyte", "cramp"],
-    "drink": ["drink", "thirsty", "beverage", "sip", "hydrate", "hydration", "refresh"],
-    "snack": ["snack", "hungry", "protein", "bite", "munch", "food", "energy"],
+    "hydration": ["hydrate", "rehydrate", "hydration", "thirsty", "run", "running", "ran", "jog",
+                  "jogging", "workout", "gym", "exercise", "sweat", "marathon", "training", "electrolyte"],
+    "caffeine": ["caffeine", "energy", "study", "studying", "exam", "tired", "sleepy", "awake", "focus",
+                 "coffee", "cram", "cramming"],
+    "drink": ["drink", "beverage", "sip", "refresh"],
+    "snack": ["snack", "hungry", "bite", "munch", "food", "crunchy"],
+    "vegan": ["vegan"],
 }
 TAG_REASONS = {
-    "recovery": "Replaces electrolytes after a workout",
+    "hydration": "Keeps you hydrated",
+    "caffeine": "Has caffeine to keep you focused",
     "drink": "Something to drink",
-    "snack": "Quick protein snack",
+    "snack": "A quick snack",
+    "vegan": "Vegan friendly",
 }
+CAFFEINE_NOTE = "has caffeine"
 _COUNT_WORDS = {"two": 2, "2": 2, "three": 3, "3": 3, "four": 4, "4": 4, "couple": 2, "pair": 2}
 
 
 def _word_matches(token: str, word: str) -> bool:
-    """Loose match for plurals and verb forms: 'drinks'~'drink', 'recovering'~'recovery'."""
+    """Loose match for plurals and verb forms: 'drinks'~'drink', 'hydrating'~'hydration'."""
     word = word.lower()
     if len(word) <= 4:
         return token in (word, word + "s")
@@ -247,7 +253,7 @@ def _qty_wanted(tokens: list[str]) -> int:
 
 
 def _short_goal(text: str) -> str:
-    """The shopper's words minus any budget phrase, at most 6 words: "post run recovery"."""
+    """The shopper's words minus any budget phrase, at most 6 words: "rehydrate after a run"."""
     t = text.lower()
     for p in _BUDGET_PATTERNS:
         t = p.sub(" ", t)
@@ -259,10 +265,13 @@ def rules_plan(text: str, member: dict[str, Any]) -> tuple[str, dict[str, int], 
     """Match words against SKU names and tags, add complements, fill greedily within the budget."""
     budget = effective_budget_cents(member["budget_usd"], text)
     tokens = re.findall(r"[a-z0-9]+", text.lower())
+    vegan_only = any(_word_matches(t, "vegan") for t in tokens)  # "vegan snack and a drink": vegan items only
     scores: dict[str, int] = {}
     reasons: dict[str, str] = {}
     tag_matched: set[str] = set()
     for sku, s in settings.skus.items():
+        if vegan_only and "vegan" not in s.tags:
+            continue
         score = 0
         for tag in s.tags:
             if tag.startswith("complements:"):
@@ -278,8 +287,11 @@ def rules_plan(text: str, member: dict[str, Any]) -> tuple[str, dict[str, int], 
             reasons.setdefault(sku, f"Matches {name_hits[0]}")
         if score:
             scores[sku] = score
-    # complements of matched items ("complements:elx" on rec means rec pairs with elx)
+    # complements of the one matched item ("complements:bar" on rec means rec pairs with bar); a request that
+    # already matched several products stays focused on them
     for sku, s in settings.skus.items():
+        if len(tag_matched) != 1 or (vegan_only and "vegan" not in s.tags):
+            continue
         for tag in s.tags:
             base = tag.split(":", 1)[1] if tag.startswith("complements:") else None
             if base in tag_matched and sku not in tag_matched:
@@ -304,8 +316,11 @@ def build_plan(summary: str, lines: dict[str, int], reasons: dict[str, str], bud
     items = []
     for sku, s in settings.skus.items():  # catalog order
         if sku in lines:
+            reason = reasons[sku]
+            if "caffeine" in s.tags and "caffeine" not in reason.lower():  # never recommend caffeine silently
+                reason = f"{reason}, {CAFFEINE_NOTE}"
             items.append({"sku": sku, "name": s.name, "qty": lines[sku],
-                          "unit_price_usd": to_usd(to_cents(s.price_usd)), "reason": reasons[sku]})
+                          "unit_price_usd": to_usd(to_cents(s.price_usd)), "reason": reason})
     total = total_with_tax_cents(lines)
     return {
         "plan_id": f"pln_{secrets.token_urlsafe(8)}",
@@ -488,7 +503,7 @@ def post_intent(body: IntentIn, request: Request):
         return _error(401, "not_logged_in", "Please sign in first.")
     text = " ".join(body.text.split())
     if not text:
-        return _error(400, "empty_text", "Tell us what you need, for example \"a quick protein snack\".")
+        return _error(400, "empty_text", "Tell us what you need, for example \"a vegan snack and a drink\".")
     if len(text) > MAX_TEXT_CHARS:
         return _error(400, "text_too_long", f"Please keep it under {MAX_TEXT_CHARS} characters.")
     member = _load_member(member_id)

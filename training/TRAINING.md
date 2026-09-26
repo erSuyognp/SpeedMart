@@ -23,11 +23,11 @@ checks that they match):
 
 | SKU | Product | YOLO class name |
 |---|---|---|
-| `elx` | Electrolyte tabs | `electrolytes` |
-| `rec` | Recovery drink | `recovery_drink` |
-| `bar` | Protein bar | `protein_bar` |
-| `wat` | Sparkling water | `sparkling_water` |
-| `mix` | Vegan trail mix | `trail_mix` |
+| `elx` | Hydration drink | `hydration_drink` |
+| `rec` | Energy drink | `energy_drink` |
+| `bar` | Chips | `chips` |
+| `wat` | Water | `water` |
+| `mix` | Vegan snack | `vegan_snack` |
 
 ---
 
@@ -91,7 +91,7 @@ Count what you have:
 
 1. roboflow.com > **Create New Project** > type **Object Detection**, any name (e.g. `speedmart`).
 2. **Upload**: drag every folder from `training\raw\` into the upload page. Save and continue.
-3. **Classes**: create exactly `electrolytes`, `recovery_drink`, `protein_bar`, `sparkling_water`, `trail_mix` (lower case, underscore, no spaces, no plural
+3. **Classes**: create exactly `hydration_drink`, `energy_drink`, `chips`, `water`, `vegan_snack` (lower case, underscore, no spaces, no plural
    changes: the `yolo_class` values of `catalog.json`). A different spelling means the product is never
    mapped to its SKU.
 4. **Annotate**: draw a tight box around **every visible product** in every image, including partly
@@ -158,9 +158,9 @@ Cell 7 prints a table like:
 
 ```
 class                    P       R   mAP50  mAP50-95
-electrolytes         0.962   0.941   0.975     0.801  OK
-protein_bar          0.951   0.930   0.968     0.774  OK
-recovery_drink       0.940   0.922   0.955     0.760  OK
+chips                0.962   0.941   0.975     0.801  OK
+energy_drink         0.951   0.930   0.968     0.774  OK
+hydration_drink      0.940   0.922   0.955     0.760  OK
 all                  0.951   0.931   0.966     0.778
 PASS: every class mAP50 >= 0.90
 ```

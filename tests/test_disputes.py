@@ -58,7 +58,7 @@ def crop(client: TestClient, sid: str, bay: int = 0, kind: str = "baseline", uni
 
 
 def with_photos(client: TestClient, sid: str) -> None:
-    """Baseline of bay 0 with both electrolytes, then tag 0 gone."""
+    """Baseline of bay 0 with both hydration drinks, then tag 0 gone."""
     assert crop(client, sid, kind="baseline", units=(0, 1), ts=1_800_000_000_000)[0].status_code == 200
     assert crop(client, sid, kind="change", units=(1,), tags={"1": BAY0_TAGS["1"]},
                 ts=1_800_000_005_000)[0].status_code == 200
@@ -83,7 +83,7 @@ def test_camera_resolves_dispute_when_the_unit_is_back_at_the_exit(member_id):
     with TestClient(app) as client:
         enter(client, member_id)
         quote = client.post("/api/gate/exit/quote", json=EXIT).json()
-        assert quote["cart"]["total_usd"] == 8.64 and quote["cart"]["state"] == "CHECKOUT_PENDING"
+        assert quote["cart"]["total_usd"] == 3.78 and quote["cart"]["state"] == "CHECKOUT_PENDING"
         shelf(client, FULL, 3)  # put back after the cart froze: the frozen cart still charges it
         assert qty(client.get("/api/store/current").json()["cart"], "elx") == 1
 
@@ -92,7 +92,7 @@ def test_camera_resolves_dispute_when_the_unit_is_back_at_the_exit(member_id):
         d = r.json()["dispute"]
         assert d["outcome"] == "resolved_camera" and d["status"] == "resolved"
         assert d["message"] == "Our mistake, removed from your cart."
-        assert d["stage"] == "checkout" and d["amount_usd"] == 8.64
+        assert d["stage"] == "checkout" and d["amount_usd"] == 3.78
         assert r.json()["cart"]["items"] == [] and r.json()["cart"]["total_usd"] == 0.0
         # the exit asks again: the corrected frozen cart is empty, so nothing to pay
         again = client.post("/api/gate/exit/quote", json=EXIT).json()
@@ -103,7 +103,7 @@ def test_camera_resolves_dispute_when_the_unit_is_back_at_the_exit(member_id):
 def test_camera_resolves_a_manual_override_the_shelf_disagrees_with(member_id):
     with TestClient(app) as client:
         enter(client, member_id, taken=FULL)
-        store.apply_override("bar", 1)  # staff added a protein bar that is still on the shelf
+        store.apply_override("bar", 1)  # staff added chips that are still on the shelf
         assert qty(client.get("/api/store/current").json()["cart"], "bar") == 1
         d = dispute(client, "bar").json()
         assert d["dispute"]["outcome"] == "resolved_camera" and d["cart"]["items"] == []
@@ -157,43 +157,43 @@ def test_remove_anyway_updates_the_cart_and_totals(member_id):
     with TestClient(app) as client:
         sid = enter(client, member_id, taken=ELX_AND_BAR_TAKEN)
         with_photos(client, sid)
-        assert client.get("/api/store/current").json()["cart"]["total_usd"] == 12.42
+        assert client.get("/api/store/current").json()["cart"]["total_usd"] == 6.48
         d = dispute(client, "elx").json()["dispute"]
         r = client.post(f"/api/disputes/{d['dispute_id']}/remove")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["dispute"]["outcome"] == "removed" and body["dispute"]["amount_usd"] == 8.64
+        assert body["dispute"]["outcome"] == "removed" and body["dispute"]["amount_usd"] == 3.78
         assert body["dispute"]["message"] == "Removed. Our team will review the shelf photos."
         cart = body["cart"]
         assert qty(cart, "elx") == 0 and qty(cart, "bar") == 1
-        assert (cart["subtotal_usd"], cart["tax_usd"], cart["total_usd"]) == (3.50, 0.28, 3.78)
-        assert client.get("/api/store/current").json()["cart"]["total_usd"] == 3.78
+        assert (cart["subtotal_usd"], cart["tax_usd"], cart["total_usd"]) == (2.50, 0.20, 2.70)
+        assert client.get("/api/store/current").json()["cart"]["total_usd"] == 2.70
         override = events("override")[-1]
         assert override["source"] == "dispute" and override["delta"] == -1 and override["sku"] == "elx"
         assert events("dispute_removed")[-1]["dispute_id"] == d["dispute_id"]
         # the charge uses the corrected cart
         quote = client.post("/api/gate/exit/quote", json=EXIT).json()
-        assert quote["cart"]["total_usd"] == 3.78 and quote["instruction"]["amount_usd"] == 3.78
+        assert quote["cart"]["total_usd"] == 2.70 and quote["instruction"]["amount_usd"] == 2.70
 
 
 def test_remove_anyway_at_the_exit_changes_the_frozen_cart(member_id):
     with TestClient(app) as client:
         enter(client, member_id, taken=ELX_AND_BAR_TAKEN)
-        assert client.post("/api/gate/exit/quote", json=EXIT).json()["instruction"]["amount_usd"] == 12.42
+        assert client.post("/api/gate/exit/quote", json=EXIT).json()["instruction"]["amount_usd"] == 6.48
         d = dispute(client, "bar").json()["dispute"]
         assert d["outcome"] == "needs_review" and d["stage"] == "checkout"
         body = client.post(f"/api/disputes/{d['dispute_id']}/remove").json()
-        assert body["cart"]["state"] == "CHECKOUT_PENDING" and body["cart"]["total_usd"] == 8.64
+        assert body["cart"]["state"] == "CHECKOUT_PENDING" and body["cart"]["total_usd"] == 3.78
         quote = client.post("/api/gate/exit/quote", json=EXIT).json()
-        assert quote["instruction"]["amount_usd"] == 8.64
+        assert quote["instruction"]["amount_usd"] == 3.78
         face_id(client, member_id)
         paid = client.post("/api/gate/exit/approve").json()["payment"]
-        assert paid["status"] == "AUTHORIZED" and paid["amount_usd"] == 8.64
+        assert paid["status"] == "AUTHORIZED" and paid["amount_usd"] == 3.78
 
 
 def test_remove_anyway_limit_is_two_per_visit(member_id):
     with TestClient(app) as client:
-        enter(client, member_id, taken=with_bays(b0=[], b2=[5]))  # 2 electrolytes + 1 protein bar
+        enter(client, member_id, taken=with_bays(b0=[], b2=[5]))  # 2 hydration drinks + 1 chips
         for _ in range(2):
             d = dispute(client, "elx").json()["dispute"]
             assert d["outcome"] == "needs_review"
@@ -295,23 +295,23 @@ def test_post_purchase_dispute_refund_reuses_the_refund_path(member_id, monkeypa
         sid = buy(client, member_id)
         points = points_of(member_id)
         report = client.get(f"/api/receipt/{sid}").json()["report"]
-        assert report["eligible"] and report["items"] == [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1}]
+        assert report["eligible"] and report["items"] == [{"sku": "elx", "name": "Hydration drink", "qty": 1}]
 
         d = dispute(client, "elx", sid).json()["dispute"]
         assert d["outcome"] == "needs_review" and d["stage"] == "after_purchase"  # the shelf still has it gone
         r = client.post(f"/api/disputes/{d['dispute_id']}/remove")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["dispute"]["outcome"] == "refunded" and body["dispute"]["amount_usd"] == 8.64
-        assert body["dispute"]["message"] == "Refunded $8.64. Our team will review the shelf photos."
+        assert body["dispute"]["outcome"] == "refunded" and body["dispute"]["amount_usd"] == 3.78
+        assert body["dispute"]["message"] == "Refunded $3.78. Our team will review the shelf photos."
         assert body["refund"]["reason"] == "dispute" and body["refund"]["dispute_id"] == d["dispute_id"]
         assert body["refund"]["return_session_id"] is None and body["refund"]["status"] == "SUCCEEDED"
         assert calls == ["dispute"]
         row = refund_rows()[-1]
-        assert (row["reason"], row["dispute_id"], row["amount_cents"]) == ("dispute", d["dispute_id"], 864)
-        assert points_of(member_id) == points - 8
+        assert (row["reason"], row["dispute_id"], row["amount_cents"]) == ("dispute", d["dispute_id"], 378)
+        assert points_of(member_id) == points - 3
         receipt = client.get(f"/api/receipt/{sid}").json()
-        assert receipt["refunded_usd"] == 8.64 and receipt["refunds"][0]["reason"] == "dispute"
+        assert receipt["refunded_usd"] == 3.78 and receipt["refunds"][0]["reason"] == "dispute"
         assert receipt["report"]["eligible"] is False and receipt["return"]["reason"] == "nothing_to_return"
         # the same unit can never be refunded twice, by a dispute or a return
         assert dispute(client, "elx", sid).json()["error"] == "nothing_to_refund"
@@ -320,10 +320,10 @@ def test_post_purchase_dispute_refund_reuses_the_refund_path(member_id, monkeypa
 def test_post_purchase_camera_refunds_when_the_unit_is_on_the_shelf(member_id):
     with TestClient(app) as client:
         sid = buy(client, member_id)
-        shelf(client, FULL, 5)  # the electrolytes are on the shelf: the camera got the purchase wrong
+        shelf(client, FULL, 5)  # the hydration drinks are on the shelf: the camera got the purchase wrong
         body = dispute(client, "elx", sid).json()
-        assert body["dispute"]["outcome"] == "resolved_camera" and body["refund"]["amount_usd"] == 8.64
-        assert body["dispute"]["message"] == "Our mistake. Refund of $8.64 is on its way to your Visa ending 4242."
+        assert body["dispute"]["outcome"] == "resolved_camera" and body["refund"]["amount_usd"] == 3.78
+        assert body["dispute"]["message"] == "Our mistake. Refund of $3.78 is on its way to your Visa ending 4242."
 
 
 def test_post_purchase_dispute_rules(member_id):

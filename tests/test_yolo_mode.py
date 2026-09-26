@@ -166,7 +166,7 @@ def test_yolo_counts_drive_the_cart(monkeypatch, member_id):
     assert session["baseline"] == full_baseline()
     assert store.current_cart()["items"] == []
 
-    cart = push_counts(with_counts(b0={"elx": 1}), frame_id=2)  # one electrolyte gone by count
+    cart = push_counts(with_counts(b0={"elx": 1}), frame_id=2)  # one hydration drink gone by count
     assert qty(cart, "elx") == 1 and len(cart["items"]) == 1 and cart["warnings"] == []
     cart = push_counts(with_counts(b0={"elx": 1}), frame_id=3)  # repeated frame: no double count
     assert qty(cart, "elx") == 1
@@ -248,8 +248,8 @@ def test_misplaced_item_from_counts(monkeypatch, member_id):
     shelf_state.reset()
     shelf_state.apply_snapshot(yolo_snap(full_counts()))
     store.start_session(member_id)
-    assert qty(push_counts(with_counts(b2={"bar": 1}), frame_id=2), "bar") == 1  # a protein bar picked
-    # put back into the electrolyte bay: on the shelf again, not in the cart, and a warning
+    assert qty(push_counts(with_counts(b2={"bar": 1}), frame_id=2), "bar") == 1  # a bag of chips picked
+    # put back into the hydration drink bay: on the shelf again, not in the cart, and a warning
     cart = push_counts(with_counts(b0={"elx": 2, "bar": 1}, b2={"bar": 1}), frame_id=3)
     assert cart["items"] == []
     assert cart["warnings"] == [{"kind": "misplaced", "sku": "bar", "name": NAME["bar"], "bay": 0, "tag_id": None,
@@ -519,7 +519,7 @@ def test_clip_notice_accepts_counts_and_the_review_picks_the_clip_by_count(monke
         assert r.status_code == 200, r.text
         d = r.json()["dispute"]
         inputs = review.gather(disputes._row(d["dispute_id"]))
-        # the newest clip in which the electrolyte count dropped, not simply the newest clip
+        # the newest clip in which the hydration drink count dropped, not simply the newest clip
         assert [f["id"] for f in inputs["frames"]] == ["baseline", "latest", f"clip{first}_k0"]
         assert inputs["timeline"]["clips"][0]["counts_before"] == {"elx": 2}
         assert d["clips"][0]["counts_before"] == {"elx": 2} and d["clips"][0]["units_before"] == []

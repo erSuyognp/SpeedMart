@@ -34,6 +34,7 @@ SYSTEM_PROMPT = (
     "Write exactly one sentence of at most 20 words for the shopper's phone.\n"
     "Follow the DECISION exactly. Use only prices and product names given. No emojis, no hashtags, no quotes.\n"
     "If a GOAL is given, tie the sentence to it in the shopper's own words. Never invent a new goal.\n"
+    "If the DECISION has caffeine true, say that the suggested product contains caffeine.\n"
     "Friendly, brief, practical. Use the shopper's first name at most once."
 )
 
@@ -42,6 +43,7 @@ TEMPLATES = {
     "misplaced": "{name} is in the wrong bay. Please return it to bay {return_to_bay}.",
     "over_budget": "You're ${over_by} over budget. Putting back the {put_back_name} fixes it.",
     "suggest": "{cart_item} added. {sku_name} pairs well at ${price} and keeps you under budget.",
+    "suggest_caffeine": "{cart_item} added. {sku_name} has caffeine, pairs well at ${price} and keeps you under budget.",
     "ok": "Looking good. ${remaining} left in your budget.",
 }
 
@@ -103,9 +105,12 @@ def policy(cart: dict[str, Any], member: dict[str, Any] | None = None) -> dict[s
             new_sub = subtotal + price
             new_total = new_sub + tax_cents(new_sub, settings.store["tax_rate"])
             if new_total <= budget:
-                return {"kind": "suggest", "sku": comp, "sku_name": settings.skus[comp].name,
-                        "cart_item": item["name"], "price": _usd(price),
-                        "remaining_after": _usd(budget - new_total)}
+                decision = {"kind": "suggest", "sku": comp, "sku_name": settings.skus[comp].name,
+                            "cart_item": item["name"], "price": _usd(price),
+                            "remaining_after": _usd(budget - new_total)}
+                if "caffeine" in settings.skus[comp].tags:  # the shopper hears about caffeine before they grab it
+                    decision["caffeine"] = True
+                return decision
 
     return {"kind": "ok", "remaining": _usd(budget - total)}
 
@@ -115,7 +120,8 @@ def template(decision: dict[str, Any]) -> str:
     for key in ("over_by", "price", "remaining", "remaining_after"):
         if key in d:
             d[key] = fmt_usd(d[key])
-    return TEMPLATES[decision["kind"]].format(**d)
+    kind = "suggest_caffeine" if decision["kind"] == "suggest" and decision.get("caffeine") else decision["kind"]
+    return TEMPLATES[kind].format(**d)
 
 
 def refund_line(amount_usd: float, card_last4: str | None) -> str:
@@ -235,7 +241,7 @@ def validate(line: Any, decision: dict[str, Any], cart: dict[str, Any], member: 
     """The cleaned line if it may be shown, else None (caller keeps the template).
 
     Rules (9.6): one line, at most 25 words, no emoji, names only from the catalog. Also: every $ amount must be
-    one the policy or cart gave it, so the LLM can never invent a price.
+    one the policy or cart gave it, so the LLM can never invent a price. A caffeine suggestion must say caffeine.
     """
     if not isinstance(line, str):
         return None
@@ -246,14 +252,16 @@ def validate(line: Any, decision: dict[str, Any], cart: dict[str, Any], member: 
         return None
     if any(_is_emoji(ch) for ch in text) or "#" in text:
         return None
+    if decision.get("caffeine") and "caffeine" not in text.lower():
+        return None
 
     allowed = {w.lower() for s in settings.skus.values() for w in re.findall(r"[A-Za-z']+", s.name)}
     allowed |= {w.lower() for w in re.findall(r"[A-Za-z']+", settings.store.get("name", ""))}
-    allowed |= {"speedmart", *_ALWAYS_OK}
+    allowed |= {"speedmart", "caffeine", *_ALWAYS_OK}
     first = _first_name(member).lower()
     if first:
         allowed.add(first)
-    if plan:  # the shopper's own goal words ("Post run recovery") are theirs to echo back
+    if plan:  # the shopper's own goal words ("Rehydrate after a run") are theirs to echo back
         allowed |= {w.lower() for w in re.findall(r"[A-Za-z']+", plan.get("goal_summary") or "")}
     for m in _CAP_WORD.finditer(text):
         before = text[:m.start()].rstrip()

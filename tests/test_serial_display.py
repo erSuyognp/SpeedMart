@@ -93,15 +93,15 @@ def test_reconnect_and_ready_resend_the_screen(tmp_data, monkeypatch):
     with TestClient(app) as client:
         client.post("/internal/shelf", json=snap(with_bays(b1=[])), headers=HEADERS)
         assert wait_for(lambda: serial_bridge.is_connected())
-        serial_bridge.display("TOTAL", "$4.32", 1)
+        serial_bridge.display("TOTAL", "$3.24", 1)
         board.unplug()
         assert wait_for(lambda: not serial_bridge.is_connected())
         board.plugged = True
         assert wait_for(lambda: len(board.ports) == 2
-                        and board.port.written[:1] == ["DISP,TOTAL,$4.32,1"]), board.port.written
+                        and board.port.written[:1] == ["DISP,TOTAL,$3.24,1"]), board.port.written
         board.port.written.clear()
         board.port.feed("READY")
-        assert wait_for(lambda: board.port.written == ["DISP,TOTAL,$4.32,1"]), board.port.written
+        assert wait_for(lambda: board.port.written == ["DISP,TOTAL,$3.24,1"]), board.port.written
 
 
 # --- event mapping, end to end through the event log ---
@@ -116,7 +116,7 @@ def test_session_flow_drives_the_display(tmp_data, monkeypatch, fast_timers):
         # After the welcome hold, the live total takes over.
         assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$0.00,0"), disp(board)
         client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)  # pick elx
-        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$8.64,1"), disp(board)
+        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$3.78,1"), disp(board)
         assert client.post("/admin/reset").status_code == 200  # -> CANCELLED
         assert wait_for(lambda: disp(board)[-1] == "DISP,IDLE"), disp(board)
         assert legacy(board.port.written) == []
@@ -124,14 +124,14 @@ def test_session_flow_drives_the_display(tmp_data, monkeypatch, fast_timers):
 
 def test_new_plan_shows_find_then_back_to_total(tmp_data, monkeypatch, fast_timers):
     monkeypatch.setattr(serial_bridge, "FIND_HOLD_S", 0.4)
-    set_features(monkeypatch, llm=False)  # the keyword planner: recovery -> bays 0 and 1
+    set_features(monkeypatch, llm=False)  # the keyword planner: rehydrate -> bays 0 and 3
     board = Board()
     use_board(monkeypatch, board)
     with TestClient(app) as client:
         assert wait_for(lambda: serial_bridge.is_connected())
         enter_store(client)  # also signs this client in as the demo shopper
         assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$0.00,0"), disp(board)
-        plan = client.post("/api/intent", json={"text": "Post run recovery under $15"}).json()
+        plan = client.post("/api/intent", json={"text": "Rehydrate after a run"}).json()
         cards = serial_bridge.bay_cards(plan["bays"])
         assert plan["bays"] and cards
         assert wait_for(lambda: disp(board)[-1] == f"DISP,FIND,{cards}"), disp(board)
@@ -139,7 +139,7 @@ def test_new_plan_shows_find_then_back_to_total(tmp_data, monkeypatch, fast_time
         client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
         time.sleep(0.1)
         assert disp(board)[-1] == f"DISP,FIND,{cards}"
-        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$8.64,1"), disp(board)
+        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$3.78,1"), disp(board)
         assert intent.shown_bays() == plan["bays"]
         assert legacy(board.port.written) == []
 
@@ -151,10 +151,10 @@ def test_welcome_hold_shows_latest_cart(tmp_data, monkeypatch, fast_timers):
     with TestClient(app) as client:
         assert wait_for(lambda: serial_bridge.is_connected())
         enter_store(client)
-        client.post("/internal/shelf", json=snap(with_bays(b2=[5]), frame_id=2), headers=HEADERS)  # pick a bar
+        client.post("/internal/shelf", json=snap(with_bays(b2=[5]), frame_id=2), headers=HEADERS)  # pick chips
         time.sleep(0.1)
         assert disp(board)[-1] == "DISP,WELCOME,Demo"  # the welcome is not cut short
-        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$3.78,1"), disp(board)
+        assert wait_for(lambda: disp(board)[-1] == "DISP,TOTAL,$2.70,1"), disp(board)
 
 
 def test_occupied_overlay_then_back(tmp_data, monkeypatch, fast_timers):
@@ -174,24 +174,24 @@ def test_occupied_overlay_then_back(tmp_data, monkeypatch, fast_timers):
 
 def test_payment_authorized_then_closed(shown, fast_timers):
     d = serial_bridge.director
-    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1, "bar": 2}, "total_usd": 16.2})
-    assert shown[-1] == ("TOTAL", "$16.20", "3")
-    d.handle({"type": "payment", "status": "AUTHORIZED", "amount_usd": 16.2, "auth_code": "A1B2C3"})
-    assert shown[-1] == ("PAID", "$16.20", "A1B2C3")
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1, "bar": 2}, "total_usd": 9.18})
+    assert shown[-1] == ("TOTAL", "$9.18", "3")
+    d.handle({"type": "payment", "status": "AUTHORIZED", "amount_usd": 9.18, "auth_code": "A1B2C3"})
+    assert shown[-1] == ("PAID", "$9.18", "A1B2C3")
     d.handle({"type": "session_state", "from": "CHECKOUT_PENDING", "to": "PAID"})
-    assert shown[-1] == ("PAID", "$16.20", "A1B2C3")  # already showing PAID: not replaced
+    assert shown[-1] == ("PAID", "$9.18", "A1B2C3")  # already showing PAID: not replaced
     d.handle({"type": "session_state", "from": "PAID", "to": "CLOSED"})
     assert wait_for(lambda: shown[-1] == ("IDLE",))
 
 
 def test_find_overlay_returns_to_total(shown, fast_timers):
     d = serial_bridge.director
-    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1}, "total_usd": 8.64})
+    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1}, "total_usd": 3.78})
     d.find([3, 1])
     assert shown[-1] == ("FIND", "2 and 4")
-    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1, "rec": 1}, "total_usd": 12.96})
+    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1, "rec": 1}, "total_usd": 7.02})
     assert shown[-1] == ("FIND", "2 and 4")  # not interrupted
-    assert wait_for(lambda: shown[-1] == ("TOTAL", "$12.96", "2"))
+    assert wait_for(lambda: shown[-1] == ("TOTAL", "$7.02", "2"))
 
 
 def test_find_with_nobody_inside_returns_to_idle(shown, fast_timers):
@@ -206,43 +206,43 @@ def test_find_with_nobody_inside_returns_to_idle(shown, fast_timers):
 
 def test_payment_declined_then_back_to_total(shown, fast_timers):
     d = serial_bridge.director
-    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"rec": 1}, "total_usd": 4.32})
-    d.handle({"type": "payment", "status": "DECLINED", "amount_usd": 4.32, "auth_code": None})
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"rec": 1}, "total_usd": 3.24})
+    d.handle({"type": "payment", "status": "DECLINED", "amount_usd": 3.24, "auth_code": None})
     assert shown[-1] == ("DECLINED",)
-    assert wait_for(lambda: shown[-1] == ("TOTAL", "$4.32", "1"))
+    assert wait_for(lambda: shown[-1] == ("TOTAL", "$3.24", "1"))
 
 
 def test_payment_alternatives_and_fallbacks(shown):
     d = serial_bridge.director
     # A mock-provider approval: the real "payment" event, amount_usd and a MOCK auth code.
-    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1}, "total_usd": 8.64})
-    d.handle({"type": "payment", "status": "AUTHORIZED", "amount_usd": 8.64, "auth_code": "MOCK1234"})
-    assert shown[-1] == ("PAID", "$8.64", "MOCK1234")
+    d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1}, "total_usd": 3.78})
+    d.handle({"type": "payment", "status": "AUTHORIZED", "amount_usd": 3.78, "auth_code": "MOCK1234"})
+    assert shown[-1] == ("PAID", "$3.78", "MOCK1234")
     d.reset()
-    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 8.64})
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 3.78})
     d.handle({"type": "session_state", "from": "CHECKOUT_PENDING", "to": "PAID"})  # no payment event at all
-    assert shown[-1] == ("PAID", "$8.64", "")
+    assert shown[-1] == ("PAID", "$3.78", "")
     n = len(shown)
     d.handle({"type": "payment", "status": "ERROR"})
     d.handle({"type": "serial_out", "cmd": "DISP,IDLE"})
     # Names that are not the real payment event are ignored outright.
-    d.handle({"type": "payment_authorized", "amount_usd": 8.64, "auth_code": "NOPE12"})
-    d.handle({"type": "payment_declined", "amount_usd": 8.64})
+    d.handle({"type": "payment_authorized", "amount_usd": 3.78, "auth_code": "NOPE12"})
+    d.handle({"type": "payment_declined", "amount_usd": 3.78})
     assert len(shown) == n
 
 
 def test_payment_without_amount_falls_back_to_last_cart_total(shown):
     d = serial_bridge.director
-    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 8.64})
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 3.78})
     d.handle({"type": "payment", "status": "AUTHORIZED", "auth_code": "A1B2C3"})
-    assert shown[-1] == ("PAID", "$8.64", "A1B2C3")
+    assert shown[-1] == ("PAID", "$3.78", "A1B2C3")
 
 
 def test_cancelled_exit_returns_to_total_and_new_screen_cancels_idle_timer(shown, fast_timers):
     d = serial_bridge.director
-    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"bar": 1}, "total_usd": 3.78})
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"bar": 1}, "total_usd": 2.70})
     d.handle({"type": "session_state", "from": "CHECKOUT_PENDING", "to": "IN_STORE"})
-    assert shown[-1] == ("TOTAL", "$3.78", "1")
+    assert shown[-1] == ("TOTAL", "$2.70", "1")
     d.handle({"type": "session_state", "from": "IN_STORE", "to": "CANCELLED"})
     d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {}, "total_usd": 0})  # a new shopper
     time.sleep(0.4)

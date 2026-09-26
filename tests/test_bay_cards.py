@@ -14,8 +14,8 @@ import gen_bay_cards  # noqa: E402
 
 def test_cards_follow_config_bays_with_card_one_for_bay_zero():
     config = {"bays": [{"id": 1, "sku": "rec"}, {"id": 0, "sku": "elx"}]}
-    catalog = {"skus": [{"sku": "elx", "name": "Electrolyte tabs"}, {"sku": "rec", "name": "Recovery drink"}]}
-    assert gen_bay_cards.cards_from_config(config, catalog) == [("1", "Electrolyte tabs"), ("2", "Recovery drink")]
+    catalog = {"skus": [{"sku": "elx", "name": "Hydration drink"}, {"sku": "rec", "name": "Energy drink"}]}
+    assert gen_bay_cards.cards_from_config(config, catalog) == [("1", "Hydration drink"), ("2", "Energy drink")]
 
 
 def test_real_config_gives_one_card_per_bay():

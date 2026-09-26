@@ -139,7 +139,7 @@ def test_session_flag_off(keys, monkeypatch):
     assert get.calls == []
     assert c.get("/api/config/public").json()["features"]["voice"] is False
     # the text flow keeps working with voice off
-    assert c.post("/api/intent", json={"text": "quick protein snack"}).status_code == 200
+    assert c.post("/api/intent", json={"text": "study session fuel"}).status_code == 200
 
 
 # --- get_catalog tool ---
@@ -153,9 +153,10 @@ def test_voice_catalog_has_bays_and_tags():
     for b in voice.settings.bays:
         assert b.id + 1 in by_sku[b.sku]["bays"]  # printed card numbers, 1-based
     elx = by_sku["elx"]
-    assert elx == {"sku": "elx", "name": "Electrolyte tabs", "price_usd": 8.0, "tags": ["recovery"],
-                   "pairs_with": [], "bays": [1]}
-    assert by_sku["rec"]["pairs_with"] == ["elx"] and "complements:elx" not in by_sku["rec"]["tags"]
+    assert elx == {"sku": "elx", "name": "Hydration drink", "price_usd": 3.5, "tags": ["drink", "hydration"],
+                   "pairs_with": ["wat"], "bays": [1]}
+    rec = by_sku["rec"]  # the voice agent reads the caffeine tag to say so when it recommends it
+    assert rec["pairs_with"] == ["bar"] and rec["tags"] == ["drink", "caffeine"] and rec["bays"] == [2]
     assert client_for(None).get("/api/voice/catalog").status_code == 401
 
 
@@ -170,7 +171,7 @@ def test_catalog_endpoint_unchanged():
 
 def test_make_plan_and_clear_plan_endpoints_unchanged():
     c = client_for(add_member())
-    plan = c.post("/api/intent", json={"text": "post run recovery under $15"}).json()
+    plan = c.post("/api/intent", json={"text": "rehydrate after a run under $15"}).json()
     assert set(plan) == {"plan_id", "goal_summary", "items", "est_total_usd", "budget_usd", "fits_budget", "bays",
                          "source", "created_at"}
     assert all(set(i) == {"sku", "name", "qty", "unit_price_usd", "reason"} for i in plan["items"])

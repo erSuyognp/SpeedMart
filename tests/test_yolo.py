@@ -86,25 +86,25 @@ def test_class_to_sku_from_catalog():
 def test_assign_boxes_by_center_conf_and_class():
     gx, gy = in_gap(0, 1)
     raw = [
-        box("electrolytes", 0.9, *at(0, 0.3, 0.5)),
-        box("electrolytes", 0.7, *at(0, 0.7, 0.3)),
-        box("electrolytes", 0.5, *at(0, 0.5, 0.7)),  # below conf
-        box("protein_bar", 0.8, *at(1)),  # misplaced: in bay 1
-        box("recovery_drink", 0.95, *above_shelf()),  # outside every bay (in a hand)
+        box("hydration_drink", 0.9, *at(0, 0.3, 0.5)),
+        box("hydration_drink", 0.7, *at(0, 0.7, 0.3)),
+        box("hydration_drink", 0.5, *at(0, 0.5, 0.7)),  # below conf
+        box("chips", 0.8, *at(1)),  # misplaced: in bay 1
+        box("energy_drink", 0.95, *above_shelf()),  # outside every bay (in a hand)
         box("banana", 0.99, *at(2)),  # not in the catalog
-        box("protein_bar", 0.9, gx, gy, half=40),  # spans bays 0 and 1, its center is in the gap
+        box("chips", 0.9, gx, gy, half=40),  # spans bays 0 and 1, its center is in the gap
     ]
     result = yd.assign_boxes(raw, BAYS, CLASS_SKU, 0.55)
     assert result.per_bay == counts(b0={"elx": 2}, b1={"bar": 1})
     assert len(result.boxes) == 6  # everything above conf is kept for drawing
     by_cls = {(b.cls_name, b.bay) for b in result.boxes}
-    assert ("recovery_drink", None) in by_cls and ("banana", 2) in by_cls  # the loose one, the unknown class
+    assert ("energy_drink", None) in by_cls and ("banana", 2) in by_cls  # the loose one, the unknown class
     assert next(b for b in result.boxes if b.cls_name == "banana").sku is None
 
 
 def test_center_on_shared_edge_uses_half_open_rule():
     bays = [{"id": 0, "roi": [0, 0, 100, 100]}, {"id": 1, "roi": [100, 0, 200, 100]}]
-    result = yd.assign_boxes([("electrolytes", 0.9, (90, 40, 110, 60))], bays, CLASS_SKU, 0.5)
+    result = yd.assign_boxes([("hydration_drink", 0.9, (90, 40, 110, 60))], bays, CLASS_SKU, 0.5)
     assert result.per_bay == {0: {}, 1: {"elx": 1}}
 
 
@@ -112,7 +112,7 @@ def test_center_on_shared_edge_uses_half_open_rule():
 
 
 def test_runs_every_n_frames_and_caches():
-    fake = FakePredictor([box("electrolytes", 0.9, *at(0))], [], [box("protein_bar", 0.9, *at(2))] * 2)
+    fake = FakePredictor([box("hydration_drink", 0.9, *at(0))], [], [box("chips", 0.9, *at(2))] * 2)
     det = detector(fake, every_n=3)
     results = [det.update(FRAME) for _ in range(7)]
     assert fake.calls == 3  # frames 0, 3, 6
@@ -132,8 +132,8 @@ def test_every_n_one_runs_each_frame_and_zero_is_clamped():
 
 
 def test_inference_error_never_raises_and_clears_counts(caplog):
-    fake = FakePredictor([box("electrolytes", 0.9, *at(0))], RuntimeError("CUDA out of memory"),
-                         RuntimeError("again"), [box("electrolytes", 0.9, *at(0))])
+    fake = FakePredictor([box("hydration_drink", 0.9, *at(0))], RuntimeError("CUDA out of memory"),
+                         RuntimeError("again"), [box("hydration_drink", 0.9, *at(0))])
     det = detector(fake, every_n=1)
     assert det.update(FRAME).per_bay[0] == {"elx": 1}
     with caplog.at_level(logging.WARNING, logger="vision.yolo"):
@@ -214,14 +214,14 @@ class _Boxes:
 
 
 class FakeModel:
-    names = {0: "electrolytes", 1: "protein_bar", 2: "recovery_drink"}
+    names = {0: "hydration_drink", 1: "chips", 2: "energy_drink"}
 
     def __init__(self, path=None):
         self.calls = []
 
     def predict(self, frame, **kwargs):
         self.calls.append(kwargs)
-        (ex, ey), (bx, by) = at(BAY_IDS[0]), at(BAY_IDS[1])  # one electrolyte in the first bay, one bar in the second
+        (ex, ey), (bx, by) = at(BAY_IDS[0]), at(BAY_IDS[1])  # one hydration drink in the first bay, one bag of chips in the second
         r = types.SimpleNamespace(names=self.names,
                                   boxes=_Boxes([[ex - 30, ey - 30, ex + 30, ey + 30],
                                                 [bx - 30, by - 30, bx + 30, by + 30]], [0.91, 0.66], [0, 1]))
@@ -238,7 +238,7 @@ def test_load_with_fake_ultralytics_builds_working_detector(tmp_path, monkeypatc
     assert det is not None and det.every_n == CONFIG["vision"]["yolo_every_n_frames"]
     result = det.update(FRAME)
     assert result.per_bay == counts(b0={"elx": 1}, b1={"bar": 1})
-    assert [(b.cls_name, round(b.conf, 2)) for b in result.boxes] == [("electrolytes", 0.91), ("protein_bar", 0.66)]
+    assert [(b.cls_name, round(b.conf, 2)) for b in result.boxes] == [("hydration_drink", 0.91), ("chips", 0.66)]
 
 
 def test_predictor_passes_spec_arguments():
@@ -247,7 +247,7 @@ def test_predictor_passes_spec_arguments():
     out = predict(FRAME)
     assert model.calls == [{"imgsz": 640, "conf": 0.55, "verbose": False, "device": "mps"}]
     ex, ey = at(BAY_IDS[0])
-    assert out[0] == ("electrolytes", pytest.approx(0.91), (ex - 30, ey - 30, ex + 30, ey + 30))
+    assert out[0] == ("hydration_drink", pytest.approx(0.91), (ex - 30, ey - 30, ex + 30, ey + 30))
 
 
 def _fake_torch(mps: bool, cuda: bool):
@@ -373,7 +373,7 @@ def test_stability_content_includes_yolo_counts():
 
 
 def test_covered_tag_with_yolo_keeps_shelf_count():
-    """Tag 1 gets covered but YOLO still sees two electrolytes: fused count stays 2 after confirmation."""
+    """Tag 1 gets covered but YOLO still sees two hydration drinks: fused count stays 2 after confirmation."""
     clock = Clock()
     tr = StabilityTracker([0, 1, 2], 400, 700, None, clock=clock)
     _feed(tr, clock, 450, {0: [0, 1], 1: [], 2: []}, {0: {"elx": 2}})
@@ -396,8 +396,8 @@ def test_snapshot_has_yolo_counts_only_when_on():
 
 def test_worker_pipeline_with_fake_detector():
     """Detector -> tracker -> snapshot, as the worker loop wires them."""
-    det = detector(FakePredictor([box("electrolytes", 0.9, *at(0, 0.3, 0.4)),
-                                  box("electrolytes", 0.8, *at(0, 0.7, 0.6))]))
+    det = detector(FakePredictor([box("hydration_drink", 0.9, *at(0, 0.3, 0.4)),
+                                  box("hydration_drink", 0.8, *at(0, 0.7, 0.6))]))
     clock = Clock()
     tr = StabilityTracker([0, 1, 2], 400, 700, None, clock=clock)
     per_bay = {0: [0], 1: [], 2: []}
@@ -411,7 +411,7 @@ def test_worker_pipeline_with_fake_detector():
 
 
 def test_overlay_draws_yolo_boxes():
-    det = detector(FakePredictor([box("electrolytes", 0.9, *at(0)), box("banana", 0.9, *at(2))]))
+    det = detector(FakePredictor([box("hydration_drink", 0.9, *at(0)), box("banana", 0.9, *at(2))]))
     result = det.update(FRAME)
     status = StabilityTracker([0, 1, 2], 0, 0).update(np.zeros((720, 1280), np.uint8), {0: [], 1: [], 2: []}, 0.0,
                                                        yolo_counts=result.per_bay)

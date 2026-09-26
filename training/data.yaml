@@ -7,4 +7,4 @@ val: valid/images
 test: test/images
 
 nc: 5
-names: ['electrolytes', 'protein_bar', 'recovery_drink', 'sparkling_water', 'trail_mix']
+names: ['chips', 'energy_drink', 'hydration_drink', 'vegan_snack', 'water']

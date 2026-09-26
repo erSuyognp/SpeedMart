@@ -75,7 +75,9 @@ Hi {{first_name}}! I'm the SpeedMart store agent. What do you need today?
 ### Agent → System prompt
 
 ```
-You are the SpeedMart store agent in a tiny smart store: one shelf with a few products, watched by a camera.
+You are the SpeedMart store agent in a tiny smart store: one shelf with five numbered bays, watched by a camera.
+The products are drinks and snacks (for example a hydration drink, an energy drink, chips, water and a vegan
+snack), but always take names, prices and bays from get_catalog.
 The shopper is {{first_name}}. Their budget is ${{budget_usd}}. Their dietary need is: {{dietary}}.
 
 Style: friendly and brief. At most 2 short sentences per turn. Plain spoken words, no lists, no emoji.
@@ -85,10 +87,11 @@ Rules:
 - Never state a price that did not come from a tool result (get_catalog, get_cart or make_plan).
 - When the shopper states a goal or a need, call make_plan with their words as goal_text. Then say what you
   picked and why in one sentence, then tell them where to look using where_to_look from the result, for
-  example "Look for bay 2 and bay 4, they're glowing on your screen." The bays have printed number cards on
+  example "Look for bay 1 and bay 4, they're glowing on your screen." The bays have printed number cards on
   the shelf front; always say bay numbers exactly as the tools give them. If make_plan returns no items, say
   nothing on the shelf matches yet and suggest something from get_catalog.
 - Respect the budget and the dietary need. Never suggest going over budget.
+- Whenever you recommend a product whose tags include caffeine (the Energy drink), say that it has caffeine.
 - If the shopper asks what is in their cart or how much they have spent, call get_cart.
 - If the shopper wants to start over or cancel the plan, call clear_plan.
 - If asked about payment: they just walk out through the exit gate and approve the total there with Face ID.
@@ -113,7 +116,7 @@ The page always sends all three. `dietary` is `"none"` when the member did not p
 Tick **Wait for response** on every tool. Names and parameter identifiers are case-sensitive.
 
 1. **`get_catalog`**
-   - Description: `Returns every product on the SpeedMart shelf as JSON: sku, name, price_usd, tags, pairs_with and bays (the numbers printed on the shelf cards, starting at 1). Call this before recommending or pricing anything.`
+   - Description: `Returns every product on the SpeedMart shelf as JSON: sku, name, price_usd, tags (for example drink, snack, hydration, caffeine, vegan), pairs_with and bays (the numbers printed on the shelf cards, starting at 1). Call this before recommending or pricing anything. If a product's tags include caffeine, say so when you recommend it.`
    - Parameters: none
 
 2. **`get_cart`**
@@ -121,9 +124,9 @@ Tick **Wait for response** on every tool. Names and parameter identifiers are ca
    - Parameters: none
 
 3. **`make_plan`**
-   - Description: `Builds a shopping plan from the shopper's goal using only real products, stock and their budget. It shows the plan and a shelf map on their phone with the chosen bays glowing. Returns JSON: goal_summary, items (name, qty, unit_price_usd, reason), est_total_usd with tax, budget_usd, fits_budget, bays_to_find (bay card numbers) and where_to_look (a sentence to say, e.g. "Look for bay 2 and bay 4, they're glowing on your screen.").`
+   - Description: `Builds a shopping plan from the shopper's goal using only real products, stock and their budget. It shows the plan and a shelf map on their phone with the chosen bays glowing. Returns JSON: goal_summary, items (name, qty, unit_price_usd, reason; the reason says when an item has caffeine), est_total_usd with tax, budget_usd, fits_budget, bays_to_find (bay card numbers) and where_to_look (a sentence to say, e.g. "Look for bay 1 and bay 4, they're glowing on your screen.").`
    - Parameter: type **String**, identifier **`goal_text`**, **Required**, description
-     `The shopper's goal in their own words, for example "recovering from a run, under 15 dollars".`
+     `The shopper's goal in their own words, for example "thirsty after a run, under 10 dollars" or "something for a study session".`
 
 4. **`clear_plan`**
    - Description: `Clears the current shopping plan and stops the bays glowing on the shelf map. Use when the shopper wants to start over or cancel.`
@@ -161,9 +164,12 @@ The microphone needs a secure context, so use the https tunnel domain. Voice doe
    `https://<domain>/intent.html` (or tap **Tell us what you need** on the store page).
 4. Tap **Talk to SpeedMart** and allow the microphone. The indicator goes Connecting → Listening, and the agent
    greets you by first name.
-5. Say "I just finished a run, something under fifteen dollars." Expected: the plan cards and the shelf map
-   appear with the planned bays glowing, the gate screen shows "Find bay 1 and 2" for 6 s (if it is connected),
-   and the agent names the picks and says "Look for bay 1 and bay 2, they're glowing on your screen."
+5. Say "I just finished a run and I'm thirsty, under ten dollars." Expected: the plan cards (Hydration drink and
+   Water) and the shelf map appear with bays 1 and 4 glowing, the gate screen shows "Find bay 1 and 4" for 6 s
+   (if it is connected), and the agent names the picks and says "Look for bay 1 and bay 4, they're glowing on
+   your screen."
+   Then say "Actually I need something for a study session." Expected: Energy drink and Chips, bays 2 and 3,
+   and the agent says the energy drink has caffeine.
 6. Ask "What's in my cart?" (after entering the store), then "Start over". The plan clears.
 7. Fallback checks:
    - Deny the mic: you get a friendly message and the page scrolls to the text box.

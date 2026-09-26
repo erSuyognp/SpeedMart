@@ -101,7 +101,7 @@ def test_shelf_change_pushes_cart_to_member_socket(tmp_data):
 
             client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
             pushed = receive_until(sock, "cart")["data"]
-            assert qty(pushed, "elx") == 1 and pushed["total_usd"] == 8.64
+            assert qty(pushed, "elx") == 1 and pushed["total_usd"] == 3.78
 
             client.post("/internal/shelf", json=snap(FULL, frame_id=3), headers=HEADERS)
             assert receive_until(sock, "cart")["data"]["items"] == []
@@ -234,23 +234,23 @@ def test_catalog_lists_bays_with_card_numbers_and_counts(tmp_data):
         assert all(b["on_shelf"] is None for b in bays)  # no snapshot yet: unknown, not zero
         client.post("/internal/shelf", json=snap(with_bays(b0=[1])), headers=HEADERS)
         by_bay = {b["bay"]: b for b in client.get("/api/catalog").json()["bays"]}
-        assert by_bay[0] == {"bay": 0, "card": 1, "sku": "elx", "name": "Electrolyte tabs", "on_shelf": 1}
+        assert by_bay[0] == {"bay": 0, "card": 1, "sku": "elx", "name": "Hydration drink", "on_shelf": 1}
         assert by_bay[1]["on_shelf"] == 2
 
 
 def test_plan_bays_reaches_every_socket_with_bay_numbers_only(tmp_data, monkeypatch):
-    set_features(monkeypatch, llm=False)  # keyword planner: recovery -> bays 0 and 1
+    set_features(monkeypatch, llm=False)  # keyword planner: rehydrate -> bays 0 and 3
     with TestClient(app) as shopper, TestClient(app) as kiosk:
         enter_store(shopper)
         with kiosk.websocket_connect("/ws") as sock:  # the kiosk: not signed in
             assert sock.receive_json() == {"type": "store_status", "data": {"occupied": True}}
-            plan = shopper.post("/api/intent", json={"text": "Post run recovery under $15"}).json()
-            assert plan["bays"] == [0, 1]
-            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 1]}}
+            plan = shopper.post("/api/intent", json={"text": "Rehydrate after a run"}).json()
+            assert plan["bays"] == [0, 3]
+            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 3]}}
         # A kiosk that (re)connects while the plan is up is told straight away.
         with kiosk.websocket_connect("/ws") as sock:
             assert sock.receive_json()["type"] == "store_status"
-            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 1]}}
+            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 3]}}
             assert shopper.delete("/api/intent").json() == {"ok": True}
             assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": []}}
         assert intent.shown_bays() == []

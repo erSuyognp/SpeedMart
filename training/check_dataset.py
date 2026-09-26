@@ -5,7 +5,8 @@
 The folder is the unzipped Roboflow export: data.yaml plus train/ valid/ test/, each with images/ and
 labels/. Checks:
   - data.yaml exists and its class names match catalog.json yolo_class values exactly (order free;
-    fusion maps boxes to SKUs by name), nc agrees with the names
+    fusion maps boxes to SKUs by name), nc agrees with the names. A name that differs from a yolo_class
+    only by punctuation, whitespace or case gets a "Did you mean" hint and the exact names line to paste
   - every image has a label file (a missing one is a warning: YOLO treats it as background)
   - every label line is "class x_center y_center width height" with a valid class index and
     coordinates in 0..1 (polygon lines mean the export was a segmentation format: error)
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -41,6 +43,7 @@ class Report:
     images_with_class: dict[str, Counter] = field(default_factory=dict)
     images: Counter = field(default_factory=Counter)  # split -> image count
     background: Counter = field(default_factory=Counter)  # split -> images with no boxes
+    hints: list[str] = field(default_factory=list)  # how to fix an error, printed after the errors
 
     @property
     def ok(self) -> bool:
@@ -95,6 +98,33 @@ def _parse_names_fallback(text: str) -> tuple[list[str] | None, int | None]:
                 items.append((int(k.strip()), v.strip().strip("'\"")))
         names = [v for _, v in sorted(items)]
     return names, nc
+
+
+def _loose(name: str) -> str:
+    """'Vegan Snack.' -> 'vegansnack': the name without case, whitespace or punctuation."""
+    return re.sub(r"[\W_]+", "", name.lower())
+
+
+def near_misses(names: list[str], expected: list[str]) -> dict[str, str]:
+    """{dataset name: catalog yolo_class} for names that differ from a missing class only by punctuation,
+    whitespace or case (a Roboflow typo such as 'vegan_snack.')."""
+    missing = [e for e in expected if e not in names]
+    fixes = {}
+    for name in names:
+        if name in expected:
+            continue
+        match = [e for e in missing if _loose(e) == _loose(name)]
+        if len(match) == 1:
+            fixes[name] = match[0]
+    return fixes
+
+
+def names_line_number(text: str) -> int | None:
+    """1-based line of the names: key in data.yaml text."""
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.startswith("names:"):
+            return i
+    return None
 
 
 def read_data_yaml(path: Path) -> tuple[list[str] | None, int | None]:
@@ -188,6 +218,19 @@ def check_dataset(dataset: Path, expected: list[str] | None = None, min_boxes: i
                           "(rename them in Roboflow to match yolo_class exactly)")
     if len(set(names)) != len(names):
         rep.errors.append(f"duplicate class names in data.yaml: {names}")
+    fixes = near_misses(names, expected)
+    if fixes:
+        for i, name in enumerate(names):
+            if name in fixes:
+                rep.hints.append(f"dataset class {i} {name!r}: Did you mean {fixes[name]!r}?")
+        text = data_yaml.read_text(encoding="utf-8")
+        lineno = names_line_number(text)
+        block = lineno is not None and not text.splitlines()[lineno - 1][len("names:"):].split("#", 1)[0].strip()
+        where = (f"the names: block starting at line {lineno}" if block
+                 else f"line {lineno}" if lineno is not None else "the names: entry")
+        rep.hints.append(f"fix {where} of {data_yaml} to exactly this (same order: label files store the "
+                         "class indexes, so never reorder):")
+        rep.hints.append(f"    names: {[fixes.get(n, n) for n in names]!r}")
 
     splits = find_splits(dataset)
     if not splits:
@@ -261,6 +304,8 @@ def format_report(rep: Report) -> str:
         lines.append(f"ERROR: {e}")
     if len(rep.errors) > len(shown):
         lines.append(f"ERROR: ... and {len(rep.errors) - len(shown)} more")
+    for h in rep.hints:
+        lines.append(f"HINT: {h}")
     lines.append("RESULT: OK" if rep.ok else f"RESULT: {len(rep.errors)} error(s)")
     return "\n".join(lines)
 

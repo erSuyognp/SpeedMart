@@ -107,7 +107,7 @@ def test_good_dataset_passes_with_counts(tmp_path):
     assert rep.background["train"] == 1
     assert not rep.warnings
     text = cd.format_report(rep)
-    assert "RESULT: OK" in text and "electrolytes" in text
+    assert "RESULT: OK" in text and "hydration_drink" in text
 
 
 def test_warns_below_100_boxes(tmp_path):
@@ -117,10 +117,28 @@ def test_warns_below_100_boxes(tmp_path):
 
 
 def test_class_name_mismatch_is_error(tmp_path):
-    typo = ["protein bar" if n == "protein_bar" else n for n in CLASSES]
+    typo = ["energy drink" if n == "energy_drink" else n for n in CLASSES]
     rep = cd.check_dataset(make_dataset(tmp_path / "ds", names=typo), min_boxes=1)
     assert not rep.ok
-    assert any("protein_bar" in e for e in rep.errors) and any("'protein bar'" in e for e in rep.errors)
+    assert any("energy_drink" in e for e in rep.errors) and any("'energy drink'" in e for e in rep.errors)
+
+
+def test_near_miss_class_name_gets_did_you_mean_and_the_names_line(tmp_path):
+    # The real Roboflow typo: a trailing period. Same order as the file, so label indexes stay valid.
+    typo = ["vegan_snack." if n == "vegan_snack" else n for n in CLASSES]
+    rep = cd.check_dataset(make_dataset(tmp_path / "ds", names=typo), min_boxes=1)
+    assert not rep.ok
+    i = typo.index("vegan_snack.")
+    assert f"dataset class {i} 'vegan_snack.': Did you mean 'vegan_snack'?" in rep.hints
+    assert rep.hints[-1] == f"    names: {CLASSES!r}"  # the exact line to paste, order unchanged
+    text = cd.format_report(rep)
+    assert "Did you mean 'vegan_snack'?" in text and "line 6 of" in text  # names: is line 6 of the fixture
+
+
+def test_near_miss_ignores_case_and_whitespace_but_not_other_words():
+    assert cd.near_misses(["Hydration Drink", "chips"], ["hydration_drink", "chips"]) == {
+        "Hydration Drink": "hydration_drink"}
+    assert cd.near_misses(["snack"], ["vegan_snack"]) == {}
 
 
 def test_nc_mismatch_is_error(tmp_path):

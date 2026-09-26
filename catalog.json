@@ -1,10 +1,10 @@
 {
   "skus": [
-    {"sku": "elx", "name": "Electrolyte tabs", "price_usd": 8.00, "tags": ["recovery"], "yolo_class": "electrolytes"},
-    {"sku": "rec", "name": "Recovery drink",   "price_usd": 4.00, "tags": ["drink", "complements:elx"], "yolo_class": "recovery_drink"},
-    {"sku": "bar", "name": "Protein bar",      "price_usd": 3.50, "tags": ["snack"], "yolo_class": "protein_bar"},
-    {"sku": "wat", "name": "Sparkling water",  "price_usd": 2.00, "tags": ["drink", "complements:elx"], "yolo_class": "sparkling_water"},
-    {"sku": "mix", "name": "Vegan trail mix",  "price_usd": 5.00, "tags": ["snack", "vegan", "complements:rec"], "yolo_class": "trail_mix"}
+    {"sku": "elx", "name": "Hydration drink", "price_usd": 3.50, "tags": ["drink", "hydration", "complements:wat"], "yolo_class": "hydration_drink"},
+    {"sku": "rec", "name": "Energy drink",    "price_usd": 3.00, "tags": ["drink", "caffeine", "complements:bar"], "yolo_class": "energy_drink"},
+    {"sku": "bar", "name": "Chips",           "price_usd": 2.50, "tags": ["snack", "complements:rec"], "yolo_class": "chips"},
+    {"sku": "wat", "name": "Water",           "price_usd": 1.50, "tags": ["drink", "hydration", "vegan", "complements:mix"], "yolo_class": "water"},
+    {"sku": "mix", "name": "Vegan snack",     "price_usd": 4.00, "tags": ["snack", "vegan", "complements:wat"], "yolo_class": "vegan_snack"}
   ],
   "units": [
     {"tag_id": 0, "sku": "elx", "home_bay": 0},

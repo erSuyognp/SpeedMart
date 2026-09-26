@@ -42,7 +42,11 @@ def make_cart(picked: dict[str, int], budget: float = BUDGET, misplaced: list | 
 
 
 def misplaced_bar() -> list[dict]:
-    return [{"tag_id": 4, "sku": "bar", "name": "Protein bar", "bay": 0}]
+    return [{"tag_id": 4, "sku": "bar", "name": "Chips", "bay": 0}]
+
+
+OVER = {"mix": 2, "elx": 2, "rec": 2}  # 21.00 + 1.68 tax = 22.68 on a $20 budget
+CAFFEINE_LINE = "Chips added. Energy drink has caffeine, pairs well at $3 and keeps you under budget."
 
 
 class FakeResponse:
@@ -111,59 +115,72 @@ def test_policy_empty_beats_misplaced():
 
 def test_policy_misplaced():
     d = agent.policy(make_cart({"elx": 1}, misplaced=misplaced_bar()), MEMBER)
-    assert d == {"kind": "misplaced", "sku": "bar", "bay": 0, "name": "Protein bar", "return_to_bay": 3}
+    assert d == {"kind": "misplaced", "sku": "bar", "bay": 0, "name": "Chips", "return_to_bay": 3}
 
 
 def test_policy_misplaced_beats_over_budget():
-    c = make_cart({"elx": 2, "bar": 1}, misplaced=misplaced_bar())
+    c = make_cart(OVER, misplaced=misplaced_bar())
     assert c["over_budget"]
     assert agent.policy(c, MEMBER)["kind"] == "misplaced"
 
 
 def test_policy_over_budget_puts_back_most_expensive():
-    c = make_cart({"elx": 2, "bar": 1})  # 19.50 + 1.56 tax = 21.06
+    c = make_cart(OVER)
     d = agent.policy(c, MEMBER)
-    assert d == {"kind": "over_budget", "put_back": "elx", "put_back_name": "Electrolyte tabs", "over_by": 1.06}
+    assert d == {"kind": "over_budget", "put_back": "mix", "put_back_name": "Vegan snack", "over_by": 2.68}
+
+
+def test_policy_over_budget_on_the_demo_budget():
+    # docs/DEMO.md: hydration drink + energy drink + vegan snack is 10.50 + 0.84 tax = 11.34 on $10
+    d = agent.policy(make_cart({"elx": 1, "rec": 1, "mix": 1}, budget=10), MEMBER)
+    assert d == {"kind": "over_budget", "put_back": "mix", "put_back_name": "Vegan snack", "over_by": 1.34}
 
 
 def test_policy_suggests_complement_within_budget():
-    d = agent.policy(make_cart({"elx": 1}), MEMBER)  # 8.64 now, 12.96 with the drink
-    assert d == {"kind": "suggest", "sku": "rec", "sku_name": "Recovery drink", "cart_item": "Electrolyte tabs",
-                 "price": 4.0, "remaining_after": 7.04}
+    d = agent.policy(make_cart({"wat": 1}), MEMBER)  # 1.62 now, 5.40 with the hydration drink
+    assert d == {"kind": "suggest", "sku": "elx", "sku_name": "Hydration drink", "cart_item": "Water",
+                 "price": 3.5, "remaining_after": 14.6}
+
+
+def test_policy_flags_caffeine_when_suggesting_the_energy_drink():
+    d = agent.policy(make_cart({"bar": 1}), MEMBER)  # 2.70 now, 5.94 with the energy drink
+    assert d == {"kind": "suggest", "sku": "rec", "sku_name": "Energy drink", "cart_item": "Chips",
+                 "price": 3.0, "remaining_after": 14.06, "caffeine": True}
 
 
 def test_policy_no_suggestion_when_complement_breaks_budget():
-    # 17.28 in the cart. The cheapest complement of elx is sparkling water at 2.16 with tax, so an
-    # 18.00 budget leaves no room for any of them.
-    d = agent.policy(make_cart({"elx": 2}, budget=18), MEMBER)
-    assert d == {"kind": "ok", "remaining": 0.72}
+    # 5.40 in the cart. The only complement of chips is the energy drink at 3.24 with tax, so an
+    # 8.00 budget leaves no room for it.
+    d = agent.policy(make_cart({"bar": 2}, budget=8), MEMBER)
+    assert d == {"kind": "ok", "remaining": 2.6}
 
 
 def test_policy_no_suggestion_when_complement_already_in_cart():
-    # rec is a complement of elx and already in the cart, so it is skipped and the other one is offered.
-    d = agent.policy(make_cart({"elx": 1, "rec": 1}), MEMBER)  # 12.96 with tax
-    assert d["kind"] == "suggest" and d["sku"] == "wat"
+    # elx is a complement of wat and already in the cart, so it is skipped and the other one (mix) is offered.
+    d = agent.policy(make_cart({"wat": 1, "elx": 1}), MEMBER)  # 5.40 with tax
+    assert d["kind"] == "suggest" and d["sku"] == "mix"
     # with every complement that fits the budget already in the cart there is nothing left to suggest
-    assert agent.policy(make_cart({"elx": 1, "rec": 1, "wat": 1}), MEMBER) == {"kind": "ok", "remaining": 4.88}
+    assert agent.policy(make_cart({"wat": 1, "elx": 1, "mix": 1}), MEMBER) == {"kind": "ok", "remaining": 10.28}
 
 
 def test_policy_ok_without_complements():
-    assert agent.policy(make_cart({"bar": 1}), MEMBER) == {"kind": "ok", "remaining": 16.22}
+    assert agent.policy(make_cart({"elx": 1}), MEMBER) == {"kind": "ok", "remaining": 16.22}
 
 
 def test_policy_uses_member_budget():
-    assert agent.policy(make_cart({"elx": 1}, budget=10), MEMBER)["kind"] == "ok"  # 12.96 > 10
-    assert agent.policy(make_cart({"elx": 2}, budget=10), MEMBER)["kind"] == "over_budget"
+    assert agent.policy(make_cart({"mix": 2}, budget=10), MEMBER)["kind"] == "ok"  # 8.64, 10.26 with water > 10
+    assert agent.policy(make_cart({"mix": 2, "bar": 1}, budget=10), MEMBER)["kind"] == "over_budget"  # 11.34
 
 
 # --- templates ---
 
 @pytest.mark.parametrize("picked, misplaced, expected", [
     ({}, None, "Cart's empty. Grab anything from the shelf."),
-    ({"elx": 1}, misplaced_bar(), "Protein bar is in the wrong bay. Please return it to bay 3."),
-    ({"elx": 2, "bar": 1}, None, "You're $1.06 over budget. Putting back the Electrolyte tabs fixes it."),
-    ({"elx": 1}, None, "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."),
-    ({"bar": 1}, None, "Looking good. $16.22 left in your budget."),
+    ({"elx": 1}, misplaced_bar(), "Chips is in the wrong bay. Please return it to bay 3."),
+    (OVER, None, "You're $2.68 over budget. Putting back the Vegan snack fixes it."),
+    ({"wat": 1}, None, "Water added. Hydration drink pairs well at $3.50 and keeps you under budget."),
+    ({"bar": 1}, None, CAFFEINE_LINE),
+    ({"elx": 1}, None, "Looking good. $16.22 left in your budget."),
 ])
 def test_templates(picked, misplaced, expected):
     assert agent.template(agent.policy(make_cart(picked, misplaced=misplaced), MEMBER)) == expected
@@ -171,33 +188,40 @@ def test_templates(picked, misplaced, expected):
 
 # --- LLM validation ---
 
-GOOD = "Maya, Recovery drink pairs nicely with your Electrolyte tabs for $4 and keeps you under budget."
+GOOD = "Maya, Energy drink has caffeine and pairs nicely with your Chips for $3, keeping you under budget."
 
 
 @pytest.mark.parametrize("raw", [
     "Line one.\nLine two.",
     " ".join(["word"] * 26),
-    "Great pick \U0001F389 grab a Recovery drink for $4.",
-    "Grab a Recovery drink for $4 ☕",
-    "Try a Gatorade with your Electrolyte tabs, it keeps you under budget.",
-    "A Recovery drink is only $3 and keeps you under budget.",
-    "Add a #recovery drink for $4.",
+    "Great pick \U0001F389 grab an Energy drink with caffeine for $3.",
+    "Grab an Energy drink with caffeine for $3 ☕",
+    "Try a Red Bull with your Chips, it has caffeine and keeps you under budget.",
+    "An Energy drink has caffeine, only $2.75, and keeps you under budget.",
+    "Add a #energy drink with caffeine for $3.",
+    "Maya, Energy drink pairs nicely with your Chips for $3 and keeps you under budget.",  # no caffeine
     "",
     None,
     42,
 ])
 def test_validate_rejects_bad_llm_output(raw):
-    c = make_cart({"elx": 1})
+    c = make_cart({"bar": 1})
     assert agent.validate(raw, agent.policy(c, MEMBER), c, MEMBER) is None
 
 
 def test_validate_accepts_good_line():
-    c = make_cart({"elx": 1})
+    c = make_cart({"bar": 1})
     assert agent.validate(f'  "{GOOD}"  ', agent.policy(c, MEMBER), c, MEMBER) == GOOD
 
 
+def test_validate_asks_for_caffeine_only_when_suggesting_it():
+    c = make_cart({"wat": 1})  # suggests the hydration drink, which has no caffeine
+    line = "Maya, a Hydration drink pairs well with your Water at $3.50."
+    assert agent.validate(line, agent.policy(c, MEMBER), c, MEMBER) == line
+
+
 def test_validate_allows_exactly_25_words():
-    c = make_cart({"bar": 1})
+    c = make_cart({"elx": 1})
     line = " ".join(["good"] * 25)
     assert agent.validate(line, agent.policy(c, MEMBER), c, MEMBER) == line
 
@@ -207,7 +231,7 @@ def test_validate_allows_exactly_25_words():
 def test_llm_line_used_when_valid(monkeypatch):
     use_settings(monkeypatch)
     calls = fake_llm(monkeypatch, anthropic_reply(GOOD))
-    line, source, decision = agent.generate(make_cart({"elx": 1}), MEMBER)
+    line, source, decision = agent.generate(make_cart({"bar": 1}), MEMBER)
     assert (line, source, decision["kind"]) == (GOOD, "llm", "suggest")
     call = calls[0]
     assert call["url"] == "https://api.anthropic.com/v1/messages"
@@ -225,15 +249,15 @@ def test_llm_line_used_when_valid(monkeypatch):
 def test_invalid_llm_output_falls_back_to_template(monkeypatch):
     use_settings(monkeypatch)
     fake_llm(monkeypatch, anthropic_reply("Buy a Gatorade instead \U0001F4AA"))
-    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
+    line, source, _ = agent.generate(make_cart({"bar": 1}), MEMBER)
     assert source == "template"
-    assert line == "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."
+    assert line == CAFFEINE_LINE
 
 
 def test_timeout_falls_back_to_template(monkeypatch):
     use_settings(monkeypatch)
     calls = fake_llm(monkeypatch, httpx.ReadTimeout("timed out"))
-    line, source, _ = agent.generate(make_cart({"bar": 1}), MEMBER)
+    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
     assert (line, source) == ("Looking good. $16.22 left in your budget.", "template")
     assert calls[0]["timeout"] == agent.LLM_TIMEOUT_S == 2.5
 
@@ -250,7 +274,7 @@ def test_openai_compatible_provider(monkeypatch):
     use_settings(monkeypatch, provider="openai")
     reply = FakeResponse({"choices": [{"message": {"content": "Looking good, Maya, $16.22 left to spend."}}]})
     calls = fake_llm(monkeypatch, reply)
-    line, source, _ = agent.generate(make_cart({"bar": 1}), MEMBER)
+    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
     assert (line, source) == ("Looking good, Maya, $16.22 left to spend.", "llm")
     assert calls[0]["url"] == "https://llm.example/v1/chat/completions"
     assert calls[0]["headers"]["authorization"] == "Bearer test-key"
@@ -268,8 +292,8 @@ def test_openai_compatible_provider(monkeypatch):
 def test_templates_only_without_llm(monkeypatch, kwargs):
     use_settings(monkeypatch, **kwargs)
     assert not agent.llm_available()
-    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)  # no_network fails the test on any call
-    assert source == "template" and line.startswith("Electrolyte tabs added.")
+    line, source, _ = agent.generate(make_cart({"bar": 1}), MEMBER)  # no_network fails the test on any call
+    assert source == "template" and line == CAFFEINE_LINE
 
 
 # --- debounce, latest cart wins, delivery ---
@@ -296,8 +320,8 @@ def test_debounce_latest_cart_wins(monkeypatch, published):
     use_settings(monkeypatch, llm=False)
     a = agent.Agent(debounce_s=0.2)
     a.on_cart(make_cart({}), MEMBER)
-    a.on_cart(make_cart({"elx": 2, "bar": 1}), MEMBER)
-    a.on_cart(make_cart({"bar": 1}), MEMBER)
+    a.on_cart(make_cart(OVER), MEMBER)
+    a.on_cart(make_cart({"elx": 1}), MEMBER)
     assert wait_for(lambda: published)
     time.sleep(0.4)  # nothing else may arrive for the superseded carts
     assert [m["data"]["line"] for m, _ in published] == ["Looking good. $16.22 left in your budget."]
@@ -317,11 +341,11 @@ def test_debounce_waits_before_generating(monkeypatch, published):
 def test_line_stored_on_next_snapshot(monkeypatch, published):
     use_settings(monkeypatch, llm=False)
     a = agent.Agent(debounce_s=0.01)
-    first = a.on_cart(make_cart({"elx": 1}), MEMBER)
+    first = a.on_cart(make_cart({"bar": 1}), MEMBER)
     assert first["agent_line"] == ""  # nothing generated yet; on_cart never blocks
     assert wait_for(lambda: published)
-    again = a.on_cart(make_cart({"elx": 1}), MEMBER)
-    assert again["agent_line"] == "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."
+    again = a.on_cart(make_cart({"bar": 1}), MEMBER)
+    assert again["agent_line"] == CAFFEINE_LINE
     time.sleep(0.1)
     assert len(published) == 1  # identical cart: not regenerated
 
@@ -345,11 +369,11 @@ def test_stale_llm_result_is_dropped(monkeypatch, published):
     def slow_post(url, **kwargs):
         started.append(1)
         if len(started) == 1:
-            a.on_cart(make_cart({"bar": 1}), MEMBER)  # the shopper changes the cart mid-call
+            a.on_cart(make_cart({"elx": 1}), MEMBER)  # the shopper changes the cart mid-call
         return anthropic_reply("Looking good, $16.22 left.")
 
     monkeypatch.setattr(agent.httpx, "post", slow_post)
-    a.on_cart(make_cart({"elx": 1}), MEMBER)
+    a.on_cart(make_cart({"bar": 1}), MEMBER)
     assert wait_for(lambda: published)
     time.sleep(0.1)
     assert [m["data"]["line"] for m, _ in published] == ["Looking good, $16.22 left."]
@@ -361,13 +385,13 @@ def test_on_cart_never_calls_llm_on_caller_thread(monkeypatch, published):
     fake_llm(monkeypatch, httpx.ReadTimeout("slow"))
     a = agent.Agent(debounce_s=0.01)
     t0 = time.monotonic()
-    a.on_cart(make_cart({"elx": 1}), MEMBER)
+    a.on_cart(make_cart({"bar": 1}), MEMBER)
     assert time.monotonic() - t0 < 0.05
     assert wait_for(lambda: published)
-    assert published[0][0]["data"]["line"].startswith("Electrolyte tabs added.")
+    assert published[0][0]["data"]["line"] == CAFFEINE_LINE
 
 
-# --- wired into the store: pick electrolytes, the snapshot carries the suggestion ---
+# --- wired into the store: pick chips, the snapshot carries the suggestion ---
 
 @pytest.fixture
 def store_env(tmp_path, monkeypatch):
@@ -400,9 +424,9 @@ def test_store_pick_shows_suggestion(monkeypatch, store_env, published):
         conn.close()
     shelf_state.apply_snapshot(snap(FULL, 1))
     store.start_session(member_id)
-    shelf_state.apply_snapshot(snap({**FULL, 0: [1]}, 2))  # electrolytes picked
+    shelf_state.apply_snapshot(snap({**FULL, 2: [5]}, 2))  # chips picked (tag 4)
     store.on_shelf_change()
-    expected = "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."
+    expected = CAFFEINE_LINE
     assert wait_for(lambda: any(m["type"] == "agent" and m["data"]["line"] == expected for m, _ in published))
     assert store.current_cart()["agent_line"] == expected
     lines = [json.loads(x) for x in eventlog.EVENTS_PATH.read_text(encoding="utf-8").splitlines()]
@@ -413,11 +437,11 @@ def test_store_pick_shows_suggestion(monkeypatch, store_env, published):
 
 PLAN = {
     "plan_id": "pln_test",
-    "goal_summary": "post run recovery",
-    "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1},
-              {"sku": "rec", "name": "Recovery drink", "qty": 1}],
-    "est_total_usd": 12.96,
-    "budget_usd": 15.0,
+    "goal_summary": "study session fuel",
+    "items": [{"sku": "rec", "name": "Energy drink", "qty": 1},
+              {"sku": "bar", "name": "Chips", "qty": 1}],
+    "est_total_usd": 5.94,
+    "budget_usd": 10.0,
 }
 
 
@@ -433,29 +457,31 @@ def with_plan(monkeypatch):
 def test_goal_is_sent_to_the_llm_when_a_plan_exists(monkeypatch, with_plan):
     use_settings(monkeypatch)
     calls = fake_llm(monkeypatch, anthropic_reply(GOOD))
-    agent.generate(make_cart({"elx": 1}), MEMBER)
+    agent.generate(make_cart({"bar": 1}), MEMBER)
     user = json.loads(calls[0]["json"]["messages"][0]["content"])
-    assert user["goal"] == {"summary": "post run recovery",
-                            "items": ["Electrolyte tabs", "Recovery drink"]}
+    assert user["goal"] == {"summary": "study session fuel", "items": ["Energy drink", "Chips"]}
+    assert user["decision"]["caffeine"] is True
     # The plan's own money never goes in the prompt: validate() would reject any amount it did not supply.
-    assert "12.96" not in calls[0]["json"]["messages"][0]["content"]
+    assert "5.94" not in calls[0]["json"]["messages"][0]["content"]
 
 
 def test_no_goal_key_without_a_plan(monkeypatch):
     use_settings(monkeypatch)
     calls = fake_llm(monkeypatch, anthropic_reply(GOOD))
-    agent.generate(make_cart({"elx": 1}), MEMBER)
+    agent.generate(make_cart({"bar": 1}), MEMBER)
     user = json.loads(calls[0]["json"]["messages"][0]["content"])
     assert "goal" not in user
 
 
 def test_line_may_echo_the_shoppers_goal_words(monkeypatch, with_plan):
     use_settings(monkeypatch)
-    # "Recovery" is a catalog word, but a goal word like this would otherwise be an unknown proper noun.
-    line = "Electrolyte tabs added, right on track for Post run recovery under budget."
+    # "Study" is not a catalog word: without the plan it would be an unknown proper noun.
+    line = "Chips added, right on track for Study session fuel, and an Energy drink adds caffeine."
     fake_llm(monkeypatch, anthropic_reply(line))
-    got, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
+    c = make_cart({"bar": 1})
+    got, source, _ = agent.generate(c, MEMBER)
     assert (got, source) == (line, "llm")
+    assert agent.validate(line, agent.policy(c, MEMBER), c, MEMBER) is None
 
 
 def test_plan_lookup_never_breaks_the_line(monkeypatch):
@@ -467,7 +493,7 @@ def test_plan_lookup_never_breaks_the_line(monkeypatch):
     monkeypatch.setattr(intent, "current_plan", boom)
     use_settings(monkeypatch)
     fake_llm(monkeypatch, anthropic_reply(GOOD))
-    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
+    line, source, _ = agent.generate(make_cart({"bar": 1}), MEMBER)
     assert (line, source) == (GOOD, "llm")
 
 

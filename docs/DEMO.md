@@ -10,7 +10,7 @@ Run through this before **every** judge.
 
 - [ ] **Admin reset:** `admin.html` → **Reset** (or hold the controller button 1 s). The store shows as not occupied.
 - [ ] **Shelf full:** every item is back in its home bay. The bay order is whatever `config.json` `bays`
-      says (today: electrolytes, recovery drinks, protein bars, sparkling water, vegan trail mix, left to right),
+      says (today: hydration drink, energy drink, chips, water, vegan snack, left to right as bays 1 to 5),
       and `catalog.json` `units` gives each tag its home bay. No misplaced warnings on the admin page.
 - [ ] **Bay cards:** the printed number cards 1 to 5 are taped to the shelf front, in order, each under its
       product (card 1 is bay id 0). Reprint with `python scripts\gen_bay_cards.py` if one is missing.
@@ -38,35 +38,38 @@ Run through this before **every** judge.
 
 1. **Hook (10 s):** "Stores already watch shelves with cameras. SpeedMart lets that camera build your cart, but
    only you can say yes to the charge."
-2. **Join (20 s):** the judge scans QR 1, types a name and uses Face ID. "That's a passkey. Your face never
+2. **Join (20 s):** the judge scans QR 1, types a name, slides the budget down to **$10** and uses Face ID. "That's a passkey. Your face never
    leaves your phone; your phone vouches for you."
 3. **Enter (10 s):** scan QR 2, Face ID, the gate screen says "Welcome, <name>". "You're in. One shopper at a
    time, and no one else is tracked."
 4. **Voice (20 s):** on the phone, tap **Tell us what you need**, then **Talk to SpeedMart**. The agent greets
-   the judge by first name. The judge says "I just finished a run, something under fifteen dollars." The plan
-   cards and a shelf map appear on the phone with the matching bays glowing, the kiosk map glows the same bays,
-   the gate screen says "Find bay 1 and 2", and the agent says what it picked, why, and "Look for bay 1 and
-   bay 2, they're glowing on your screen." Point at the number cards on the shelf front. "It can only
+   the judge by first name. The judge says "I just finished a run and I'm thirsty." The plan cards (Hydration
+   drink and Water, $5.40) and a shelf map appear on the phone with bays 1 and 4 glowing, the kiosk map glows the
+   same bays, the gate screen says "Find bay 1 and 4", and the agent says what it picked, why, and "Look for bay
+   1 and bay 4, they're glowing on your screen." Point at the number cards on the shelf front. "It can only
    act through the store's own tools: the catalog, the planner and the cart." (If voice fails, type the same
    sentence in the box underneath. It's the same planner.)
-5. **Pick (15 s):** the judge takes the electrolytes from bay 1. Point at the overlay, then at the phone: the
-   row appears, the gate screen total goes up, and the agent line suggests the recovery drink.
+5. **Pick (15 s):** the judge takes the chips from bay 3. Point at the overlay, then at the phone: the row
+   appears, the gate screen total goes up, and the agent line suggests the energy drink and says it has
+   caffeine ("Chips added. Energy drink has caffeine, pairs well at $3 and keeps you under budget.").
 6. **Put back (10 s):** put it back and the row disappears. "It reads the shelf, not a script."
-7. **Real cart (10 s):** take the electrolytes and a protein bar. Show the budget bar. Tap **Your agent's
-   permissions** on the cart page: what the agent can do, what only the judge can do, and what never happens.
+7. **Over budget (15 s):** take the hydration drink, the energy drink and the vegan snack: $11.34 with tax on a
+   $10 budget. The budget bar turns red and the agent says "You're $1.34 over budget. Putting back the Vegan
+   snack fixes it." Put the vegan snack back: $7.02, under budget again. Tap **Your agent's permissions** on the
+   cart page: what the agent can do, what only the judge can do, and what never happens.
    The $ limit on it is the judge's own budget.
 8. **Exit (15 s):** scan QR 3. The permissions card is open at the top of the approval. Open "What the payment
    network sees": a scoped, single-use agent token and the intent sentence. Approve with Face ID. The gate screen
    shows APPROVED. The receipt shows the auth code, points, "In and out in N seconds" and "1 tap to pay".
 9. **Return (15 s):** "Changed your mind? Put it back." On the receipt tap **Return an item**, Face ID, then put
-   the protein bar back on its bay. The phone lists it as it lands; tap **Confirm refund**. The gate screen shows
+   the energy drink back on bay 2. The phone lists it as it lands; tap **Confirm refund** ($3.24). The gate screen shows
    REFUNDED and the agent says the refund is on its way to the Visa ending 4242. The receipt now has a "Refunded"
    line with the refund id.
-10. **Dispute review (20 s):** on the receipt tap **Report a problem** and pick the electrolytes. The phone says
+10. **Dispute review (20 s):** on the receipt tap **Report a problem** and pick the hydration drink. The phone says
     "The shelf camera still sees it gone" and shows the two bay photos; leave it open ("Not sure? Leave it: our
     team reviews every open case"). The laptop chimes and the **Review queue** badge turns red: the card shows the
     judge's first name, the item, the AI verdict with its confidence bar ("Supports the charge, 8 % for the
-    shopper"), the observations linked to keyframes, and the 6 second clip of the shelf around the pick. Play the
+    shopper", so it waits for a person), the observations linked to keyframes, and the 6 second clip of the shelf around the pick. Play the
     clip. Type a note ("Clip shows the pick at 10:14") and tap **Keep the charge**. The judge's receipt updates to
     **Charge confirmed** with the note. "The AI reads the clip and explains what it saw. It can only speed up
     small refunds; a person makes every other call, and the shopper sees the reason."
@@ -80,8 +83,8 @@ If the return misbehaves, tap **Cancel return** (nothing is refunded) and move o
 
 If the review model is slow or down, the card says "AI review unavailable" after about 20 s (one retry); decide
 from the clip and the photos yourself. Nothing waits on the model: the queue, the clip and the buttons work
-without it. A dispute on a protein bar (under $5) that the AI clearly supports is refunded on its own and the
-card says "Auto approved by policy"; say so if a judge sees it.
+without it. Every single item costs under $5, so a dispute the AI clearly supports (80 % or more for the shopper) is
+refunded on its own and the card says "Auto approved by policy"; say so if a judge sees it.
 The admin page's **Results today** card shows sessions, average time in store, exit scan to approval, and
 refunds, if a judge asks for numbers.
 

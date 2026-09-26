@@ -152,10 +152,10 @@ def test_pick_then_put_back(shopping):
 def test_put_back_into_wrong_bay_is_on_shelf_with_warning(shopping):
     assert qty(push(with_bays(b2=[5]), frame_id=2), "bar") == 1  # tag 4 picked
 
-    cart_now = push(with_bays(b0=[0, 1, 4], b2=[5]), frame_id=3)  # bar returned to the elx bay
+    cart_now = push(with_bays(b0=[0, 1, 4], b2=[5]), frame_id=3)  # chips (bar) returned to the elx bay
     assert cart_now["items"] == []
-    assert cart_now["warnings"] == [{"kind": "misplaced", "sku": "bar", "name": "Protein bar", "bay": 0,
-                                     "tag_id": 4, "message": "Protein bar is in the wrong bay"}]
+    assert cart_now["warnings"] == [{"kind": "misplaced", "sku": "bar", "name": "Chips", "bay": 0,
+                                     "tag_id": 4, "message": "Chips is in the wrong bay"}]
     assert shelf_state.misplaced()[0]["home_bay"] == 2
 
     cart_now = push(FULL, frame_id=4)  # moved home: warning clears
@@ -177,7 +177,7 @@ def test_unstable_bay_keeps_previous_contents(shopping):
 
 
 def test_items_missing_before_entry_are_not_charged(member_id):
-    shelf_state.apply_snapshot(snap(with_bays(b0=[1], b1=[])))  # tag 0 and both recovery drinks already gone
+    shelf_state.apply_snapshot(snap(with_bays(b0=[1], b1=[])))  # tag 0 and both energy drinks already gone
     session = store.start_session(member_id)
     assert session["baseline"] == full_baseline(elx=1, rec=2)
     assert store.current_cart()["items"] == []
@@ -185,7 +185,7 @@ def test_items_missing_before_entry_are_not_charged(member_id):
     cart_now = push(with_bays(b0=[], b1=[]), frame_id=2)  # shopper takes the last elx
     assert qty(cart_now, "elx") == 1
     assert qty(cart_now, "rec") == 0
-    assert cart_now["total_usd"] == 8.64
+    assert cart_now["total_usd"] == 3.78
 
 
 def test_repeated_identical_snapshots_do_not_change_cart(shopping):
@@ -235,23 +235,23 @@ def test_second_start_session_while_occupied_raises(shopping):
     assert store.start_session(other)["state"] == store.IN_STORE
 
 
-def test_totals_one_electrolyte_at_8_percent(shopping):
+def test_totals_one_hydration_drink_at_8_percent(shopping):
     cart_now = push(with_bays(b0=[1]), frame_id=2)
-    assert cart_now["items"] == [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1,
-                                  "unit_price_usd": 8.00, "line_total_usd": 8.00}]
-    assert cart_now["subtotal_usd"] == 8.00
-    assert cart_now["tax_usd"] == 0.64
-    assert cart_now["total_usd"] == 8.64
+    assert cart_now["items"] == [{"sku": "elx", "name": "Hydration drink", "qty": 1,
+                                  "unit_price_usd": 3.50, "line_total_usd": 3.50}]
+    assert cart_now["subtotal_usd"] == 3.50
+    assert cart_now["tax_usd"] == 0.28
+    assert cart_now["total_usd"] == 3.78
     assert cart_now["over_budget"] is False
 
 
 # --- extra cases ---
 
 def test_totals_multi_item_integer_cents(shopping):
-    cart_now = push(with_bays(b0=[1], b1=[3], b2=[]), frame_id=2)  # 1 elx, 1 rec, 2 bar
-    assert cart_now["subtotal_usd"] == 19.00
-    assert cart_now["tax_usd"] == 1.52
-    assert cart_now["total_usd"] == 20.52
+    cart_now = push(with_bays(b0=[1], b1=[3], b2=[], b4=[]), frame_id=2)  # 1 elx, 1 rec, 2 bar, 2 mix
+    assert cart_now["subtotal_usd"] == 19.50
+    assert cart_now["tax_usd"] == 1.56
+    assert cart_now["total_usd"] == 21.06
     assert cart_now["over_budget"] is True  # budget 20
 
 

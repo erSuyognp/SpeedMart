@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 qr/
 .run/
+# Roboflow export zips for Colab (the unzipped dataset is ignored by training/dataset/.gitignore)
+training/*.zip
