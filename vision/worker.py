@@ -40,6 +40,7 @@ from vision.aruco_detect import TagDetector, assign_to_bays
 from vision.camera import CameraError, open_camera, save_section_settings
 from vision.motion import MotionDetector
 from vision.overlay import draw_overlay
+from vision.yolo_detect import YoloDetector, load_yolo
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
@@ -221,6 +222,20 @@ def save_motion_tuning(motion: MotionDetector | None, path: Path | None = None) 
     return f"saved motion_threshold {values['motion_threshold']:g} motion_settle_ms {values['motion_settle_ms']} to {path.name}"
 
 
+# --- YOLO (F13) ---------------------------------------------------------------------------------
+
+
+def start_yolo(config: dict, catalog: dict, loader=load_yolo) -> tuple[YoloDetector | None, str]:
+    """(detector or None, overlay status text). None when features.yolo is false, or when ultralytics or
+    the model file is missing (loader logs one warning); the worker then runs exactly as with YOLO off."""
+    if not config.get("features", {}).get("yolo", False):
+        return None, ""
+    detector = loader(config, catalog)
+    if detector is None:
+        return None, "YOLO unavailable (see log), tags only"
+    return detector, f"YOLO on ({detector.device}, every {detector.every_n})"
+
+
 # --- snapshot (8.2) -----------------------------------------------------------------------------
 
 
@@ -372,6 +387,7 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
     detector = TagDetector(vision["aruco_dict"], (u["tag_id"] for u in catalog["units"]),
                            clahe=bool(vision.get("clahe", True)))
     tracker = tracker or StabilityTracker.from_config(config)
+    yolo, yolo_status = start_yolo(config, catalog)
     motion = getattr(tracker, "motion", None)
     interval = 1.0 / float(vision.get("snapshot_hz", 5))
     url = shelf_url(backend)
@@ -406,7 +422,9 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 detections = detector.detect(gray)
                 per_bay, loose = assign_to_bays(detections, bays)
-                status = tracker.update(gray, per_bay, now)
+                yolo_result = yolo.update(frame) if yolo is not None else None
+                status = tracker.update(gray, per_bay, now,
+                                        yolo_counts=None if yolo_result is None else yolo_result.per_bay)
                 fps = fps_meter.tick(now)
 
                 if not paused and now >= next_post:
@@ -428,6 +446,7 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                     frame, bays=bays, sku_names=sku_names, detections=detections, per_bay=per_bay,
                     loose=loose, status=status, fps=fps, camera_fps=camera.measured_fps, backend_ok=backend_ok,
                     last_post_age_ms=age_ms, paused=paused, motion=motion,
+                    yolo_boxes=None if yolo_result is None else yolo_result.boxes, yolo_status=yolo_status,
                     message=message if now < message_until else "",
                 ))
                 key = cv2.waitKey(1) & 0xFF

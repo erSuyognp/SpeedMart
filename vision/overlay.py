@@ -21,6 +21,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 GRAY = (160, 160, 160)
+MAGENTA = (255, 0, 255)
 
 
 class BayStatusLike(Protocol):
@@ -54,6 +55,16 @@ def _text(img: np.ndarray, text: str, org: tuple[int, int], color: tuple[int, in
     cv2.putText(img, text, org, FONT, scale, color, 2, cv2.LINE_AA)
 
 
+def draw_yolo_boxes(img: np.ndarray, boxes) -> None:
+    """YOLO boxes with class and confidence, drawn in place. Boxes of classes missing from the catalog
+    are gray."""
+    for box in boxes or ():
+        x1, y1, x2, y2 = (int(round(v)) for v in box.xyxy)
+        color = MAGENTA if box.sku is not None else GRAY
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        _text(img, f"{box.cls_name} {box.conf:.2f}", (x1 + 2, max(16, y1 - 6)), color, 0.5)
+
+
 def draw_overlay(
     frame: np.ndarray,
     *,
@@ -70,11 +81,14 @@ def draw_overlay(
     paused: bool,
     motion=None,
     message: str = "",
+    yolo_boxes=None,
+    yolo_status: str = "",
 ) -> np.ndarray:
     """Bay boxes (green stable, yellow unstable) with id, SKU name, reported units, changed fraction,
     MOTION / settling / hold / stable and the pending candidate; the motion area (ROI + margin) in gray;
-    tag outlines with ids (loose tags orange); FPS; motion tuning values; backend status line with the
-    age of the last successful post."""
+    tag outlines with ids (loose tags orange); YOLO boxes with class and confidence (magenta) when YOLO
+    is on; FPS; motion tuning values and YOLO status; backend status line with the age of the last
+    successful post."""
     view = frame.copy()
     h = view.shape[0]
     loose = set(loose)
@@ -101,6 +115,8 @@ def draw_overlay(
                 _text(view, f"pending {_fmt_content(pending, getattr(st, 'pending_yolo', None))}",
                       (x1 + 4, y2 - 10), YELLOW, 0.55)
 
+    draw_yolo_boxes(view, yolo_boxes)
+
     for det in detections:
         color = ORANGE if det.tag_id in loose else CYAN
         pts = det.corners.astype(np.int32).reshape(-1, 1, 2)
@@ -114,6 +130,8 @@ def draw_overlay(
         tune = f"motion thr {motion.threshold:g}  settle {int(motion.settle_ms)} ms  margin {motion.margin_px}px"
     else:
         tune = "motion freeze OFF"
+    if yolo_status:
+        tune += f"  |  {yolo_status}"
     _text(view, tune, (10, 62), WHITE, 0.6)
     if loose:
         _text(view, f"loose {sorted(loose)}", (10, 92), ORANGE, 0.7)
