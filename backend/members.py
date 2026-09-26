@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from backend import db, eventlog, store
+from backend.payments import DEFAULT_CARD_LABEL as TEST_CARD_LABEL
 from backend.routes_api import ApiError
 from backend.settings import settings
 
@@ -17,8 +18,6 @@ MAX_BUDGET_USD = 50
 MAX_NAME_LEN = 40
 # value sent by the dietary select -> stored tag (read by the agent)
 DIETARY = {"": None, "none": None, "vegetarian": "vegetarian", "vegan": "vegan", "gluten_free": "gluten free"}
-# Shown for every member: Stripe test mode attaches pm_card_visa; the mock provider stands in for it otherwise.
-TEST_CARD_LABEL = "Visa •••• 4242 (test)"
 # Session cookie keys that belong to one signed-in member; dropped whenever the member changes.
 MEMBER_SESSION_KEYS = ("member_id", "verified_at", "verified_member", "verified_purpose")
 

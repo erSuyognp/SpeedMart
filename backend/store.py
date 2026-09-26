@@ -19,6 +19,7 @@ CLOSED = "CLOSED"
 CANCELLED = "CANCELLED"
 ACTIVE_STATES = (IN_STORE, CHECKOUT_PENDING)
 TIMEOUT_CHECK_SECONDS = 30
+PAID_CLOSE_SECONDS = 60  # 7.1: PAID -> CLOSED when the receipt is viewed or after this long
 VISION_MAX_AGE_MS = 2000  # entry is refused when the last shelf snapshot is older than this
 
 
@@ -384,11 +385,32 @@ def expire_stale_sessions(now: datetime | None = None) -> list[str]:
     return expired
 
 
+def close_paid_sessions(now: datetime | None = None) -> list[str]:
+    """PAID sessions whose payment is older than PAID_CLOSE_SECONDS -> CLOSED (receipt never opened)."""
+    now = now or datetime.now(timezone.utc)
+    conn = db.connect()
+    try:
+        rows = conn.execute("SELECT id, ended_at FROM store_sessions WHERE state = ?", (PAID,)).fetchall()
+    finally:
+        conn.close()
+    closed = []
+    for row in rows:
+        paid_at = datetime.fromisoformat((row["ended_at"] or db.now_iso()).replace("Z", "+00:00"))
+        if (now - paid_at).total_seconds() >= PAID_CLOSE_SECONDS:
+            try:
+                close(row["id"], reason="paid_timeout")
+                closed.append(row["id"])
+            except StoreError:
+                pass  # closed by the receipt view in the meantime
+    return closed
+
+
 async def timeout_task() -> None:
-    """Background loop started by main.py's lifespan (7.1 timeout)."""
+    """Background loop started by main.py's lifespan (7.1 timeout, PAID -> CLOSED after 60 s)."""
     while True:
         await asyncio.sleep(TIMEOUT_CHECK_SECONDS)
         try:
             await asyncio.to_thread(expire_stale_sessions)
+            await asyncio.to_thread(close_paid_sessions)
         except Exception as e:  # never let the checker die
             eventlog.log("timeout_task_error", error=repr(e))

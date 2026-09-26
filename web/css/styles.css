@@ -362,3 +362,4 @@ details.panel summary {
   font-weight: 600;
 }
 details.panel[open] summary { margin-bottom: 10px; }
+details.panel .kv dd { word-break: normal; overflow-wrap: anywhere; }

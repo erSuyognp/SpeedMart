@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import secrets
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend import eventlog, serial_bridge, shelf_state, store
+from backend import eventlog, payments, serial_bridge, shelf_state, store, ws
 from backend.settings import settings
 
 # HTTP status for each StoreError code. Unlisted codes are 400.
@@ -23,6 +24,8 @@ STORE_ERROR_STATUS = {
     "unknown_sku": 400,
 }
 GATE_OPEN_S = 3  # 9.7: gate LED green this long after a successful entry
+SHELF_GREEN_S = 3  # 9.7: whole shelf green after an authorized payment
+SHELF_RED_S = 2  # 9.7: whole shelf red after a decline
 
 
 class ApiError(Exception):
@@ -150,8 +153,10 @@ def gate_enter(body: GateBody, request: Request):
 
 
 def quote_for(member_id: str) -> dict[str, Any]:
-    """Freeze the cart for checkout (IN_STORE -> CHECKOUT_PENDING). Re-quoting a pending checkout returns it
-    again. An empty cart closes the session instead: nothing to pay."""
+    """Freeze the cart for checkout (IN_STORE -> CHECKOUT_PENDING) and issue the instruction (8.6).
+    Re-quoting a pending checkout returns it again. An empty cart closes the session instead: nothing to pay."""
+    from backend import members
+
     session = own_active_session(member_id)
     if session["state"] == store.IN_STORE:
         live = store.compute_live_cart(session)
@@ -162,7 +167,8 @@ def quote_for(member_id: str) -> dict[str, Any]:
         cart = store.freeze_cart()
     else:
         cart = store.cart_for(session)
-    return {"cart": cart, "instruction": None}
+    member = members.get_member(member_id)
+    return {"cart": cart, "instruction": payments.instruction_for(session["id"], cart, member)}
 
 
 @router.post("/api/gate/exit/quote")
@@ -187,5 +193,84 @@ def gate_exit_cancel(request: Request):
     session = own_active_session(member["id"])
     if session["state"] == store.CHECKOUT_PENDING:
         store.unfreeze_cart()
+        payments.forget_instruction(session["id"])
         eventlog.log("gate_exit_cancel", member_id=member["id"], session_id=session["id"])
     return {"ok": True}
+
+
+# --- approve, receipt (S4.1) ---
+
+_approve_lock = threading.Lock()  # check + charge + record as one step: a double tap never charges twice
+
+
+@router.post("/api/gate/exit/approve")
+def gate_exit_approve(request: Request):
+    """Charge the frozen cart. Needs a fresh Face ID when passkeys are on (7.2). Works with gates off too."""
+    from backend import admin, auth_passkeys, members
+
+    member = members.current_member(request)
+    session = own_active_session(member["id"])
+    if session["state"] != store.CHECKOUT_PENDING:
+        raise ApiError(409, "invalid_state", "Scan the exit code first to review your cart.")
+    cart = store.cart_for(session)
+    instruction = payments.instruction_for(session["id"], cart, member)
+    if payments.over_scope(cart, instruction):
+        limit = instruction["agent_token"]["scope"]["max_amount_usd"]
+        eventlog.log("approve_over_scope", member_id=member["id"], session_id=session["id"],
+                     total_usd=cart["total_usd"], max_amount_usd=limit)
+        raise ApiError(409, "over_scope", f"This is over your ${limit:g} limit. Put something back to continue.")
+    instruction["cardholder_confirmation"] = auth_passkeys.consume_fresh_verification(request, member["id"])
+
+    with _approve_lock:
+        session = store.get_session(session["id"])
+        if session is None or session["state"] != store.CHECKOUT_PENDING:
+            raise ApiError(409, "invalid_state", "This checkout is already finished.")
+        amount_cents = payments.cart_mod.to_cents(cart["total_usd"])
+        attempt = payments.attempts(session["id"]) + 1
+        result = payments.charge(member, session["id"], instruction, amount_cents, attempt,
+                                 force_decline=admin.force_decline)
+        payment = payments.record(session["id"], member, amount_cents, result, instruction)
+        if payment["status"] == payments.AUTHORIZED:
+            store.mark_paid(session["id"])
+            payments.forget_instruction(session["id"])
+
+    if payment["status"] == payments.AUTHORIZED:
+        serial_bridge.send_timed("SHELF,GREEN", "SHELF,IDLE", SHELF_GREEN_S)
+        return {"payment": payment}
+    serial_bridge.send_timed("SHELF,RED", "SHELF,IDLE", SHELF_RED_S)
+    ws.broadcast_gate(member["id"], "declined")
+    return {"payment": payment, "message": result.get("message") or "The card was declined."}
+
+
+@router.get("/api/receipt/{session_id}")
+def receipt(session_id: str, request: Request):
+    """Paid receipt with items, payment and points (11.5). Only the shopper (or an admin) may see it.
+    Viewing a PAID receipt closes the session (7.1)."""
+    from backend import members
+
+    session = store.get_session(session_id)
+    viewer = request.session.get("member_id")
+    if session is None or not (session["member_id"] == viewer or request.session.get("admin")):
+        raise ApiError(404, "not_found", "No receipt here.")
+    member = members.get_member(session["member_id"]) or {}
+    rows = payments.session_payments(session_id)
+    paid = next((r for r in rows if r["status"] == payments.AUTHORIZED), None)
+    shown = paid or (rows[-1] if rows else None)
+    payment = payments.payment_view(shown, member.get("card_label")) if shown else None
+    if session["state"] == store.PAID and session["member_id"] == viewer:
+        session = store.close(session_id, reason="receipt_viewed")
+    cart = session["final_cart"] or store.cart_for(session)
+    return {
+        "session_id": session_id,
+        "state": session["state"],
+        "store_name": settings.store["name"],
+        "items": cart["items"],
+        "subtotal_usd": cart["subtotal_usd"],
+        "tax_usd": cart["tax_usd"],
+        "total_usd": cart["total_usd"],
+        "paid": paid is not None,
+        "payment": payment,
+        "loyalty": settings.features.loyalty,
+        "points_earned": payment["points_earned"] if payment else 0,
+        "points_total": int(member.get("points") or 0),
+    }

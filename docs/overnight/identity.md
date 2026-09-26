@@ -11,6 +11,7 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
 | S3.2 signup, members, demo account | done |
 | S3.3 passkeys | done (needs phones, see checklist) |
 | S3.4 gates, store lock, QR | done |
+| S4.1 instruction, mock payment, approve, receipt, loyalty | done |
 
 ## Decisions
 
@@ -119,6 +120,40 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   (outside my file list): codes 2 and 3 contain the gate tokens.
 - **The gate tokens in `.env` are the spec's example values** (`entry-7d2f`, `exit-91ac`), which are public in
   the spec. Change them before printing (Morning checklist).
+
+### S4.1 instruction, mock payment, approve, receipt, loyalty
+
+- **Instruction (8.6)** is issued at quote time and kept in memory per session. It is reused on re-quote while
+  the amount and budget match and it has not expired (15 minutes, `expires_at = created_at + 15 min`); otherwise a
+  new one is issued. After a backend restart a new one is simply issued. Names follow the project rename:
+  agent `speedmart-shelf-agent-01` / "SpeedMart Store Agent", token ref `tok_speedmart_<session id>`.
+  `cardholder_confirmation.verified_at` is `null` in the quote and filled in at approve time; the filled-in copy
+  is what is stored in `payments.instruction_json`.
+- **Approve order:** signed in -> own session in CHECKOUT_PENDING (409 `invalid_state` otherwise) -> `over_scope`
+  (409, checked **before** consuming Face ID, so the shopper can cancel, put something back, re-quote and approve
+  with the same Face ID within 90 s) -> fresh verification (401) -> charge under a lock (a double tap can never
+  charge twice; the second call sees PAID and gets 409).
+- **Declines are not HTTP errors.** Approve returns 200 `{"payment": {... "status": "DECLINED"}, "message": "..."}`.
+  The Payment object keeps exactly the 8.7 keys; the human message sits next to it. The session stays in
+  CHECKOUT_PENDING and a retry needs a new Face ID.
+- **Force-decline** (admin) stays on until the admin turns it off (it is a toggle in the existing admin UI and
+  API), rather than resetting itself after one charge. It returns DECLINED without calling any provider.
+- **LEDs:** AUTHORIZED -> `SHELF,GREEN` then `SHELF,IDLE` after 3 s; DECLINED -> `SHELF,RED` then idle after 2 s,
+  both via `serial_bridge.send_timed`. The WebSocket gets `gate: paid` (from the store transition) or
+  `gate: declined`.
+- **Receipt** `GET /api/receipt/{session_id}`: owner or admin only (404 otherwise, so ids cannot be probed).
+  Returns items, totals, the authorized payment (or the last attempt), `points_earned`, `points_total`. The owner
+  viewing a PAID receipt moves the session to CLOSED; `store.close_paid_sessions()` also closes PAID sessions after
+  60 s from the existing 30 s background loop (so it can take up to 90 s).
+- **Loyalty:** `floor(total)` points on AUTHORIZED only when `loyalty` is on; the receipt page hides points when
+  loyalty is off.
+- **Payments log:** every attempt (authorized or declined) goes to SQLite and `data/payments.log.jsonl` with the
+  full instruction.
+- **Gates off:** the cart's Checkout button opens `exit.html`, which uses `/api/dev/checkout` for the quote and the
+  same approve / cancel routes. `store.html` now remembers a paid session and links to its receipt.
+- **Checked in a browser tonight** (local scratch copy with passkeys, Stripe and LEDs off; real `config.json`
+  untouched): join -> Start shopping -> fake shelf pick -> live cart $8.64 -> Checkout -> "What the payment network
+  sees" -> "Confirm $8.64" -> receipt with MOCK auth code and "+8 points · 8 total"; `payments.log.jsonl` written.
 
 ## Morning checklist
 

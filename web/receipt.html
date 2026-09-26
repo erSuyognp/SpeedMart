@@ -1,1 +1,43 @@
-<!-- Paid receipt + points. Filled in by S4.1. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · Receipt</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main>
+    <section class="card notice">
+      <div id="icon" class="big-icon" aria-hidden="true">…</div>
+      <h1 id="title">Loading…</h1>
+      <p id="card" class="lead"></p>
+      <p id="meta" class="muted"></p>
+      <p id="points" class="lead" hidden></p>
+    </section>
+
+    <section id="items-card" class="card" hidden>
+      <h2 id="store-name">Items</h2>
+      <ul id="items" class="cart-list"></ul>
+      <div class="totals" style="margin-top:12px">
+        <span class="muted">Subtotal</span><span id="subtotal"></span>
+        <span class="muted">Tax</span><span id="tax"></span>
+        <span class="grand">Total</span><span id="total" class="grand"></span>
+      </div>
+    </section>
+
+    <details id="record" class="card panel" hidden>
+      <summary>Show payment record</summary>
+      <pre id="record-json" class="json"></pre>
+    </details>
+
+    <a id="done" class="button primary block" href="/">Done</a>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/pages/receipt.js"></script>
+</body>
+</html>

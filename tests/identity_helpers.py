@@ -40,4 +40,5 @@ def set_env(monkeypatch, **values: str) -> None:
 def login_as(client: TestClient, member_id: str, **extra) -> None:
     """Session cookie for a signed-in member, signed like Starlette's SessionMiddleware."""
     data = b64encode(json.dumps({"member_id": member_id, **extra}).encode())
+    client.cookies.clear()  # replaces the whole session (the server's own cookie would shadow ours)
     client.cookies.set("session", TimestampSigner(os.environ["SESSION_SECRET"]).sign(data).decode())
