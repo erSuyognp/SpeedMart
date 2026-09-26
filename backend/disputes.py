@@ -14,6 +14,11 @@ signed override (source "dispute"); after paying it is a refund through the retu
 "dispute"). At most MAX_REMOVE_ANYWAY of those per visit, then "Please ask a staff member". Evidence is deleted
 once the visit is over (cancelled / empty exit at once, a paid visit when its 30 minute report window closes),
 unless the visit has an open or resolved dispute: then it is kept EVIDENCE_HOLD after the last dispute.
+
+AI assisted review (8.14, backend/review.py): every needs_review dispute is reviewed in the background from the
+event clips (backend/evidence.py) and the crops; small clear cases are refunded at once (reason ai_auto_small),
+everything else waits for a person on the admin page (approve refund / keep the charge, with a note). The AI can
+never deny a dispute. The shopper's receipt shows "Under review", "Refunded" or "Charge confirmed" plus the note.
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import secrets
 import shutil
 import threading
 from datetime import datetime, timedelta, timezone
@@ -32,7 +36,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend import admin, db, eventlog, payments, returns, shelf_state, store
+from backend import admin, db, eventlog, evidence, payments, returns, shelf_state, store
 from backend import cart as cart_mod
 from backend.routes_api import ApiError
 from backend.settings import settings
@@ -46,8 +50,12 @@ STAFF_LINE = "Please ask a staff member."
 
 SHOPPING, CHECKOUT, AFTER_PURCHASE = "shopping", "checkout", "after_purchase"
 RESOLVED_CAMERA, NEEDS_REVIEW, KEPT, REMOVED, REFUNDED = "resolved_camera", "needs_review", "kept", "removed", "refunded"
+CHARGE_CONFIRMED = "charge_confirmed"  # a person reviewed the evidence and kept the charge (8.14)
 OPEN, RESOLVED, WITHDRAWN = "open", "resolved", "withdrawn"
-REMOVE_ANYWAY = (REMOVED, REFUNDED)  # outcomes that count toward MAX_REMOVE_ANYWAY
+REMOVE_ANYWAY = (REMOVED, REFUNDED)  # outcomes that count toward MAX_REMOVE_ANYWAY (the shopper's own taps)
+# What the shopper's receipt says per outcome (8.14). `kept` is the shopper's own withdrawal: not listed.
+CUSTOMER_STATUS = {NEEDS_REVIEW: "Under review", REFUNDED: "Refunded", RESOLVED_CAMERA: "Refunded",
+                   REMOVED: "Removed from your cart", CHARGE_CONFIRMED: "Charge confirmed"}
 
 SESSION_RE = re.compile(r"^ses_[A-Za-z0-9_-]{1,40}$")
 FILE_RE = re.compile(r"^bay\d{1,3}_[A-Za-z0-9_-]{1,64}\.jpg$")
@@ -84,11 +92,7 @@ class EvidenceNotice(BaseModel):
     tags: dict[str, list[float]] = {}  # tag id -> [x, y, w, h] in crop pixels
 
 
-def _check_internal_token(request: Request) -> None:
-    token = request.headers.get("X-Internal-Token", "")
-    expected = settings.env.internal_token
-    if not expected or not secrets.compare_digest(token.encode(), expected.encode()):
-        raise ApiError(401, "bad_internal_token", "Missing or wrong X-Internal-Token.")
+_check_internal_token = evidence.check_internal_token
 
 
 @router.post("/internal/evidence")
@@ -183,7 +187,8 @@ def remove_anyway_used(session_id: str) -> int:
     conn = db.connect()
     try:
         return conn.execute(
-            f"SELECT COUNT(*) FROM disputes WHERE store_session_id = ? AND outcome IN ({','.join('?' * len(REMOVE_ANYWAY))})",
+            f"SELECT COUNT(*) FROM disputes WHERE store_session_id = ? AND decision_json IS NULL "
+            f"AND outcome IN ({','.join('?' * len(REMOVE_ANYWAY))})",
             (session_id, *REMOVE_ANYWAY)).fetchone()[0]
     finally:
         conn.close()
@@ -234,16 +239,74 @@ def _message(row: dict[str, Any], refund: dict[str, Any] | None = None) -> str:
         return "The shelf camera still sees it gone. Compare the photos."
     if row["outcome"] == KEPT:
         return "Thanks. Nothing was refunded." if after else "Thanks. It stays in your cart."
+    decided = bool(row.get("decision_json"))
     if row["outcome"] == REMOVED:
-        return "Removed. Our team will review the shelf photos."
+        return "Removed from your cart after a review of the shelf photos." if decided \
+            else "Removed. Our team will review the shelf photos."
     if row["outcome"] == REFUNDED:
-        return f"Refunded {amount}. Our team will review the shelf photos."
+        return f"Refunded {amount} after a review of the shelf photos." if decided \
+            else f"Refunded {amount}. Our team will review the shelf photos."
+    if row["outcome"] == CHARGE_CONFIRMED:
+        return "Our team reviewed the shelf photos and confirmed the charge."
     return ""
 
 
+def customer_status(row: dict[str, Any]) -> dict[str, Any] | None:
+    """{"label", "note"} for the shopper's receipt (8.14), None for a withdrawn dispute."""
+    if row["status"] == WITHDRAWN or row["outcome"] not in CUSTOMER_STATUS:
+        return None
+    label = "Under review" if row["status"] == OPEN else CUSTOMER_STATUS[row["outcome"]]
+    decision = json.loads(row["decision_json"]) if row.get("decision_json") else None
+    # the staff note goes to the shopper with "Charge confirmed" (the answer they are owed); a refund speaks for itself
+    note = decision.get("note") if decision and decision.get("by") == "staff" and row["outcome"] == CHARGE_CONFIRMED else None
+    return {"label": label, "note": note}
+
+
+def _review_view(row: dict[str, Any], url_prefix: str) -> dict[str, Any] | None:
+    """The stored AI review with every evidence observation linked to its keyframe (8.14)."""
+    if not row.get("review_json"):
+        return None
+    review = json.loads(row["review_json"])
+    session_id = row["store_session_id"]
+    root = evidence_root() / session_id
+    ev = json.loads(row["evidence_json"] or "null") or {}
+    clips = {c["id"]: c for c in evidence.clips_for(session_id)}
+
+    def url_for(frame: str) -> str | None:
+        if frame in ("baseline", "latest"):
+            photo = ev.get("before" if frame == "baseline" else "now")
+            return f"{url_prefix}/{session_id}/{photo['file']}" if photo and (root / photo["file"]).is_file() else None
+        m = re.match(r"^clip(\d+)_(k\d+)$", frame)
+        if not m or int(m.group(1)) not in clips:
+            return None
+        key = next((k for k in clips[int(m.group(1))]["keyframes"] if k["id"] == m.group(2)), None)
+        return f"{url_prefix}/{session_id}/clips/{key['file']}" if key else None
+
+    return {
+        "supports_customer_pct": review.get("supports_customer_pct"),
+        "verdict": review.get("verdict"),
+        "summary": review.get("summary"),
+        "evidence": [{**e, "url": url_for(e.get("frame", ""))} for e in review.get("evidence", [])],
+        "source": review.get("source"),
+        "model": review.get("model"),
+        "created_at": review.get("created_at"),
+    }
+
+
+def timeline(row: dict[str, Any]) -> dict[str, Any]:
+    """The structured timeline the admin card shows (the same one the review agent gets)."""
+    from backend import review
+
+    return review.gather(row)["timeline"]
+
+
 def view(row: dict[str, Any], url_prefix: str = "/api/disputes/evidence",
-         refund: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Dispute (8.13). Photo urls point at the owner's route (or the admin route for the admin page)."""
+         refund: dict[str, Any] | None = None, admin: bool = False) -> dict[str, Any]:
+    """Dispute (8.13 + 8.14). Photo urls point at the owner's route (or the admin route for the admin page).
+    The shopper's view carries the status line and keyframes only; the admin view (`admin`) adds the AI review,
+    the decision, the MP4 clips, the timeline and the shopper's first name."""
+    from backend import members, review
+
     ev = json.loads(row["evidence_json"] or "null")
     root = evidence_root() / row["store_session_id"]
 
@@ -267,9 +330,19 @@ def view(row: dict[str, Any], url_prefix: str = "/api/disputes/evidence",
             "before": photo(ev.get("before")), "now": photo(ev.get("now")), "privacy": PRIVACY_LINE},
         "remove_anyway_left": max(0, MAX_REMOVE_ANYWAY - remove_anyway_used(row["store_session_id"])),
         "amount_usd": cart_mod.to_usd(row["amount_cents"]) if row["amount_cents"] is not None else None,
+        "disputed_usd": cart_mod.to_usd(review.disputed_cents(row)),
         "refund_id": row["refund_id"],
         "created_at": row["created_at"],
         "resolved_at": row["resolved_at"],
+        "customer_status": customer_status(row),
+        "clips": [evidence.clip_view(c, url_prefix, with_video=admin)
+                  for c in evidence.clips_for(row["store_session_id"], ev["bay"] if ev else None)],
+        **({
+            "first_name": members.first_name((members.get_member(row["member_id"]) or {}).get("name", "")),
+            "review": _review_view(row, url_prefix),
+            "decision": json.loads(row["decision_json"]) if row.get("decision_json") else None,
+            "timeline": timeline(row),
+        } if admin else {}),
     }
 
 
@@ -290,16 +363,18 @@ def _own_shopping(member_id: str) -> dict[str, Any] | None:
     return session
 
 
-def _remove_from_cart(session: dict[str, Any], sku: str) -> tuple[dict[str, Any], int]:
+def _remove_from_cart(session: dict[str, Any], sku: str, source: str = "dispute") -> tuple[dict[str, Any], int]:
     """One unit out of the live or frozen cart. (cart after, cents it took off the total)."""
     before = cart_mod.to_cents(store.cart_for(session)["total_usd"])
-    cart = store.remove_one(sku, source="dispute")
+    cart = store.remove_one(sku, source=source)
     payments.forget_instruction(session["id"])  # the exit quote issues a new one for the new total
     return cart, max(0, before - cart_mod.to_cents(cart["total_usd"]))
 
 
-def _paid_visit(member_id: str, session_id: str, sku: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """A paid visit of this member that can still be reported: (session, payment), else ApiError."""
+def _paid_visit(member_id: str, session_id: str, sku: str, window: bool = True) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A paid visit of this member that can still be reported: (session, payment), else ApiError.
+    A staff or policy decision on an already open dispute (8.14) passes window=False: the 30 minutes only limit
+    when a problem may be reported, not when it may be settled."""
     session = store.get_session(session_id)
     if session is None or session["member_id"] != member_id:
         raise ApiError(404, "not_found", "No visit to report here.")
@@ -307,7 +382,7 @@ def _paid_visit(member_id: str, session_id: str, sku: str) -> tuple[dict[str, An
     if payment is None or session["state"] not in (store.PAID, store.CLOSED) \
             or payment["provider"] not in returns.REFUNDABLE_PROVIDERS:
         raise ApiError(409, "not_disputable", "Only a paid visit can be reported.")
-    if datetime.now(timezone.utc) > _parse(payment["created_at"]) + REPORT_WINDOW:
+    if window and datetime.now(timezone.utc) > _parse(payment["created_at"]) + REPORT_WINDOW:
         raise ApiError(409, "dispute_window_closed", "Problems can be reported for 30 minutes after you pay. "
                        + STAFF_LINE)
     if returns.remaining(session, payment).get(sku, 0) < 1:
@@ -326,18 +401,19 @@ def _nobody_since(session: dict[str, Any]) -> bool:
 
 
 def _refund_one(member: dict[str, Any], session: dict[str, Any], payment: dict[str, Any], sku: str,
-                dispute_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """One unit plus its tax back to the card through the returns refund path (reason "dispute")."""
+                dispute_id: str, reason: str = "dispute") -> tuple[dict[str, Any], dict[str, Any]]:
+    """One unit plus its tax back to the card through the returns refund path. `reason` is the Refund's reason
+    (8.11): "dispute" for the shopper's own "Remove anyway", "ai_auto_small" or "staff_review" (8.14)."""
     left = returns.remaining(session, payment)
     bought = returns.purchased(session)
     _, refunded_cents = returns.refunded(payment["id"])
     _, _, amount = returns.refund_amount({sku: 1}, left, {s: b["unit_cents"] for s, b in bought.items()},
                                          payment["amount_cents"], refunded_cents, settings.store["tax_rate"])
     attempt = sum(1 for r in payments.payment_refunds(payment["id"]) if r.get("dispute_id") == dispute_id) + 1
-    result = payments.refund(payment, amount, dispute_id, attempt, reason="dispute")
+    result = payments.refund(payment, amount, dispute_id, attempt, reason=reason)
     refund = payments.record_refund(payment, None, member, amount,
                                     [{"sku": sku, "name": bought[sku]["name"], "qty": 1}], result,
-                                    reason="dispute", dispute_id=dispute_id)
+                                    reason=reason, dispute_id=dispute_id)
     return refund, result
 
 
@@ -359,47 +435,87 @@ def open_dispute(body: DisputeBody, request: Request):
     if body.sku not in settings.skus:
         raise ApiError(400, "unknown_sku", "Unknown item.")
     active = store.current_session()
+    after_purchase = bool(body.session_id) and not (active and active["id"] == body.session_id)
     with _lock:
-        if body.session_id and not (active and active["id"] == body.session_id):
-            return _open_after_purchase(member, body.session_id, body.sku)
-        session = _own_shopping(member["id"])
-        if session is None:
-            raise ApiError(409, "no_active_session", "You are not in the store.")
-        shown = _qty(store.cart_for(session), body.sku)
-        if shown < 1:
-            raise ApiError(409, "not_in_cart", "That item is not in your cart any more.")
-        stage = CHECKOUT if session["state"] == store.CHECKOUT_PENDING else SHOPPING
-        evidence = build_evidence(session["id"], body.sku)
-        camera = store.camera_quantities(session).get(body.sku, 0) if _vision_fresh() else None
-        if camera is not None and camera < shown:  # the latest stable shelf has the unit back
-            cart, amount = _remove_from_cart(session, body.sku)
-            row = _insert(session, member["id"], body.sku, stage, RESOLVED_CAMERA, RESOLVED, evidence, amount)
+        if after_purchase:
+            done, row = _open_after_purchase(member, body.session_id, body.sku)
+            if done is not None:  # settled by the camera under the lock
+                return done
+            cart = None
         else:
-            cart = store.cart_for(store.get_session(session["id"]))
-            row = _insert(session, member["id"], body.sku, stage, NEEDS_REVIEW, OPEN, evidence)
-    return {"dispute": view(row), "cart": cart}
+            session = _own_shopping(member["id"])
+            if session is None:
+                raise ApiError(409, "no_active_session", "You are not in the store.")
+            shown = _qty(store.cart_for(session), body.sku)
+            if shown < 1:
+                raise ApiError(409, "not_in_cart", "That item is not in your cart any more.")
+            stage = CHECKOUT if session["state"] == store.CHECKOUT_PENDING else SHOPPING
+            ev = build_evidence(session["id"], body.sku)
+            camera = store.camera_quantities(session).get(body.sku, 0) if _vision_fresh() else None
+            if camera is not None and camera < shown:  # the latest stable shelf has the unit back
+                cart, amount = _remove_from_cart(session, body.sku)
+                row = _insert(session, member["id"], body.sku, stage, RESOLVED_CAMERA, RESOLVED, ev, amount)
+            else:
+                cart = store.cart_for(store.get_session(session["id"]))
+                row = _insert(session, member["id"], body.sku, stage, NEEDS_REVIEW, OPEN, ev)
+    if row["outcome"] != NEEDS_REVIEW:
+        return {"dispute": view(row), "cart": cart}
+    # Outside the lock: the review's auto approval (8.14) takes it itself. It may settle the dispute at once.
+    _start_review(row)
+    row = _row(row["id"])
+    refund = _refund_by_id(row["refund_id"], member) if row["refund_id"] else None
+    if cart is not None:
+        session = store.get_session(row["store_session_id"])
+        cart = store.cart_for(session) if session["state"] in store.SHOPPING_STATES else cart
+    return {"dispute": view(row, refund=refund), "cart": cart, **({"refund": refund} if refund else {})}
 
 
-def _open_after_purchase(member: dict[str, Any], session_id: str, sku: str) -> dict[str, Any]:
+def _refund_by_id(refund_id: str, member: dict[str, Any]) -> dict[str, Any] | None:
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT * FROM refunds WHERE id = ?", (refund_id,)).fetchone()
+    finally:
+        conn.close()
+    return payments.refund_view(dict(row), member.get("card_label")) if row else None
+
+
+def _start_review(row: dict[str, Any]) -> None:
+    """A dispute reached needs_review: tell the admin page now and review it in the background (8.14).
+    Called outside _lock: the review's auto approval takes the lock itself."""
+    from backend import review
+
+    review.publish(row)
+    review.schedule(row["id"])
+
+
+def _notify_admins(row: dict[str, Any]) -> None:
+    from backend import review
+
+    review.publish(row)
+
+
+def _open_after_purchase(member: dict[str, Any], session_id: str, sku: str
+                         ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Called with _lock held. (response, row): the response when the camera settled it here, else (None, row)
+    with the open needs_review row for the caller to hand to the review outside the lock."""
     session, payment = _paid_visit(member["id"], session_id, sku)
-    evidence = build_evidence(session_id, sku)
+    ev = build_evidence(session_id, sku)
     left = returns.remaining(session, payment).get(sku, 0)
     camera = store.camera_quantities(session).get(sku, 0) \
         if _vision_fresh() and _nobody_since(session) and store.current_session() is None else None
     if camera is None or camera >= left:
-        row = _insert(session, member["id"], sku, AFTER_PURCHASE, NEEDS_REVIEW, OPEN, evidence)
-        return {"dispute": view(row), "cart": None}
+        return None, _insert(session, member["id"], sku, AFTER_PURCHASE, NEEDS_REVIEW, OPEN, ev)
     # The shelf has more of it than this visit left there: the camera got it wrong, refund one unit now.
-    row = _insert(session, member["id"], sku, AFTER_PURCHASE, NEEDS_REVIEW, OPEN, evidence)
+    row = _insert(session, member["id"], sku, AFTER_PURCHASE, NEEDS_REVIEW, OPEN, ev)
     refund, result = _refund_one(member, session, payment, sku, row["id"])
     if refund["status"] != payments.REFUND_SUCCEEDED:
         eventlog.log("dispute_refund_failed", dispute_id=row["id"], session_id=session_id, message=result.get("message"))
         return {"dispute": view(row), "cart": None, "refund": refund,
-                "message": result.get("message") or "The refund did not go through."}
+                "message": result.get("message") or "The refund did not go through."}, row
     row = _settle(row["id"], RESOLVED_CAMERA, RESOLVED, cart_mod.to_cents(refund["amount_usd"]), refund["refund_id"])
     eventlog.log("dispute_refunded", dispute_id=row["id"], session_id=session_id, sku=sku, source="camera",
                  amount_usd=refund["amount_usd"], refund_id=refund["refund_id"])
-    return {"dispute": view(row, refund=refund), "cart": None, "refund": refund}
+    return {"dispute": view(row, refund=refund), "cart": None, "refund": refund}, row
 
 
 def _own_dispute(dispute_id: str, member_id: str) -> dict[str, Any]:
@@ -421,6 +537,7 @@ def keep(dispute_id: str, request: Request):
     with _lock:
         row = _settle(_own_dispute(dispute_id, member["id"])["id"], KEPT, WITHDRAWN)
     eventlog.log("dispute_kept", dispute_id=dispute_id, session_id=row["store_session_id"], sku=row["sku"])
+    _notify_admins(row)
     session = _own_shopping(member["id"])
     return {"dispute": view(row), "cart": store.cart_for(session) if session else None}
 
@@ -450,6 +567,7 @@ def remove_anyway(dispute_id: str, request: Request):
             row = _settle(dispute_id, REFUNDED, RESOLVED, cart_mod.to_cents(refund["amount_usd"]), refund["refund_id"])
             eventlog.log("dispute_refunded", dispute_id=dispute_id, session_id=session["id"], sku=row["sku"],
                          source="remove_anyway", amount_usd=refund["amount_usd"], refund_id=refund["refund_id"])
+            _notify_admins(row)
             return {"dispute": view(row, refund=refund), "cart": None, "refund": refund}
         session = _own_shopping(member["id"])
         if session is None or session["id"] != row["store_session_id"]:
@@ -460,6 +578,7 @@ def remove_anyway(dispute_id: str, request: Request):
         row = _settle(dispute_id, REMOVED, RESOLVED, amount)
     eventlog.log("dispute_removed", dispute_id=dispute_id, session_id=row["store_session_id"], sku=row["sku"],
                  amount_usd=cart_mod.to_usd(amount), total_usd=cart["total_usd"])
+    _notify_admins(row)
     return {"dispute": view(row), "cart": cart}
 
 
@@ -489,10 +608,31 @@ def evidence_photo(session_id: str, file: str, request: Request):
     return _serve(session_id, file)
 
 
+@router.get("/api/disputes/evidence/{session_id}/clips/{file}")
+def evidence_keyframe(session_id: str, file: str, request: Request):
+    """A clip keyframe (JPEG) for the visit's own shopper. The MP4 itself is admin only (404 here)."""
+    from backend import members
+
+    require_disputes()
+    member = members.current_member(request)
+    session = store.get_session(session_id)
+    if session is None or session["member_id"] != member["id"]:
+        raise ApiError(404, "not_found", "No clip here.")
+    return evidence.serve(session_id, file, keyframes_only=True)
+
+
 @admin_router.get("/admin/evidence/{session_id}/{file}")
 def admin_evidence_photo(session_id: str, file: str):
     """The same crops for the admin page's disputes card (team only)."""
     return _serve(session_id, file)
+
+
+@admin_router.get("/admin/evidence/{session_id}/clips/{file}")
+def admin_clip(session_id: str, file: str):
+    """Event clips (MP4) and keyframes for the admin review queue (team only)."""
+    if not SESSION_RE.match(session_id):
+        raise ApiError(404, "not_found", "No clip here.")
+    return evidence.serve(session_id, file, keyframes_only=False)
 
 
 def recent(limit: int = 20) -> list[dict[str, Any]]:
@@ -504,7 +644,25 @@ def recent(limit: int = 20) -> list[dict[str, Any]]:
                             (limit,)).fetchall()
     finally:
         conn.close()
-    return [{**view(dict(r), url_prefix="/admin/evidence"), "member_name": r["member_name"]} for r in rows]
+    return [{**view(dict(r), url_prefix="/admin/evidence", admin=True), "member_name": r["member_name"]} for r in rows]
+
+
+def customer_disputes(session: dict[str, Any]) -> list[dict[str, Any]]:
+    """This visit's disputes for the receipt (8.14): open, refunded, removed or charge confirmed; not withdrawn."""
+    if not settings.features.disputes:
+        return []
+    conn = db.connect()
+    try:
+        rows = conn.execute("SELECT * FROM disputes WHERE store_session_id = ? AND status != ? ORDER BY created_at, rowid",
+                            (session["id"], WITHDRAWN)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        d = view(dict(r))
+        if d["customer_status"] is not None:
+            out.append(d)
+    return out
 
 
 def report_status(session: dict[str, Any]) -> dict[str, Any]:
@@ -564,6 +722,7 @@ def cleanup_evidence(now: datetime | None = None) -> list[str]:
         ids = {r[0] for r in conn.execute("SELECT DISTINCT store_session_id FROM evidence")}
     finally:
         conn.close()
+    ids |= evidence.session_ids()
     if root.is_dir():
         ids |= {p.name for p in root.iterdir() if p.is_dir()}
     deleted = []
@@ -572,6 +731,7 @@ def cleanup_evidence(now: datetime | None = None) -> list[str]:
             continue
         folder = root / session_id
         files = len(list(folder.glob("*.jpg"))) if folder.is_dir() else 0
+        clip_files = len(list((folder / "clips").glob("*"))) if (folder / "clips").is_dir() else 0
         shutil.rmtree(folder, ignore_errors=True)
         conn = db.connect()
         try:
@@ -579,7 +739,8 @@ def cleanup_evidence(now: datetime | None = None) -> list[str]:
             conn.commit()
         finally:
             conn.close()
-        eventlog.log("evidence_deleted", session_id=session_id, files=files)
+        clips = evidence.delete_for(session_id)
+        eventlog.log("evidence_deleted", session_id=session_id, files=files, clip_files=clip_files, clips=clips)
         deleted.append(session_id)
     return deleted
 

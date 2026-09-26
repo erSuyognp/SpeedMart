@@ -111,7 +111,29 @@ CREATE TABLE IF NOT EXISTS disputes (
   refund_id TEXT,
   evidence_json TEXT,
   created_at TEXT NOT NULL,
-  resolved_at TEXT
+  resolved_at TEXT,
+  review_json TEXT,
+  decision_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS clips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_session_id TEXT NOT NULL,
+  bay INTEGER NOT NULL,
+  sku TEXT NOT NULL,
+  file TEXT NOT NULL,
+  keyframes_json TEXT NOT NULL,
+  change_at TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  units_before_json TEXT NOT NULL,
+  units_after_json TEXT NOT NULL,
+  motion_json TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  fps REAL NOT NULL,
+  frames INTEGER NOT NULL,
+  created_at TEXT NOT NULL
 );
 """
 
@@ -119,6 +141,7 @@ CREATE TABLE IF NOT EXISTS disputes (
 ADDED_COLUMNS = {
     "store_sessions": ("return_of TEXT", "first_pick_at TEXT", "quoted_at TEXT", "approved_at TEXT"),
     "refunds": ("reason TEXT", "dispute_id TEXT"),  # cart disputes (8.13): reason "return" | "dispute"
+    "disputes": ("review_json TEXT", "decision_json TEXT"),  # AI review + staff / auto decision (8.14)
 }
 
 

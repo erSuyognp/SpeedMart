@@ -115,6 +115,7 @@
       : outlined ? "The red box is where it was last seen." : "";
     if (ev.card) nodes.push(el("p", "muted small", "Bay " + ev.card + ". " + note));
     nodes.push(el("p", "privacy-note small", ev.privacy || "These photos show only the shelf and are deleted after your visit."));
+    nodes.push(el("p", "muted small", "Not sure? Leave it: our team reviews every open case and your receipt shows the answer."));
     els.body.replaceChildren(...nodes);
     const keep = button("Found it, keep it", "secondary", onKeep);
     if (d.remove_anyway_left > 0) {

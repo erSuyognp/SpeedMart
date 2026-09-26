@@ -1531,3 +1531,66 @@ body:has(.action-bar .demo-note:not([hidden])) { --action-bar-space: calc(220px 
 body:has(.action-bar .demo-note:not([hidden])):has(.action-bar .verify-note:not(:empty)) {
   --action-bar-space: calc(280px + var(--safe-b));
 }
+
+/* ==========================================================================
+   AI ASSISTED DISPUTE REVIEW (8.14): the admin review queue and the receipt's "Reported problems" card
+   ========================================================================== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  margin-left: 6px;
+  border-radius: 11px;
+  background: var(--red);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: 800;
+  vertical-align: middle;
+}
+#disputes-card h2 { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+#disputes-card h2 .toggle.small { margin-left: auto; min-height: 32px; padding: 0 10px; font-size: var(--text-xs); }
+.dispute-entry.open { border-left: 3px solid var(--amber); padding-left: var(--space-3); }
+
+.ai-verdict { margin-top: var(--space-2); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); }
+.ai-verdict .row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.confidence { height: 8px; margin-top: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.confidence > span { display: block; height: 100%; width: 0; background: var(--amber); transition: width 0.3s ease; }
+.confidence.ok > span { background: var(--green); }
+.confidence.bad > span { background: var(--red); }
+.ai-summary { margin: var(--space-2) 0 0; }
+.observations { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.observations li { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--text-sm); }
+.observations img { width: 64px; height: 44px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); flex: none; }
+.observations .frame-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--text-xs); color: var(--text-3); }
+
+.clip-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+.clip video { display: block; width: 100%; margin-top: 6px; border-radius: var(--radius-sm); background: #000; }
+.keyframe-strip { display: flex; gap: 4px; overflow-x: auto; margin-top: 6px; padding-bottom: 2px; }
+.keyframe-strip img { height: 52px; border-radius: 4px; border: 1px solid var(--line); flex: none; }
+
+.decision { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.decision textarea { width: 100%; min-height: 56px; resize: vertical; }
+.decision .buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.decision-record { margin: var(--space-2) 0 0; font-size: var(--text-sm); }
+.timeline { margin-top: var(--space-2); }
+.timeline summary { cursor: pointer; font-weight: 600; font-size: var(--text-sm); }
+.timeline ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+
+/* Receipt: "Reported problems" */
+.dispute-status-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.dispute-status .head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.dispute-status .name { font-weight: 600; }
+.dispute-status p { margin: 6px 0 0; }
+.staff-note { padding: var(--space-2) var(--space-3); border-left: 3px solid var(--line-strong); color: var(--text-2); }

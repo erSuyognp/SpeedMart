@@ -62,7 +62,16 @@ def _health() -> dict:
         "serial": serial_bridge.is_connected(),
         "stripe": ("test" if stripe_key.startswith("sk_test_") else "no_key") if settings.features.stripe else "off",
         "llm": settings.features.llm and bool(settings.env.anthropic_api_key or settings.env.openai_api_key),
+        "review": _review_health(),
     }
+
+
+def _review_health() -> dict:
+    """The dispute review model (8.14): configured?, does it take images? (None until the startup probe ran)."""
+    from backend import review  # local: review imports this module
+
+    return {"available": review.available(), "provider": review.provider(), "model": review.model_name() or None,
+            "vision": review.vision_ok}
 
 
 def _avg(values: list[int]) -> float | None:
@@ -87,6 +96,8 @@ def metrics(now: datetime | None = None) -> dict:
     paid = [s for s in sessions if s["approved_at"]]
     in_store = [store.seconds_between(s["started_at"], s["approved_at"]) for s in paid]
     exit_to_approval = [store.seconds_between(s["quoted_at"], s["approved_at"]) for s in paid if s["quoted_at"]]
+    from backend import review  # local: review imports this module
+
     return {
         "since": since,
         "sessions_today": len(sessions),
@@ -95,6 +106,8 @@ def metrics(now: datetime | None = None) -> dict:
         "avg_exit_to_approval_s": _avg(exit_to_approval),
         "refunds_today": refund_row[0],
         "refunded_usd_today": refund_row[1] / 100,
+        # AI assisted dispute review (8.14): disputes today, AI and human agreement, auto approved refunds
+        **review.metrics(since),
     }
 
 

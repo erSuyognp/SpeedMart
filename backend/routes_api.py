@@ -286,6 +286,7 @@ def receipt(session_id: str, request: Request):
         "refunded_usd": payments.cart_mod.to_usd(sum(payments.cart_mod.to_cents(r["amount_usd"]) for r in refunds)),
         "return": returns.eligibility(session),
         "report": disputes.report_status(session),  # "Report a problem" (8.13)
+        "disputes": disputes.customer_disputes(session),  # status of each reported problem (8.14)
     }
 
 

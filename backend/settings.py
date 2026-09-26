@@ -60,6 +60,8 @@ class Env:
     openai_api_key: str
     openai_model: str
     openai_base_url: str
+    review_provider: str  # AI dispute review (8.14): anthropic | openai; empty = same as llm_provider
+    review_model: str  # empty = that provider's model (ANTHROPIC_MODEL / OPENAI_MODEL)
     elevenlabs_api_key: str
     elevenlabs_agent_id: str
 
@@ -129,6 +131,8 @@ def _load_env() -> Env:
         openai_api_key=g("OPENAI_API_KEY"),
         openai_model=g("OPENAI_MODEL"),
         openai_base_url=g("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        review_provider=g("REVIEW_PROVIDER").lower(),
+        review_model=g("REVIEW_MODEL"),
         elevenlabs_api_key=g("ELEVENLABS_API_KEY"),
         elevenlabs_agent_id=g("ELEVENLABS_AGENT_ID"),
     )

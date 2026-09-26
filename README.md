@@ -85,8 +85,11 @@ cp .env.example .env
 ```
 
 Fill in `.env`: `SESSION_SECRET`, `INTERNAL_TOKEN`, `ADMIN_PASSWORD` at least. Optional: `ANTHROPIC_API_KEY` (or
-`LLM_PROVIDER=openai` + `OPENAI_API_KEY` + `OPENAI_MODEL`) for LLM agent lines, and `STRIPE_SECRET_KEY`
-(`sk_test_...` only) for Stripe test mode. `.env` is gitignored. Never commit it.
+`LLM_PROVIDER=openai` + `OPENAI_API_KEY` + `OPENAI_MODEL`) for LLM agent lines, `REVIEW_PROVIDER` +
+`REVIEW_MODEL` to point the AI dispute review at a vision capable model (empty = the same provider, key and
+model as the agent line; the backend checks at startup that the model takes images and logs
+`review_model_probe`), and `STRIPE_SECRET_KEY` (`sk_test_...` only) for Stripe test mode. `.env` is gitignored.
+Never commit it.
 
 Then check your work — `python scripts\check_env.py` verifies every `.env` value (and prints no secrets):
 
@@ -180,6 +183,7 @@ demo tools) have no flag and can't be turned off.
 | `https_tunnel` | F14: ngrok static domain | `true` | LAN http only (needs `passkeys` off) |
 | `loyalty` | F15: points on the receipt | `true` | No points |
 | `load_cells` | F16: HX711 load cells | `false` | Default |
+| `disputes` | F20: "Not mine?" / "Report a problem" with shelf photos, event clips and the AI assisted review queue (a person decides; the AI can only speed up refunds under $5) | `true` | No dispute buttons, no photos or clips saved, no review |
 
 Cut order if behind (cut from the top first): load cells → YOLO → loyalty → Stripe → passkeys → LLM (templates
 stay) → gate screen.

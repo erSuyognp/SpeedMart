@@ -83,6 +83,64 @@
     box.hidden = !box.children.length;
   }
 
+  // Reported problems (8.14): the status of each dispute on this visit, in neutral words, plus the staff note.
+  const STATUS_TEXT = {
+    "Under review": "Our team is taking a look at the shelf photos. The answer will show up here.",
+    "Refunded": "Refunded to your test card. No real money moves.",
+    "Removed from your cart": "Taken off your cart before you paid.",
+    "Charge confirmed": "Our team checked the shelf photos and kept this charge.",
+  };
+  const STATUS_KIND = { "Under review": "warn", "Refunded": "ok", "Removed from your cart": "ok", "Charge confirmed": "" };
+
+  function renderDisputes(list) {
+    const card = $("disputes-card");
+    const box = $("dispute-list");
+    box.replaceChildren();
+    (list || []).forEach((d) => {
+      const status = d.customer_status || {};
+      const li = document.createElement("li");
+      li.className = "dispute-status";
+      const head = document.createElement("div");
+      head.className = "head";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = d.name + (d.amount_usd !== null && d.amount_usd !== undefined ? " · " + api.money(d.amount_usd) : "");
+      const pill = document.createElement("span");
+      const kind = STATUS_KIND[status.label];
+      pill.className = "pill" + (kind ? " " + kind : "");
+      pill.textContent = status.label || "";
+      head.append(name, pill);
+      const text = document.createElement("p");
+      text.className = "muted small";
+      text.textContent = STATUS_TEXT[status.label] || "";
+      li.append(head, text);
+      if (status.note) {
+        const note = document.createElement("p");
+        note.className = "staff-note small";
+        note.textContent = "Staff note: " + status.note;
+        li.append(note);
+      }
+      const keys = (d.clips || []).flatMap((c) => c.keyframes || []).slice(-6);
+      if (keys.length) {
+        const strip = document.createElement("div");
+        strip.className = "keyframe-strip";
+        keys.forEach((k) => {
+          const img = document.createElement("img");
+          img.src = k.url;
+          img.alt = "Shelf at " + clock(k.captured_at);
+          img.loading = "lazy";
+          strip.append(img);
+        });
+        const cap = document.createElement("p");
+        cap.className = "privacy-note small";
+        cap.textContent = "Shelf moments our team looks at. Shelf only, deleted after the review.";
+        li.append(strip, cap);
+      }
+      box.append(li);
+    });
+    card.hidden = !box.children.length || !!returning;
+  }
+
   function renderOffer(r) {
     const ret = r.return || {};
     const show = r.paid && !returning && (ret.eligible || ret.reason === "return_window_closed");
@@ -151,6 +209,7 @@
     if (p) $("record-json").textContent = JSON.stringify({ payment: p, refunds: r.refunds || [] }, null, 2);
     renderOffer(r);
     renderReport(r);
+    renderDisputes(r.disputes);
   }
 
   async function loadReceipt() {
@@ -165,7 +224,7 @@
     $("cancel-return").hidden = !on;
     $("done").hidden = on;
     $("paid-card").hidden = on; // the instruction goes to the top of the screen
-    ["items-card", "record", "report-offer"].forEach((id) => { if (on) $(id).hidden = true; });
+    ["items-card", "record", "report-offer", "disputes-card"].forEach((id) => { if (on) $(id).hidden = true; });
     if (on) $("return-offer").hidden = true;
     clearInterval(timer);
     if (on) timer = setInterval(tick, 1000);
@@ -274,6 +333,8 @@
       renderReturn(msg.data);
     } else if (msg.type === "gate" && msg.data.event === "cancelled" && returning) {
       endReturn("The return timed out. Nothing was refunded.");
+    } else if (msg.type === "dispute" && msg.data.session_id === sessionId && !returning) {
+      loadReceipt().catch(() => { /* the next reload shows it */ });  // a decision landed: refresh the status
     }
   }
 

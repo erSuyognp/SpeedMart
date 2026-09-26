@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 
 from vision.aruco_detect import TagDetector, assign_to_bays
 from vision.camera import CameraError, open_camera, save_section_settings
+from vision.clips import ClipRecorder, clips_url
 from vision.evidence import EvidenceRecorder, evidence_url
 from vision.motion import MotionDetector
 from vision.overlay import draw_overlay
@@ -405,10 +406,19 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
         print(f"Camera error: {exc}", file=sys.stderr)
         return 1
 
-    # F20 cart disputes: bay crops for the shopping session the backend names in each reply (vision/evidence.py).
-    evidence = (EvidenceRecorder(bays, ROOT / "data" / "evidence", evidence_url(url), token)
-                if config.get("features", {}).get("disputes", False) else None)
-    poster = SnapshotPoster(url, token, on_session=evidence.set_session if evidence else None)
+    # F20 cart disputes: bay crops for the shopping session the backend names in each reply (vision/evidence.py),
+    # and event clips around every stable change for the dispute review (vision/clips.py).
+    disputes_on = bool(config.get("features", {}).get("disputes", False))
+    evidence = EvidenceRecorder(bays, ROOT / "data" / "evidence", evidence_url(url), token) if disputes_on else None
+    clips = ClipRecorder(bays, ROOT / "data" / "evidence", clips_url(url), token) if disputes_on else None
+
+    def on_session(session_id):
+        if evidence is not None:
+            evidence.set_session(session_id)
+        if clips is not None:
+            clips.set_session(session_id)
+
+    poster = SnapshotPoster(url, token, on_session=on_session if disputes_on else None)
     poster.start()
     log.info("posting snapshots to %s at %g Hz%s", url, 1.0 / interval, "" if show_window else " (no window)")
     fps_meter = FpsMeter()
@@ -436,11 +446,13 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                 status = tracker.update(gray, per_bay, now,
                                         yolo_counts=None if yolo_result is None else yolo_result.per_bay)
                 fps = fps_meter.tick(now)
+                ts_ms = int(time.time() * 1000)
                 if evidence is not None:
-                    evidence.update(frame, status, detections, per_bay=per_bay)
+                    crops = evidence.update(frame, status, detections, ts_ms=ts_ms, per_bay=per_bay)
+                    clips.update(frame, status, crops, ts_ms)
 
                 if not paused and now >= next_post:
-                    poster.submit(build_snapshot(int(time.time() * 1000), frame_id, per_bay, status, loose))
+                    poster.submit(build_snapshot(ts_ms, frame_id, per_bay, status, loose))
                     next_post = max(next_post + interval, now)
                 backend_ok, age_ms = poster.status()
 
@@ -489,6 +501,8 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
         poster.stop()
         if evidence is not None:
             evidence.stop()
+        if clips is not None:
+            clips.stop()
         if show_window:
             cv2.destroyAllWindows()
     return 0

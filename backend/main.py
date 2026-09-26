@@ -10,8 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import (admin, auth_passkeys, db, disputes, eventlog, intent, kiosk, members, returns, routes_api,
-                     serial_bridge, shelf_state, store, voice, ws)
+from backend import (admin, auth_passkeys, db, disputes, eventlog, evidence, intent, kiosk, members, returns,
+                     review, routes_api, serial_bridge, shelf_state, store, voice, ws)
 from backend.settings import WEB_DIR, settings
 
 
@@ -23,10 +23,14 @@ async def lifespan(app: FastAPI):
     eventlog.log("startup", features=settings.features.as_dict())
     timeout_task = asyncio.create_task(store.timeout_task())
     cleanup_task = asyncio.create_task(disputes.cleanup_task())  # F20: evidence goes when the visit is over
+    # 8.14: does the dispute review model take images? Off the loop, so a slow model never delays startup.
+    probe_task = asyncio.create_task(asyncio.to_thread(review.probe)) if review.available() else None
     serial_bridge.start()  # no-op unless hardware_leds is on
     yield
     serial_bridge.stop()
-    for task in (timeout_task, cleanup_task):
+    for task in (timeout_task, cleanup_task, probe_task):
+        if task is None:
+            continue
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
@@ -87,11 +91,13 @@ app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
 app.include_router(returns.router)
 app.include_router(disputes.router)
+app.include_router(evidence.router)  # POST /internal/clips (8.2)
 app.include_router(members.router)
 app.include_router(auth_passkeys.router)
 app.include_router(admin.public)
 app.include_router(admin.router)
 app.include_router(disputes.admin_router)
+app.include_router(review.router)  # /admin/disputes/{id}/approve | keep (8.3)
 app.include_router(intent.router)
 app.include_router(kiosk.router)
 app.include_router(voice.router)

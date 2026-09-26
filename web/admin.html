@@ -42,6 +42,7 @@
         <span id="b-serial" class="stat"><span class="k">Serial</span><span class="v">–</span></span>
         <span id="b-stripe" class="stat"><span class="k">Stripe</span><span class="v">–</span></span>
         <span id="b-llm" class="stat"><span class="k">LLM</span><span class="v">–</span></span>
+        <span id="b-review" class="stat"><span class="k">Review AI</span><span class="v">–</span></span>
       </div>
 
       <div class="dash">
@@ -90,8 +91,11 @@
           <div id="overrides"></div>
         </section>
 
-        <section class="card span-2">
-          <h2>Disputes <span class="hint-inline">cart disputes · shelf photos · newest first</span></h2>
+        <section class="card span-2" id="disputes-card">
+          <h2>Review queue <span id="dispute-badge" class="badge" hidden>0</span>
+            <span class="hint-inline">cart disputes · AI review · a person decides · newest first</span>
+            <button id="sound-toggle" class="toggle small" type="button" aria-pressed="true" title="Play a sound when a new dispute arrives">Sound: on</button>
+          </h2>
           <div id="disputes" class="dispute-list"></div>
         </section>
 

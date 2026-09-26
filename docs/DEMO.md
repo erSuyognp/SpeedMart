@@ -24,6 +24,9 @@ Run through this before **every** judge.
 - [ ] **Voice:** on the demo phone, `intent.html` shows **Talk to SpeedMart**. One test tap: it greets by name. Then
       tap **Start over** so the bays stop glowing on the kiosk map. (If it's down, the typed box is the fallback.)
 - [ ] **Stripe:** admin health shows `test` (or mock). **Force-decline is OFF.**
+- [ ] **Review AI:** the admin health badge says `Vision · <model>` (or `Text only` / `Off`, which still works:
+      a person decides). The review queue is empty and **Sound: on**. Keep `admin.html` open on the laptop with
+      the volume up so the judge hears the new-dispute chime.
 - [ ] **No return open:** the admin Cart panel does not say "returning" (Reset clears it).
 - [ ] **Backup phone:** team phone logged in as Demo Shopper, charged, screen on, in case the judge's phone
       fails.
@@ -59,13 +62,26 @@ Run through this before **every** judge.
    the protein bar back on its bay. The phone lists it as it lands; tap **Confirm refund**. The gate screen shows
    REFUNDED and the agent says the refund is on its way to the Visa ending 4242. The receipt now has a "Refunded"
    line with the refund id.
-10. **Close (10 s):** "The shelf agent assembled the cart. The shopper authorized it, and the shelf proved the
+10. **Dispute review (20 s):** on the receipt tap **Report a problem** and pick the electrolytes. The phone says
+    "The shelf camera still sees it gone" and shows the two bay photos; leave it open ("Not sure? Leave it: our
+    team reviews every open case"). The laptop chimes and the **Review queue** badge turns red: the card shows the
+    judge's first name, the item, the AI verdict with its confidence bar ("Supports the charge, 8 % for the
+    shopper"), the observations linked to keyframes, and the 6 second clip of the shelf around the pick. Play the
+    clip. Type a note ("Clip shows the pick at 10:14") and tap **Keep the charge**. The judge's receipt updates to
+    **Charge confirmed** with the note. "The AI reads the clip and explains what it saw. It can only speed up
+    small refunds; a person makes every other call, and the shopper sees the reason."
+11. **Close (10 s):** "The shelf agent assembled the cart. The shopper authorized it, and the shelf proved the
     return. Agentic commerce you can hold."
 
 If vision misbehaves, a teammate uses the admin override. If a judge asks, say plainly that it's the manual
 fallback.
 
 If the return misbehaves, tap **Cancel return** (nothing is refunded) and move on; admin **Reset** also ends it.
+
+If the review model is slow or down, the card says "AI review unavailable" after about 20 s (one retry); decide
+from the clip and the photos yourself. Nothing waits on the model: the queue, the clip and the buttons work
+without it. A dispute on a protein bar (under $5) that the AI clearly supports is refunded on its own and the
+card says "Auto approved by policy"; say so if a judge sees it.
 The admin page's **Results today** card shows sessions, average time in store, exit scan to approval, and
 refunds, if a judge asks for numbers.
 
@@ -86,5 +102,7 @@ page instead of QR 2 and QR 3. Everything else is the same.
 | How accurate is detection? | Tags give identity, and motion freeze prevents hand flicker. If it's on, YOLO covers tags that are hidden. Show the 10/10 test. |
 | What if the cart is wrong? | Tap **Not mine?** on the item (at the exit: tap the item). The store rechecks the shelf camera first: if it sees the item back on the shelf, it says "Our mistake, removed from your cart." If not, the phone shows two photos of that bay, "When you walked in" and "Now", with the missing item outlined, and you choose **Found it, keep it** or **Remove anyway**. Remove anyway is trusted (twice per visit, then "Please ask a staff member"), logged, and our team reviews the photos. After paying, **Report a problem** on the receipt refunds it through the same refund path as returns. The photos are crops of the shelf bay only, never the full camera view, and are deleted after the visit. |
 | How do you know the item was really returned? | The camera confirms it on the shelf. A refund only counts units whose shelf count went up after the return started, never more than you bought, and anything else is shown as "not from this purchase". The refund is exactly those items plus their tax, on the original payment. |
+| Can the AI deny a refund? | No. It reviews the shelf clips and can only speed up small refunds it clearly supports (under $5, 80 % or more). Everything else, and every "keep the charge", is a person's decision on the admin page, with a note the shopper sees on the receipt. The rule is code, not the model. |
+| What does the review AI actually see? | Crops of the shelf bays only, never faces: the photo from when you walked in, the latest one, and six keyframes from a short clip around the moment the bay changed, plus a timeline of tag ids, motion and cart changes. Its answer is strict JSON that we validate; loaded words are replaced before anyone reads it. Clips are deleted after the visit unless there's a dispute. |
 | What can the AI do on its own? | Point at the permissions card. The agent can see the shelf, suggest items and build your cart. Only you can approve a payment with Face ID, go over your budget, or request a refund. Never: your face data leaving your phone, a reusable payment token, or a charge without your approval. |
 | Can the voice agent make things up? | The voice agent can only act through the store's own tools, so it can't invent products or prices. It reads the catalog, asks the store's planner (which checks stock and budget) and reads the live cart. The ElevenLabs key stays on our server; the phone only gets a 15-minute signed link. |

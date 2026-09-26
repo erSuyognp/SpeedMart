@@ -13,6 +13,11 @@
   let events = [];
   let refreshTimer = null;
   let socketStarted = false;
+  // Review queue (8.14): a sound and a badge when a new dispute needs a decision.
+  let soundOn = true;
+  let audioCtx = null;
+  const seenOpen = new Set();
+  let disputesSeeded = false;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -86,6 +91,7 @@
     renderHealth(s.health);
     setBadge("b-stripe", STRIPE_LABELS[s.health.stripe] || s.health.stripe, s.health.stripe === "test" ? "ok" : "warn");
     setBadge("b-llm", s.health.llm ? "On" : "Templates only", s.health.llm ? "ok" : "warn");
+    renderReviewHealth(s.health.review);
     setBadge("b-lock", s.lock.occupied ? "Occupied" : "Free", s.lock.occupied ? "warn" : "ok");
 
     renderSessionHero(s);
@@ -119,6 +125,14 @@
     return v === null || v === undefined ? "–" : v + " s";
   }
 
+  // The dispute review model (8.14): configured, and does it take images?
+  function renderReviewHealth(r) {
+    if (!r || !r.available) { setBadge("b-review", "Off · a person decides", "warn"); return; }
+    if (r.vision === true) setBadge("b-review", "Vision · " + r.model, "ok");
+    else if (r.vision === false) setBadge("b-review", "Text only · " + r.model, "warn");
+    else setBadge("b-review", "Checking " + r.model + "…", "warn");
+  }
+
   // Measured results for today: sessions, time in store, exit scan to approval, refunds.
   function renderMetrics(m) {
     const box = $("metrics");
@@ -127,7 +141,10 @@
     [["Sessions", String(m.sessions_today) + (m.paid_today !== m.sessions_today ? " · " + m.paid_today + " paid" : "")],
       ["Avg in store", seconds(m.avg_in_store_s)],
       ["Exit scan to approval", seconds(m.avg_exit_to_approval_s)],
-      ["Refunds", m.refunds_today + (m.refunds_today ? " · " + api.money(m.refunded_usd_today) : "")]]
+      ["Refunds", m.refunds_today + (m.refunds_today ? " · " + api.money(m.refunded_usd_today) : "")],
+      ["Disputes", String(m.disputes_today) + (m.open_now ? " · " + m.open_now + " open" : "")],
+      ["AI · human agree", m.ai_human_agreement_pct === null || m.ai_human_agreement_pct === undefined ? "–" : m.ai_human_agreement_pct + "%"],
+      ["Auto approved", String(m.auto_approved_today)]]
       .forEach(([k, v]) => {
         const tile = el("span", "stat");
         tile.append(el("span", "k", k), el("span", "v", v));
@@ -135,8 +152,34 @@
       });
   }
 
-  // Cart disputes (8.13): each with its shelf photos (admin route), outcome and amount.
-  const OUTCOME_KIND = { resolved_camera: "ok", needs_review: "warn", kept: "", removed: "bad", refunded: "bad" };
+  // Review queue (8.13 + 8.14): each dispute with the AI verdict (confidence bar + summary), its observations
+  // linked to keyframes, an inline player per clip, the baseline vs latest photos, the timeline and the two
+  // decision buttons. The AI never decides against a shopper; only "Keep the charge" here does, with a note.
+  const OUTCOME_KIND = { resolved_camera: "ok", needs_review: "warn", kept: "", removed: "ok", refunded: "ok", charge_confirmed: "bad" };
+  const OUTCOME_LABEL = { needs_review: "needs a decision", resolved_camera: "camera resolved", kept: "shopper kept it",
+    removed: "removed", refunded: "refunded", charge_confirmed: "charge confirmed" };
+  const VERDICT_LABEL = { supports_customer: "Supports the shopper", supports_charge: "Supports the charge", unclear: "Unclear" };
+  const VERDICT_KIND = { supports_customer: "ok", supports_charge: "bad", unclear: "warn" };
+
+  function beep() {
+    if (!soundOn) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      [[880, 0], [1175, 0.16]].forEach(([freq, at]) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, audioCtx.currentTime + at);
+        gain.gain.exponentialRampToValueAtTime(0.2, audioCtx.currentTime + at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + at + 0.15);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(audioCtx.currentTime + at);
+        osc.stop(audioCtx.currentTime + at + 0.16);
+      });
+    } catch (e) { /* no audio: the badge still shows */ }
+  }
 
   function evidencePhoto(p, caption) {
     const fig = el("figure", "evidence");
@@ -160,11 +203,182 @@
     return fig;
   }
 
+  function clock(iso) {
+    try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }); }
+    catch (e) { return iso || ""; }
+  }
+
+  function renderReview(d) {
+    const box = el("div", "ai-verdict");
+    const r = d.review;
+    const row = el("div", "row");
+    if (!r) {
+      row.append(el("strong", null, "AI review"), el("span", "pill warn", "pending"));
+      box.append(row, el("p", "ai-summary muted small", "Looking at the shelf keyframes…"));
+      return box;
+    }
+    const kind = VERDICT_KIND[r.verdict] || "warn";
+    row.append(el("strong", null, "AI review: " + (VERDICT_LABEL[r.verdict] || r.verdict)),
+      el("span", "pill " + kind, r.supports_customer_pct + "% for the shopper"));
+    const bar = el("div", "confidence " + kind);
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-label", "Supports the shopper");
+    bar.setAttribute("aria-valuenow", String(r.supports_customer_pct));
+    const fill = el("span");
+    fill.style.width = Math.max(0, Math.min(100, r.supports_customer_pct)) + "%";
+    bar.append(fill);
+    box.append(row, bar, el("p", "ai-summary", r.summary));
+    const source = r.source === "vision" ? "from the keyframes and the timeline" : r.source === "timeline"
+      ? "from the timeline only (the model took no images)" : "no model answer";
+    box.append(el("p", "muted small", source + (r.model ? " · " + r.model : "") + " · the AI can only speed up small refunds; a person decides the rest"));
+    if (r.evidence && r.evidence.length) {
+      const list = el("ul", "observations");
+      r.evidence.forEach((e) => {
+        const li = el("li");
+        if (e.url) {
+          const a = el("a");
+          a.href = e.url;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.title = "Open frame " + e.frame;
+          const img = el("img");
+          img.src = e.url;
+          img.alt = "Frame " + e.frame;
+          img.loading = "lazy";
+          a.append(img);
+          li.append(a);
+        }
+        const text = el("div");
+        text.append(el("span", "frame-id", e.frame + " "), el("span", null, e.observation));
+        li.append(text);
+        list.append(li);
+      });
+      box.append(list);
+    }
+    return box;
+  }
+
+  function renderClips(d) {
+    const clips = d.clips || [];
+    if (!clips.length) return el("p", "muted small mt-3", "No event clips for this bay.");
+    const grid = el("div", "clip-list");
+    clips.forEach((c) => {
+      const card = el("div", "clip");
+      card.append(el("div", "small", "Bay " + c.card + " changed at " + clock(c.change_at) + " · tags " +
+        (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none") +
+        (c.motion.length ? " · motion " + c.motion.map((m) => clock(m.from) + "–" + clock(m.to)).join(", ") : "")));
+      if (c.url) {
+        const video = el("video");
+        video.controls = true;
+        video.preload = "metadata";
+        video.muted = true;
+        video.playsInline = true;
+        video.src = c.url;
+        card.append(video);
+      }
+      const strip = el("div", "keyframe-strip");
+      c.keyframes.forEach((k) => {
+        const a = el("a");
+        a.href = k.url;
+        a.target = "_blank";
+        a.rel = "noopener";
+        const img = el("img");
+        img.src = k.url;
+        img.alt = k.id + " at " + clock(k.captured_at);
+        img.title = k.id + " · " + clock(k.captured_at);
+        img.loading = "lazy";
+        a.append(img);
+        strip.append(a);
+      });
+      card.append(strip);
+      grid.append(card);
+    });
+    return grid;
+  }
+
+  function renderTimeline(d) {
+    const t = d.timeline;
+    const box = el("details", "timeline");
+    box.append(el("summary", null, "Timeline"));
+    if (!t) { box.append(el("p", "muted small", "No timeline.")); return box; }
+    const lines = [];
+    if (t.session_started_at) lines.push(clock(t.session_started_at) + "  visit started");
+    (t.tags_seen || []).forEach((x) => lines.push(clock(x.at) + "  " + x.kind + " photo, tags " + (x.tag_ids.join(", ") || "none")));
+    (t.clips || []).forEach((c) => {
+      lines.push(clock(c.change_at) + "  stable change, units " + (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none"));
+      (c.motion_periods || []).forEach((m) => lines.push(clock(m.from) + "  motion until " + clock(m.to)));
+    });
+    (t.cart_changes || []).forEach((c) => lines.push(clock(c.at) + "  cart " + JSON.stringify(c.items) + " · " + api.money(c.total_usd) + " (" + c.source + ")"));
+    lines.push(clock(t.dispute_opened_at) + "  dispute opened (" + t.stage.replace("_", " ") + "), missing tag " + (t.missing_tag_id === null ? "unknown" : t.missing_tag_id));
+    const list = el("ul");
+    lines.sort().forEach((l) => list.append(el("li", null, l)));
+    box.append(list);
+    return box;
+  }
+
+  async function decide(d, action, note, buttons) {
+    if (note.trim().length < 3) { api.toast("Add a short note for the record."); return; }
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      const res = await api.post("/admin/disputes/" + encodeURIComponent(d.dispute_id) + "/" + action, { note: note.trim() });
+      api.toast(action === "approve" ? "Refund approved" + (res.refund ? ": " + api.money(res.refund.amount_usd) : ".") : "Charge kept. The shopper sees your note.");
+      scheduleRefresh();
+    } catch (e) {
+      api.toast(e.message);
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  function renderDecision(d) {
+    if (d.status === "open") {
+      const box = el("div", "decision");
+      const note = el("textarea");
+      note.placeholder = "Short note for the record (required)";
+      note.maxLength = 300;
+      note.rows = 2;
+      const approve = el("button", "primary", "Approve refund" + (d.disputed_usd ? " " + api.money(d.disputed_usd) : ""));
+      approve.type = "button";
+      const keep = el("button", "danger", "Keep the charge");
+      keep.type = "button";
+      approve.addEventListener("click", () => decide(d, "approve", note.value, [approve, keep]));
+      keep.addEventListener("click", () => decide(d, "keep", note.value, [approve, keep]));
+      const buttons = el("div", "buttons");
+      buttons.append(approve, keep);
+      box.append(note, buttons);
+      return box;
+    }
+    const dec = d.decision;
+    if (!dec) {
+      return el("p", "decision-record muted", d.outcome === "kept" ? "The shopper found it and kept it."
+        : d.outcome === "resolved_camera" ? "Settled by the camera recheck."
+        : "Settled by the shopper (Remove anyway).");
+    }
+    const who = dec.by === "ai" ? "Auto approved by policy (small amount, clear review)" : "Staff decision: " + (dec.decision === "approve" ? "refund approved" : "charge kept");
+    const agree = dec.agreed === true ? " · agreed with the AI" : dec.agreed === false ? " · overruled the AI" : "";
+    const p = el("p", "decision-record");
+    p.append(el("strong", null, who + agree + " · " + ago(dec.at)));
+    if (dec.note) p.append(el("br"), el("span", null, "Note: " + dec.note));
+    return p;
+  }
+
   let disputesKey = null;
 
   function renderDisputes(list) {
-    const key = JSON.stringify(list.map((d) => [d.dispute_id, d.outcome, d.amount_usd, !!d.evidence && !!d.evidence.now]));
-    if (key === disputesKey) return; // the 5 s refresh must not reload every photo
+    const open = list.filter((d) => d.status === "open");
+    const badge = $("dispute-badge");
+    badge.textContent = String(open.length);
+    badge.hidden = open.length === 0;
+    document.title = (open.length ? "(" + open.length + ") " : "") + "SpeedMart · Admin";
+    let fresh = false;
+    open.forEach((d) => {
+      if (!seenOpen.has(d.dispute_id)) { seenOpen.add(d.dispute_id); fresh = true; }
+    });
+    if (fresh && disputesSeeded) beep();
+    disputesSeeded = true;
+
+    const key = JSON.stringify(list.map((d) => [d.dispute_id, d.outcome, d.status, d.amount_usd, !!d.review, !!d.decision,
+      !!d.evidence && !!d.evidence.now, (d.clips || []).length]));
+    if (key === disputesKey) return; // the 5 s refresh must not reload every photo or clear a half typed note
     disputesKey = key;
     const box = $("disputes");
     box.replaceChildren();
@@ -173,22 +387,26 @@
       return;
     }
     list.forEach((d) => {
-      const entry = el("div", "dispute-entry");
+      const entry = el("div", "dispute-entry" + (d.status === "open" ? " open" : ""));
       const head = el("div", "head");
       const who = el("div");
-      who.append(el("div", null, d.name + " · " + (d.member_name || d.session_id)));
+      who.append(el("div", null, (d.first_name || d.member_name || "Shopper") + " · " + d.name + " · " + api.money(d.disputed_usd || 0)));
       who.append(el("div", "muted small mono", d.stage.replace("_", " ") + " · " + d.session_id + " · " + ago(d.created_at)));
       const kind = OUTCOME_KIND[d.outcome];
-      const pill = el("span", "pill" + (kind ? " " + kind : ""), d.outcome.replace("_", " ") +
+      const pill = el("span", "pill" + (kind ? " " + kind : ""), (OUTCOME_LABEL[d.outcome] || d.outcome.replace("_", " ")) +
         (d.amount_usd !== null && d.amount_usd !== undefined ? " · " + api.money(d.amount_usd) : ""));
       head.append(who, pill);
       entry.append(head);
+      entry.append(renderReview(d));
       const ev = d.evidence;
       if (ev) {
         const grid = el("div", "evidence-grid");
         grid.append(evidencePhoto(ev.before, "Walked in"), evidencePhoto(ev.now, "Latest"));
         entry.append(grid);
       }
+      entry.append(renderClips(d));
+      entry.append(renderTimeline(d));
+      entry.append(renderDecision(d));
       if (d.refund_id) entry.append(el("p", "muted small mono", "Refund " + d.refund_id));
       box.append(entry);
     });
@@ -416,6 +634,10 @@
       renderLog();
       return;
     }
+    if (msg.type === "dispute") {  // a new dispute, an AI review or a decision: the queue re-renders from state
+      scheduleRefresh();
+      return;
+    }
     // cart, shelf, gate, store_status: pull the full state once things settle.
     scheduleRefresh();
   }
@@ -494,6 +716,12 @@
     });
     $("force-decline").addEventListener("click", (ev) =>
       act(ev.currentTarget, "/admin/force-decline", { on: !(state && state.force_decline) }));
+    $("sound-toggle").addEventListener("click", (ev) => {
+      soundOn = !soundOn;
+      ev.currentTarget.textContent = "Sound: " + (soundOn ? "on" : "off");
+      ev.currentTarget.setAttribute("aria-pressed", String(soundOn));
+      if (soundOn) beep();
+    });
 
     api.get("/admin/state")
       .then((s) => { showPanel(); renderState(s); })
