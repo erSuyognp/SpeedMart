@@ -167,7 +167,7 @@ def quote_for(member_id: str) -> dict[str, Any]:
         cart = store.freeze_cart()
     else:
         cart = store.cart_for(session)
-    member = members.get_member(member_id)
+    member = payments.ensure_card(members.get_member(member_id))  # Stripe backfill (e.g. the demo member)
     return {"cart": cart, "instruction": payments.instruction_for(session["id"], cart, member)}
 
 

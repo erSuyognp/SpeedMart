@@ -12,6 +12,10 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
 | S3.3 passkeys | done (needs phones, see checklist) |
 | S3.4 gates, store lock, QR | done |
 | S4.1 instruction, mock payment, approve, receipt, loyalty | done |
+| S4.2 Stripe test mode | done (real test charge is the human's opt-in smoke test) |
+
+`pytest -q`: 150 passed at the end of the night. Nothing was blocked. Everything needing a phone, the
+tunnel, Stripe or the hardware is in the Morning checklist.
 
 ## Decisions
 
@@ -155,6 +159,36 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   untouched): join -> Start shopping -> fake shelf pick -> live cart $8.64 -> Checkout -> "What the payment network
   sees" -> "Confirm $8.64" -> receipt with MOCK auth code and "+8 points · 8 total"; `payments.log.jsonl` written.
 
+### S4.2 Stripe test mode
+
+- **Library:** stripe-python **15.6.1**. The legacy resource calls the spec uses (`stripe.Customer.create`,
+  `stripe.PaymentMethod.attach("pm_card_visa", customer=...)`, `stripe.PaymentIntent.create(...)`) all exist,
+  and `stripe.CardError` is available at the top level. Request options (`idempotency_key`) are passed as keyword
+  arguments.
+- **Key rule:** with `stripe` on, a non-empty key that does not start with `sk_test_` aborts startup (checked when
+  `backend.payments` is imported, like the settings check). An **empty** key does not abort: it means mock
+  payments, which is what the "Stripe key removed" failure drill expects. With the flag off the key is never read.
+- **Timeouts:** Stripe uses `stripe.HTTPXClient(timeout=8)` (httpx is already a dependency) with one network retry
+  (safe because every write has an idempotency key), so an unreachable Stripe falls back to mock within roughly
+  20 s instead of the SDK's default 80 s.
+- **Idempotency keys:** `speedmart-customer-<member>`, `speedmart-attach-<member>`, and for charges
+  `speedmart-<session>-<attempt>` (spec's `aisle-` prefix renamed with the project). Attempt = number of payment
+  rows for that session + 1, so a retry after a decline is a new key and a replayed request is not.
+- **Card linking:** at signup when Stripe is active (customer named after the member, `metadata.member_id`, test
+  Visa attached; ids saved, label "Visa •••• 4242 (test)"). Failure never blocks signup. **Backfill** happens at
+  the exit quote for any member without a Stripe card, which covers the seeded Demo Shopper (its row is created by
+  `db.py`, which this session does not own, and `main.py` lifespan is off limits), as well as members who joined
+  while Stripe was down. Approve tries once more if the quote's backfill failed.
+- **Outcomes:** `succeeded` -> AUTHORIZED, auth code = last 6 chars of the PaymentIntent id upper-cased;
+  `CardError` -> DECLINED with Stripe's user message; any other status (e.g. `requires_action`) -> DECLINED with the
+  status in the message; **any other exception** (network, auth, rate limit, bug) -> mock provider,
+  `provider: "mock"`, event `stripe_fallback`. Force-decline returns DECLINED without calling Stripe.
+- **Tests replace the `stripe` module entirely** (`tests/test_stripe.py` `FakeStripe`); `tests/conftest.py`
+  also blanks `STRIPE_SECRET_KEY`, so even an unpatched test would take the mock path. No test calls Stripe.
+- **`scripts/stripe_smoke.py`** is opt-in: it refuses non-test keys, asks you to type `yes` (or `--yes`), makes one
+  $1.00 test-mode charge with its own customer, prints the PaymentIntent and a dashboard link, and never touches
+  the SpeedMart database. I only ran its refusal and "no" paths tonight.
+
 ## Morning checklist
 
 ### 1. Tunnel (S3.1)
@@ -186,7 +220,97 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
    then set `ENTRY_GATE_TOKEN=entry-<value>` and `EXIT_GATE_TOKEN=exit-<value>`. Restart the backend.
 2. Turn the gates on: in `config.json` set `"gates": true`. Restart the backend.
 3. `.venv\Scripts\python.exe scripts\gen_qr.py` -> prints four `wrote qr\...` lines.
-4. Open `qrll.pdf`: three pages, labels "1 · JOIN", "2 · ENTER", "3 · EXIT", URLs on
+4. Open `qr/all.pdf`: three pages, labels "1 · JOIN", "2 · ENTER", "3 · EXIT", URLs on
    `https://stump-isotope-glorious.ngrok-free.dev`. Print at 100% or show on a tablet.
 5. Scan each code with a phone camera: 1 opens the join page, 2 the entry gate ("Enter with Face ID"), 3 the exit
    page ("You're not in the store" until you have entered).
+
+### 3. Before phone tests: shelf feed
+
+Entry is refused ("The shelf camera is offline") unless a shelf snapshot arrived in the last 2 s. Either run the
+vision worker, or in a spare PowerShell window: `.venv\Scripts\python.exe scripts\fake_shelf.py loop`
+(type a tag id + Enter to take that unit off the shelf, again to put it back).
+
+### 4. Passkeys on an iPhone (Safari) over the tunnel (S3.3)
+
+Settings: `passkeys: true`, `https_tunnel: true`, backend + ngrok running (section 1). The iPhone needs a passcode
+and Face ID set up, and iCloud Keychain on (Settings → [name] → iCloud → Passwords & Keychain).
+
+1. Safari → `https://stump-isotope-glorious.ngrok-free.dev/` (or scan QR 1). Enter a first name, move the budget
+   slider, tap **Join with Face ID**.
+   Expected: iOS sheet "Save a passkey for stump-isotope-glorious.ngrok-free.dev?" → Continue → Face ID →
+   "You're a member. Card linked: Visa •••• 4242 (test). Walk to the entry gate."
+   If instead you see "Face ID was cancelled. Tap the button to try again." without having cancelled, Safari
+   dropped the tap gesture during signup (see Decisions S3.3): tap **Try Face ID again**, it should work first
+   time. Write down which happened; if it always needs the second tap, tell the team.
+2. Cancel test: tap **Not you? Sign out**, tap **Already a member? Sign in with Face ID**, then press Cancel on
+   the iOS sheet. Expected red strip "Face ID was cancelled. Tap the button to try again." and the button still
+   there. Tap it again and complete Face ID. Expected: "You're a member." with the same name as before.
+3. Reload the page. Expected: still signed in.
+4. Desktop: `http://localhost:8000/admin.html` → event log shows `passkey_registered` and `passkey_login`.
+
+### 5. Passkeys on an Android phone (Chrome) over the tunnel (S3.3)
+
+Needs a screen lock (PIN / fingerprint) and a Google account signed in (Google Password Manager stores passkeys).
+
+1. Chrome → the tunnel URL. Join with a different first name. Expected: "Create a passkey" sheet → fingerprint →
+   member screen with the card line.
+2. Sign out → **Already a member? Sign in with Face ID** → fingerprint. Expected: signed back in as the same name.
+3. Cancel test as on the iPhone: dismiss the sheet → "Face ID was cancelled..." + retry works.
+4. No-screen-lock test (optional, only on a spare phone without a lock): Join → expected red strip
+   "This phone has no screen lock set up, use the demo account."
+
+### 6. Full gate loop on a phone (S3.4, S4.1)
+
+Settings: `gates: true`, `passkeys: true`, `stripe: true` (or false for mock), shelf feed running.
+
+1. Scan QR 2 → **Enter with Face ID** → Face ID. Expected: "Welcome in, <name>", gate LED green for 3 s (if the
+   ESP32 is connected), then the cart page with a green live dot.
+2. With a second phone (or a desktop browser signed in as another member), scan QR 2 while the first shopper is
+   inside. Expected: "Someone is shopping right now. Try again in a minute."
+3. Take one electrolyte off the shelf. Expected: row "Electrolyte tabs × 1 $8.00", total $8.64.
+4. Scan QR 3. Expected: itemized preview, total $8.64, "Paying with Visa •••• 4242 (test)", collapsible "What the
+   payment network sees" (agent, merchant SpeedMart #01, max $20.00, single use, expiry, intent
+   "Pay $8.64 to SpeedMart #01 for 1 item", sandbox label). Button **Approve $8.64 with Face ID**.
+5. Tap **Keep shopping**. Expected: back on the cart page, cart live again. Scan QR 3 again.
+6. Admin page → turn **force-decline** on. Tap Approve → Face ID. Expected: red "Declined: Card declined (sandbox:
+   forced by staff). You can try again.", shelf LEDs red for 2 s, button "Try again with Face ID".
+7. Turn force-decline off. Tap **Try again with Face ID** → Face ID. Expected: shelf green 3 s, receipt page:
+   green check, "Paid $8.64", card label, auth code, "+8 points · 8 total" (points accumulate per member),
+   "Show payment record" JSON. `data\payments.log.jsonl` has a DECLINED and an AUTHORIZED line.
+8. Over-budget test: sign up with budget $10, enter, take two electrolytes ($17.28), scan QR 3. Expected: amber
+   "This is over your $10.00 limit. Put something back to continue." and no approve button. Keep shopping, put one
+   back, scan QR 3 again, approve works.
+9. Empty-cart test: enter, take nothing, scan QR 3. Expected: "Nothing to pay, see you soon" and the store is free.
+10. Admin reset while someone is inside frees the store (QR 2 works for the next person).
+11. Passkeys-off check: set `"passkeys": false`, restart. Join shows **Join**, entry shows **Enter**, exit shows
+    **Confirm $X.XX**; no Face ID prompts anywhere.
+
+### 7. Stripe test mode (S4.2)
+
+1. Confirm `.env` `STRIPE_SECRET_KEY` starts with `sk_test_` (it does tonight). A key starting with anything else
+   makes the backend refuse to start with a clear message; that is intended.
+2. Smoke test, one real **test-mode** charge of $1.00 (opt-in, never run by the tests):
+   ```powershell
+   .venv\Scripts\python.exe scripts\stripe_smoke.py
+   ```
+   Type `yes`. Expected: `status succeeded`, `amount $1.00 USD`, and a dashboard link. Open
+   https://dashboard.stripe.com/test/payments: a $1.00 payment "SpeedMart smoke test", Succeeded.
+3. App charge: with `stripe: true`, run section 6 steps 1 to 7 once. Expected: receipt meta says "Stripe test mode";
+   auth code = last 6 characters of the PaymentIntent id. In the Stripe test dashboard the payment shows $8.64,
+   description "SpeedMart #01", metadata `session_id` and `instruction_id` matching the receipt's payment record.
+   The customer is named after the member, with the Visa 4242 test card attached.
+4. Demo member backfill: admin page → demo-login on a team phone, shop, scan QR 3. Expected: the Stripe dashboard
+   gains a customer "Demo Shopper" with a test Visa at that moment (it is created at the first checkout, not at
+   startup), and the approval appears as a test payment.
+5. Network-down fallback: while on the exit page (after the quote), disconnect the laptop's internet (keep the
+   phone reaching the laptop over LAN, or unplug only the uplink), then approve. Expected: within about 20 s the
+   receipt appears with "sandbox mock" and a `MOCK####` auth code; the event log has `stripe_fallback`. No crash.
+
+### 8. Housekeeping
+
+1. After merging this branch into the main checkout, refresh the old CRLF copies of the shell scripts once:
+   `Remove-Item scripts\*.sh; git checkout -- scripts` (see Decisions S3.1).
+2. Someone who owns `scripts/` should add `scripts/run_all.ps1` (CLAUDE.md asks for it). Until then use the two
+   PowerShell commands in section 1, or Git Bash `scripts/run_all.sh`.
+3. `pytest -q` from the repo root: expected all tests pass (150 tonight).
