@@ -8,11 +8,17 @@ os.environ.setdefault("SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("INTERNAL_TOKEN", "test-internal-token")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
 
-from fastapi.testclient import TestClient  # noqa: E402
+import dataclasses  # noqa: E402
+import json  # noqa: E402
+from base64 import b64encode  # noqa: E402
 
-from backend import store  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from itsdangerous import TimestampSigner  # noqa: E402
+
+from backend import routes_api, store  # noqa: E402
 from backend.main import app  # noqa: E402
-from test_cart import FULL, TOKEN, qty, simulate_restart, snap, tmp_data, with_bays  # noqa: E402,F401
+from test_cart import FULL, TOKEN, member_id, qty, simulate_restart, snap, tmp_data, with_bays  # noqa: E402,F401
 
 HEADERS = {"X-Internal-Token": TOKEN}
 
@@ -23,6 +29,17 @@ def receive_until(sock, msg_type: str, limit: int = 20) -> dict:
         if msg["type"] == msg_type:
             return msg
     raise AssertionError(f"no {msg_type} message in {limit} messages")
+
+
+def set_gates(monkeypatch, on: bool) -> None:
+    s = routes_api.settings
+    monkeypatch.setattr(routes_api, "settings", dataclasses.replace(s, features=dataclasses.replace(s.features, gates=on)))
+
+
+def member_only_login(client: TestClient, member_id: str) -> None:
+    """Session cookie for a signed-in member without admin rights, signed like Starlette's SessionMiddleware."""
+    data = b64encode(json.dumps({"member_id": member_id}).encode())
+    client.cookies.set("session", TimestampSigner(os.environ["SESSION_SECRET"]).sign(data).decode())
 
 
 def admin_login(client: TestClient) -> None:
@@ -56,7 +73,8 @@ def test_admin_routes_need_login(tmp_data):
         assert state["events"][-1]["type"] == "admin_login"
 
 
-def test_dev_start_needs_member_and_fresh_vision(tmp_data):
+def test_dev_start_needs_member_and_fresh_vision(tmp_data, monkeypatch):
+    set_gates(monkeypatch, False)
     with TestClient(app) as client:
         r = client.post("/api/dev/start")
         assert r.status_code == 401 and r.json()["error"] == "not_logged_in"
@@ -152,3 +170,34 @@ def test_overrides_survive_backend_restart(tmp_data):
 
         client.post("/admin/reset")  # reset clears overrides for good
         assert store.get_overrides(before["session_id"]) == {}
+
+
+@pytest.mark.parametrize("path", ["/api/dev/start", "/api/dev/checkout"])
+def test_dev_routes_hidden_from_members_when_gates_on(tmp_data, monkeypatch, member_id, path):
+    set_gates(monkeypatch, True)
+    with TestClient(app) as client:
+        client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
+        member_only_login(client, member_id)
+        r = client.post(path)
+        assert r.status_code == 404 and r.json()["error"] == "not_available"
+        assert store.current_session() is None
+
+
+def test_dev_routes_work_for_admin_when_gates_on(tmp_data, monkeypatch):
+    set_gates(monkeypatch, True)
+    with TestClient(app) as client:
+        enter_store(client)  # admin + demo-login in one cookie
+        r = client.post("/api/dev/checkout")
+        assert r.status_code == 200 and r.json()["cart"]["state"] == "CHECKOUT_PENDING"
+
+
+def test_dev_routes_work_for_members_when_gates_off(tmp_data, monkeypatch, member_id):
+    set_gates(monkeypatch, False)
+    with TestClient(app) as client:
+        client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
+        member_only_login(client, member_id)
+        r = client.post("/api/dev/start")
+        assert r.status_code == 200, r.text
+        assert r.json()["session"]["member_id"] == member_id
+        r = client.post("/api/dev/checkout")
+        assert r.status_code == 200 and r.json()["cart"]["state"] == "CHECKOUT_PENDING"

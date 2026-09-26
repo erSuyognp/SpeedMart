@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from backend import eventlog, store
+from backend.settings import settings
 
 # HTTP status for each StoreError code. Unlisted codes are 400.
 STORE_ERROR_STATUS = {
@@ -71,8 +72,15 @@ def store_current(request: Request):
 
 # --- gates-off fallback (F8 off): "Start shopping" and "Checkout" buttons instead of QR gates ---
 
+def require_dev_routes(request: Request) -> None:
+    """The fallback routes exist only while gates are off; admins keep them for testing either way."""
+    if settings.features.gates and not request.session.get("admin"):
+        raise ApiError(404, "not_available", "Use the entry and exit gates.")
+
+
 @router.post("/api/dev/start")
 def dev_start(request: Request):
+    require_dev_routes(request)
     member_id = require_member(request)
     session = store.start_session(member_id)
     eventlog.log("dev_start", member_id=member_id, session_id=session["id"])
@@ -82,6 +90,7 @@ def dev_start(request: Request):
 @router.post("/api/dev/checkout")
 def dev_checkout(request: Request):
     """Quote: freezes the cart, IN_STORE -> CHECKOUT_PENDING. The payment instruction arrives in S4.1."""
+    require_dev_routes(request)
     member_id = require_member(request)
     session = store.current_session()
     if session is None or session["member_id"] != member_id:
