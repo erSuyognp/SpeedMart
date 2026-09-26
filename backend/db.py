@@ -12,6 +12,10 @@ from backend.settings import DATA_DIR, settings
 
 DB_PATH = DATA_DIR / "speedmart.db"
 
+# Every member (the demo member too) gets Stripe's test Visa (pm_card_visa) or the mock that stands in for it.
+# The label says so wherever a card is shown, so no judge mistakes it for their own card.
+DEMO_CARD_LABEL = "Demo card · Visa test •••• 4242 · not your card"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS members (
   id TEXT PRIMARY KEY,
@@ -153,6 +157,9 @@ def init_db() -> None:
             for column in columns:
                 if column.split()[0] not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+        # Members saved with an older label (or none, like the old demo member) show the demo card too.
+        conn.execute("UPDATE members SET card_label = ? WHERE card_label IS NULL OR card_label <> ?",
+                     (DEMO_CARD_LABEL, DEMO_CARD_LABEL))
         conn.commit()
     finally:
         conn.close()
@@ -166,8 +173,9 @@ def seed_demo_member() -> None:
             return
         member_id = new_id("mem")
         conn.execute(
-            "INSERT INTO members (id, name, budget_usd, is_demo, created_at) VALUES (?, ?, ?, 1, ?)",
-            (member_id, "Demo Shopper", float(settings.store.get("default_budget_usd", 20)), now_iso()),
+            "INSERT INTO members (id, name, budget_usd, card_label, is_demo, created_at) VALUES (?, ?, ?, ?, 1, ?)",
+            (member_id, "Demo Shopper", float(settings.store.get("default_budget_usd", 20)), DEMO_CARD_LABEL,
+             now_iso()),
         )
         conn.commit()
         eventlog.log("demo_member_seeded", member_id=member_id)

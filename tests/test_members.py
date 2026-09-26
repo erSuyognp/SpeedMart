@@ -29,7 +29,7 @@ def test_signup_creates_member_and_logs_in():
         m = r.json()["member"]
         assert m["name"] == "Maya Lopez" and m["first_name"] == "Maya"
         assert m["budget_usd"] == 25 and m["dietary"] == "vegan" and m["points"] == 0 and m["is_demo"] is False
-        assert m["card_label"] == "Visa •••• 4242 (test)"
+        assert m["card_label"] == "Demo card · Visa test •••• 4242 · not your card"
         assert "stripe_customer_id" not in m and "stripe_pm_id" not in m
 
         row = member_row(m["id"])

@@ -5,6 +5,7 @@
 
 (function () {
   const STAFF = "Please ask a staff member.";
+  const TEST_REFUND = "Test refund. No real money moves.";
   let els = null;
   let opts = null; // {sku, name, sessionId, onChange}
   let dispute = null; // last Dispute from the backend
@@ -133,6 +134,10 @@
     }
     if (dispute.outcome === "needs_review") renderReview(dispute);
     else renderDone(dispute.message);
+    if (res.refund) {  // after paying: say where the refund went, and that it is a sandbox one
+      const card = res.refund.card_label ? "Refund to " + res.refund.card_label + ". " : "";
+      els.body.append(el("p", "demo-line small", card + TEST_REFUND));
+    }
   }
 
   function changed(res) {

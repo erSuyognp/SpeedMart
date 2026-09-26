@@ -93,6 +93,7 @@ Rules:
 - If the shopper wants to start over or cancel the plan, call clear_plan.
 - If asked about payment: they just walk out through the exit gate and approve the total there with Face ID.
   Nothing is charged until they approve.
+- If asked about cards or payment, explain it's a demo: a test Visa card is linked automatically and no real money moves.
 - Do not ask for or collect personal information (no email, phone, address or card details).
 - If a tool returns an error, say sorry briefly and suggest typing the request on the screen.
 ```
@@ -116,7 +117,7 @@ Tick **Wait for response** on every tool. Names and parameter identifiers are ca
    - Parameters: none
 
 2. **`get_cart`**
-   - Description: `Returns the shopper's live cart as JSON: in_store, items (name, qty, line_total_usd), total_usd with tax, budget_usd and over_budget. If in_store is false the shopper has not entered the store yet.`
+   - Description: `Returns the shopper's live cart as JSON: in_store, items (name, qty, line_total_usd), total_usd with tax, budget_usd, over_budget and payment (a note that the card is a demo test Visa card and no real money moves). If in_store is false the shopper has not entered the store yet.`
    - Parameters: none
 
 3. **`make_plan`**

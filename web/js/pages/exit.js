@@ -157,7 +157,7 @@
         notice({ title: "Scan the code again", text: "This link is missing the exit code.", icon: "bad" });
         return;
       }
-      if (passkeysOn()) passkey.load();
+      if (passkeysOn()) { passkey.load(); passkey.showNotes(); }
       await loadQuote();
       loadCard();
     } catch (e) {

@@ -20,6 +20,7 @@
   <main>
     <header class="app-header">
       <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="demo-badge" title="Demo store: a test card, no real money">DEMO</span>
       <span class="pill warn"><span class="dot warn"></span>Exit gate</span>
     </header>
 
@@ -75,7 +76,9 @@
       </details>
 
       <div class="action-bar">
+        <p class="strip demo-note">Test transaction. Nothing is charged to any real card.</p>
         <button id="approve-btn" class="primary" type="button" hidden>Approve</button>
+        <p class="verify-note" data-verify-note></p>
         <button id="cancel-btn" class="ghost" type="button">Keep shopping</button>
       </div>
     </div>

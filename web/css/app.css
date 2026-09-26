@@ -989,7 +989,7 @@ body:has(> .action-bar) .toast { bottom: calc(var(--action-bar-space) + var(--sp
        <circle class="checkmark-circle" cx="32" cy="32" r="29"/>
        <path class="checkmark-check" d="M19 33.5l8.5 8.5L45 24"/>
      </svg>
-     <p class="title">Paid</p><p class="amount">$8.64</p><p class="meta">Visa •••• 4242 (test)</p>
+     <p class="title">Paid</p><p class="amount">$8.64</p><p class="meta">Demo card · Visa test •••• 4242 · not your card</p>
    </div> */
 .success { text-align: center; padding: var(--space-10) var(--space-4) var(--space-6); animation: fade-up 0.5s var(--ease-out) both; }
 .checkmark { display: block; width: 104px; height: 104px; margin: 0 auto var(--space-5); transform-origin: 50% 50%; animation: pop 0.5s var(--ease-out) 0.85s both; }
@@ -1494,4 +1494,40 @@ body:has(> .action-bar) .site-footer { padding-bottom: var(--space-4); }
   .checkmark-check { stroke-dashoffset: 0; }
   .dot.live::after { display: none; }
   .skeleton::after { display: none; }
+}
+
+/* --- Demo honesty -----------------------------------------------------------
+   Judges must never think SpeedMart uses their real card or biometrics. The DEMO badge sits in every customer
+   header; .demo-note is the calm highlighted note above the join and approve buttons; .demo-line is the inline
+   "test transaction / test refund" line; .verify-note ("stays on your phone") follows each verification button
+   and is filled by passkey.showNotes() only when passkeys are on. */
+
+.demo-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  margin-right: auto; /* stays next to the brand; the header's right slot keeps its place */
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.demo-note { margin: 0; font-weight: 600; }
+.demo-line { margin: 0; color: var(--text-2); font-size: var(--text-sm); font-weight: 600; }
+.demo-line:empty { display: none; }
+.verify-note { margin: 0; text-align: center; font-size: var(--text-xs); color: var(--text-2); line-height: 1.4; }
+.verify-note:empty, [hidden] + .verify-note { display: none; }
+.card .verify-note { margin-top: var(--space-2); }
+
+/* The notes make the fixed action bar taller; keep the page's last content clear of it. */
+body:has(.action-bar .verify-note:not(:empty)) { --action-bar-space: calc(160px + var(--safe-b)); }
+body:has(.action-bar .demo-note:not([hidden])) { --action-bar-space: calc(220px + var(--safe-b)); }
+body:has(.action-bar .demo-note:not([hidden])):has(.action-bar .verify-note:not(:empty)) {
+  --action-bar-space: calc(280px + var(--safe-b));
 }

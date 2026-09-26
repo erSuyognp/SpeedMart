@@ -20,6 +20,7 @@
   <main>
     <header class="app-header">
       <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="demo-badge" title="Demo store: a test card, no real money">DEMO</span>
       <span class="pill live"><span class="dot live"></span>Receipt</span>
     </header>
 
@@ -28,6 +29,7 @@
       <div id="icon" class="big-icon" aria-hidden="true">…</div>
       <h1 id="title">Loading…</h1>
       <p id="card" class="lead"></p>
+      <p id="test-note" class="demo-line" hidden>Test transaction. Nothing is charged to any real card.</p>
       <p id="meta" class="muted"></p>
       <p id="points" class="points" hidden></p>
       <!-- Measured results: "In and out in 42 seconds", "1 tap to pay". -->
@@ -45,6 +47,7 @@
       <h2>Changed your mind?</h2>
       <p id="return-note" class="muted small" style="margin:0"></p>
       <button id="return-btn" class="secondary block" type="button">Return an item</button>
+      <p class="verify-note" data-verify-note></p>
       <p id="return-error" class="strip bad" role="alert" hidden></p>
     </section>
 
@@ -77,6 +80,7 @@
           <span class="grand">Refund</span><span id="return-total" class="grand">$0.00</span>
         </div>
         <p id="return-from" class="muted small mt-3"></p>
+        <p id="return-card" class="demo-line small"></p>
       </section>
       <p id="return-panel-error" class="strip bad" role="alert" hidden></p>
     </div>

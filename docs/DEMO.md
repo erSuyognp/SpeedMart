@@ -77,6 +77,7 @@ page instead of QR 2 and QR 3. Everything else is the same.
 | Question | Answer |
 |---|---|
 | Do you store faces? | No. Face ID happens on the phone through a passkey (WebAuthn). We store only a public key. |
+| Is this my real card? | No. SpeedMart never asks for a card; every member gets a test Visa card in Stripe test mode, and no real money moves. |
 | Is this real Visa? | Payments run through Stripe test mode with a test Visa card. The authorization object is modeled on Visa Intelligent Commerce concepts: an agent token scoped to merchant, amount and time, a user intent, and cardholder confirmation. It's labeled sandbox. |
 | Why not Amazon Go? | Tracking which person took which item across a whole store is a research-scale problem. We scoped to shelf-level state and a one-shopper store so the trust and payment story is solid. |
 | What if someone pockets an item? | It left the shelf, so it's in their cart and gets charged at exit. |

@@ -138,7 +138,7 @@
     $("logout-btn").addEventListener("click", onLogout);
     try {
       cfg = await api.config();
-      if (passkeysOn()) passkey.load();
+      if (passkeysOn()) { passkey.load(); passkey.showNotes(); }
       await loadMe();
     } catch (e) {
       show("loading");

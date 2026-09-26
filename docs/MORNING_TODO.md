@@ -203,7 +203,7 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
 
 - [ ] Safari → the tunnel URL (or scan QR 1). Enter a first name, move the budget slider, tap **Join with Face ID**.
       Expect the iOS sheet "Save a passkey for stump-isotope-glorious.ngrok-free.dev?" → Continue → Face ID →
-      "You're a member. Card linked: Visa •••• 4242 (test). Walk to the entry gate."
+      "You're a member. Card linked: Demo card · Visa test •••• 4242 · not your card. Walk to the entry gate."
 - [ ] **If you see "Face ID was cancelled" without cancelling**, Safari dropped the tap gesture during signup.
       Tap **Try Face ID again** — it should work first time. **Write down which happened**; if it always needs
       the second tap, tell the team before the demo.
@@ -232,7 +232,7 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
 - [ ] **Second phone** (or a desktop signed in as another member) scans QR 2 while the first shopper is inside.
       Expect "Someone is shopping right now. Try again in a minute." and `<name> is shopping` on the LCD for 3 s.
 - [ ] Take one electrolyte off the shelf → row "Electrolyte tabs × 1 $8.00", total **$8.64**, LCD total updates.
-- [ ] Scan **QR 3**. Expect the itemized preview, total $8.64, "Paying with Visa •••• 4242 (test)", and the
+- [ ] Scan **QR 3**. Expect the itemized preview, total $8.64, "Paying with Demo card · Visa test •••• 4242 · not your card", and the
       collapsible **"What the payment network sees"** (agent, merchant SpeedMart #01, max $20.00, single use,
       expiry, intent "Pay $8.64 to SpeedMart #01 for 1 item", sandbox label). Button **Approve $8.64 with Face ID**.
 - [ ] Tap **Keep shopping** → back on the cart page, cart live again. Scan QR 3 again.

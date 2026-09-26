@@ -7,6 +7,7 @@
 //   await passkey.register()             call inside a tap handler: Face ID prompt, then saves the passkey
 //   await passkey.signIn(purpose)        call inside a tap handler: returns the member
 //   passkey.friendlyError(err)           text for the error strip
+//   passkey.showNotes()                  fills every [data-verify-note] next to a verification button
 //
 // Safari only shows the Face ID prompt from a user gesture, and a slow fetch between the tap and the
 // prompt can use the gesture up. So options are fetched when the page loads (and again after every
@@ -15,6 +16,9 @@
 (function () {
   const BUNDLE = "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13.3.0/dist/bundle/index.umd.min.js";
   const OPTIONS_MAX_AGE_MS = 4 * 60 * 1000; // server keeps a challenge for 5 min
+  // Face ID on iPhone, fingerprint or face on Android, a PIN on a laptop: the check happens on the device and
+  // the backend only ever sees a signed yes (9.8).
+  const VERIFY_NOTE = "Your face, fingerprint, or PIN stays on your phone. SpeedMart only receives a yes or no.";
 
   let loading = null;
   const cache = {}; // key -> {promise, at}
@@ -138,5 +142,11 @@
     return "Face ID didn't work. Tap the button to try again, or use the demo account.";
   }
 
-  window.passkey = { load, prefetch, register, signIn, friendlyError };
+  // Pages call this only when features.passkeys is on; with passkeys off the buttons say "Confirm" and the
+  // notes stay empty (and hidden by app.css).
+  function showNotes() {
+    document.querySelectorAll("[data-verify-note]").forEach((el) => { el.textContent = VERIFY_NOTE; });
+  }
+
+  window.passkey = { load, prefetch, register, signIn, friendlyError, showNotes, VERIFY_NOTE };
 })();

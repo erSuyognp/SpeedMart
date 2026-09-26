@@ -84,7 +84,7 @@
         view({ title: "Scan the code again", text: "This link is missing the gate code.", icon: "bad" });
         return;
       }
-      if (passkeysOn()) passkey.load();
+      if (passkeysOn()) { passkey.load(); passkey.showNotes(); }
       try { me = await api.get("/api/me"); } catch (e) { if (e.status !== 401) throw e; me = null; }
       if (me && me.active_session_id) {
         view({ title: "You're already inside", text: "Your cart is live.", icon: "ok", cart: true });

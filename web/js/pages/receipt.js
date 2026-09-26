@@ -10,6 +10,8 @@
   let returning = null; // ReturnSnapshot while a return for this visit is open
   let timer = null;
   let finishing = false; // confirm sent: the socket's session messages are expected, not news
+  let cardLabel = ""; // the paid visit's card label: always the demo card, never the shopper's own
+  const TEST_REFUND = "Test refund. No real money moves.";
 
   const passkeysOn = () => !!cfg.features.passkeys;
 
@@ -29,6 +31,7 @@
     $("icon").textContent = "!";
     $("title").textContent = title;
     $("card").textContent = "";
+    $("test-note").hidden = true;
     $("meta").textContent = text || "";
   }
 
@@ -71,7 +74,10 @@
       const provider = f.provider === "stripe_test" ? "Stripe test mode" : "sandbox mock";
       sub.textContent = "Refund " + (f.provider_ref || f.refund_id) + " · " + provider +
         (f.points_removed ? " · −" + f.points_removed + " points" : "");
-      strip.append(main, sub);
+      const test = document.createElement("p");
+      test.className = "small";
+      test.textContent = (f.card_label ? "To " + f.card_label + ". " : "") + TEST_REFUND;
+      strip.append(main, sub, test);
       box.appendChild(strip);
     });
     box.hidden = !box.children.length;
@@ -123,6 +129,8 @@
       $("icon").textContent = "✓";
       $("title").textContent = "Paid " + api.money(p.amount_usd);
       $("card").textContent = p.card_label;
+      $("test-note").hidden = false;
+      cardLabel = p.card_label || "";
       const provider = p.provider === "stripe_test" ? "Stripe test mode" : "sandbox mock";
       $("meta").textContent = "Auth code " + p.auth_code + " · " + time(p.created_at) + " · " + provider;
       $("points").hidden = !loyalty;
@@ -186,6 +194,7 @@
     $("return-from").textContent = snap.returnable.length
       ? "Refundable from this visit: " + snap.returnable.map((i) => i.qty + " " + i.name).join(", ") + "."
       : "";
+    $("return-card").textContent = (cardLabel ? "Refund to " + cardLabel + ". " : "") + TEST_REFUND;
     const btn = $("confirm-refund");
     btn.textContent = snap.items.length ? "Confirm refund " + api.money(snap.total_usd) : "Confirm refund";
     btn.disabled = snap.items.length === 0;
@@ -231,7 +240,7 @@
         btn.disabled = false;
         return;
       }
-      $("refund-agent").textContent = res.agent_line;
+      $("refund-agent").textContent = res.agent_line + " " + TEST_REFUND;
       $("refund-agent").hidden = false;
       await endReturn();
     } catch (e) {
@@ -280,7 +289,7 @@
     });
     try {
       cfg = await api.config();
-      if (passkeysOn()) passkey.load();
+      if (passkeysOn()) { passkey.load(); passkey.showNotes(); }
       await loadReceipt();
     } catch (e) {
       fail("Can't show this receipt", e.message);

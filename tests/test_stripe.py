@@ -150,7 +150,7 @@ def test_signup_attaches_test_visa(fake_stripe):
     assert attach["payment_method"] == "pm_card_visa" and attach["customer"] == f"cus_{m['id']}"
     row = member_row(m["id"])
     assert row["stripe_customer_id"] == f"cus_{m['id']}" and row["stripe_pm_id"] == "pm_1TestVisa"
-    assert row["card_label"] == "Visa •••• 4242 (test)"
+    assert row["card_label"] == "Demo card · Visa test •••• 4242 · not your card"
     assert "stripe_customer_id" not in m
 
 
@@ -160,7 +160,7 @@ def test_signup_survives_stripe_outage(fake_stripe):
         r = client.post("/api/members/signup", json={"name": "Maya"})
     assert r.status_code == 200
     row = member_row(r.json()["member"]["id"])
-    assert row["stripe_customer_id"] is None and row["card_label"] == "Visa •••• 4242 (test)"
+    assert row["stripe_customer_id"] is None and row["card_label"] == "Demo card · Visa test •••• 4242 · not your card"
 
 
 def test_demo_member_backfilled_at_quote(fake_stripe, member_id):

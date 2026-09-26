@@ -121,7 +121,7 @@ def test_approve_charges_mock_and_pays(member_id, leds, gate_events):
         assert re.fullmatch(r"MOCK\d{4}", p["auth_code"])
         assert p["amount_usd"] == 8.64 and p["currency"] == "USD" and p["points_earned"] == 8
         assert p["instruction_id"] == q["instruction"]["instruction_id"]
-        assert p["card_label"] == "Visa •••• 4242 (test)"
+        assert p["card_label"] == "Demo card · Visa test •••• 4242 · not your card"
 
         session = store.get_session(q["cart"]["session_id"])
         assert session["state"] == "PAID" and store.current_session() is None  # lock free

@@ -75,6 +75,10 @@ async function endConversation() {
 
 // --- client tools: names and parameters must match the agent config in docs/voice.md exactly ---
 
+// Sent with every get_cart result so the agent can answer "is this my card?" from a tool, not from memory.
+const PAYMENT_NOTE = "Demo card: every member gets a test Visa card (•••• 4242) in Stripe test mode, linked " +
+  "automatically. It is not the shopper's card, SpeedMart never asks for a card, and no real money moves.";
+
 function toolError(e) {
   return JSON.stringify({ error: (e && e.message) || "The store couldn't do that right now." });
 }
@@ -91,7 +95,8 @@ const clientTools = {
     try {
       const data = await api.get("/api/store/current");
       if (!data || !data.session) {
-        return JSON.stringify({ in_store: false, items: [], note: "The shopper has not entered the store yet." });
+        return JSON.stringify({ in_store: false, items: [], note: "The shopper has not entered the store yet.",
+          payment: PAYMENT_NOTE });
       }
       const cart = data.cart;
       return JSON.stringify({
@@ -100,6 +105,7 @@ const clientTools = {
         total_usd: cart.total_usd,
         budget_usd: cart.budget_usd,
         over_budget: cart.over_budget,
+        payment: PAYMENT_NOTE,
       });
     } catch (e) { return toolError(e); }
   },

@@ -26,7 +26,7 @@ AGENT = {"id": "speedmart-shelf-agent-01", "name": "SpeedMart Store Agent"}
 INSTRUCTION_LABEL = "SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call."
 INSTRUCTION_TTL = timedelta(minutes=15)
 # Shown for every member: Stripe test mode attaches pm_card_visa; the mock provider stands in for it otherwise.
-DEFAULT_CARD_LABEL = "Visa •••• 4242 (test)"
+DEFAULT_CARD_LABEL = db.DEMO_CARD_LABEL
 FORCED_DECLINE_MESSAGE = "Card declined (sandbox: forced by staff)"
 
 AUTHORIZED, DECLINED, ERROR = "AUTHORIZED", "DECLINED", "ERROR"

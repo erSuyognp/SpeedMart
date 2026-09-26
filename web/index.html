@@ -20,6 +20,7 @@
   <main>
     <header class="app-header">
       <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="demo-badge" title="Demo store: a test card, no real money">DEMO</span>
       <span class="pill brand">Sandbox</span>
     </header>
 
@@ -59,8 +60,9 @@
       </form>
 
       <div class="action-bar">
+        <p class="strip demo-note">This is a demo. We never ask for your card. A test Visa card is linked for you automatically, and no real money moves.</p>
         <button id="join-btn" class="primary" type="submit" form="join-form">Join with Face ID</button>
-        <p class="action-note">A Visa test card is linked automatically</p>
+        <p class="verify-note" data-verify-note></p>
       </div>
     </section>
 
@@ -72,6 +74,7 @@
 
     <section id="signin" hidden>
       <p class="hint"><button id="signin-btn" class="link-button" type="button">Already a member? Sign in with Face ID</button></p>
+      <p class="verify-note" data-verify-note></p>
     </section>
 
     <!-- index.js rewrites #member-icon's class ("big-icon ok" / "big-icon brand"), so it stays a .big-icon. -->
@@ -83,6 +86,7 @@
 
       <div id="passkey-setup" class="stack mt-4" hidden>
         <button id="setup-btn" class="primary block" type="button">Set up Face ID</button>
+        <p class="verify-note" data-verify-note></p>
       </div>
 
       <div class="stack mt-4">
