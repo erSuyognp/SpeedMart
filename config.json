@@ -32,6 +32,7 @@
   },
   "vision": {
     "aruco_dict": "DICT_4X4_50",
+    "clahe": true,
     "snapshot_hz": 5,
     "stable_ms": 400,
     "motion_threshold": 0.02,
