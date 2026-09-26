@@ -5,8 +5,11 @@ shopping). When a session starts, EvidenceRecorder saves a JPEG crop of each bay
 that bay is stable; afterwards, whenever a bay's stable contents change, it saves a new crop of that bay. Files go
 to data/evidence/<session_id>/bay<id>_<UTC time>_<kind>.jpg and a small notice is posted to /internal/evidence
 (X-Internal-Token) with the unit tags in the crop and their boxes, so the dispute screen can outline the
-missing unit. Encoding, writing and posting run on a background thread; the camera loop only copies the crop.
-The backend deletes the photos when the visit is over.
+missing unit. With YOLO running the notice also carries the bay's stable YOLO counts and every YOLO box in
+the crop (sku -> [x, y, w, h, conf] in crop pixels); in tag free mode (vision.mode "yolo") those boxes are
+what the dispute outline is drawn from, and a bay's contents are its counts. Encoding, writing and posting
+run on a background thread; the camera loop only copies the crop. The backend deletes the photos when the
+visit is over.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
@@ -50,6 +53,8 @@ class Crop:
     ts_ms: int
     units: list[int]
     tags: dict[str, list[float]]  # tag id -> [x, y, w, h] in crop pixels
+    yolo_counts: dict[str, int] = field(default_factory=dict)  # the bay's stable YOLO counts (empty without YOLO)
+    boxes: dict[str, list[list[float]]] = field(default_factory=dict)  # sku -> [[x, y, w, h, conf], ...] crop px
 
 
 def roi_box(roi: list[int], frame_shape: tuple[int, ...]) -> tuple[int, int, int, int]:
@@ -74,8 +79,35 @@ def tag_boxes(detections: Iterable[Any], box: tuple[int, int, int, int]) -> dict
     return out
 
 
+def yolo_boxes_in(boxes: Iterable[Any], box: tuple[int, int, int, int]) -> dict[str, list[list[float]]]:
+    """Every YOLO box with a catalog SKU whose center is in the crop, in crop pixels: sku -> [[x, y, w, h, conf]]."""
+    x1, y1, x2, y2 = box
+    out: dict[str, list[list[float]]] = {}
+    for b in boxes or ():
+        sku = getattr(b, "sku", None)
+        if sku is None:
+            continue
+        bx1, by1, bx2, by2 = (float(v) for v in b.xyxy)
+        cx, cy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
+        if not (x1 <= cx < x2 and y1 <= cy < y2):
+            continue
+        out.setdefault(str(sku), []).append([round(bx1 - x1, 1), round(by1 - y1, 1), round(bx2 - bx1, 1),
+                                             round(by2 - by1, 1), round(float(b.conf), 3)])
+    return out
+
+
+def bay_content(st: Any, fallback_units=()) -> tuple[tuple[int, ...], tuple[tuple[str, int], ...]]:
+    """What a bay holds for change detection: its stable units and, with YOLO on, its stable counts."""
+    reported = st.units if getattr(st, "units", None) is not None else fallback_units
+    units = tuple(sorted(int(u) for u in reported))
+    yolo = getattr(st, "yolo_counts", None) or {}
+    return units, tuple(sorted((str(k), int(v)) for k, v in yolo.items() if int(v) > 0))
+
+
 class EvidenceRecorder:
-    """Decides which bay crops to keep (camera thread) and saves + announces them (background thread)."""
+    """Decides which bay crops to keep (camera thread) and saves + announces them (background thread).
+    A bay's contents are its stable unit tags plus, with YOLO on, its stable YOLO counts, so tag free mode
+    still gets a "change" crop whenever a count moves."""
 
     def __init__(self, bays: list[dict], root: Path, url: str, token: str,
                  send: Callable[[Crop, Path], None] | None = None, start: bool = True):
@@ -87,7 +119,7 @@ class EvidenceRecorder:
         self._wanted: str | None = None  # session id from the latest /internal/shelf reply
         self.session_id: str | None = None  # the session crops are being saved for
         self._baseline_pending: set[int] = set()
-        self._saved: dict[int, tuple[int, ...]] = {}
+        self._saved: dict[int, tuple] = {}  # bay -> the content (bay_content) of its last saved crop
         self._send = send or self._post
         self._queue: queue.Queue[Crop | None] = queue.Queue(maxsize=QUEUE_SIZE)
         self._client: httpx.Client | None = None
@@ -101,9 +133,11 @@ class EvidenceRecorder:
             self._wanted = session_id or None
 
     def update(self, frame: np.ndarray, status: Mapping[int, Any], detections: Iterable[Any],
-               ts_ms: int | None = None, per_bay: Mapping[int, list[int]] | None = None) -> list[Crop]:
+               ts_ms: int | None = None, per_bay: Mapping[int, list[int]] | None = None,
+               yolo_boxes: Iterable[Any] | None = None) -> list[Crop]:
         """One camera frame. status: BayStatus per bay (its units = the last stable contents; a tracker
-        without them falls back to per_bay, this frame's tags). Returns the crops queued for saving."""
+        without them falls back to per_bay, this frame's tags). yolo_boxes: this frame's YoloBox list when
+        YOLO runs. Returns the crops queued for saving."""
         with self._lock:
             wanted = self._wanted
         if wanted != self.session_id:
@@ -114,16 +148,17 @@ class EvidenceRecorder:
             return []
         ts_ms = int(time.time() * 1000) if ts_ms is None else int(ts_ms)
         detections = list(detections)
+        yolo_boxes = list(yolo_boxes or ())
         queued = []
         for bay, roi in self.bays.items():
             st = status.get(bay)
             if st is None or not st.stable:
                 continue  # a hand in the bay, or contents still settling: wait for a clean picture
-            reported = st.units if st.units is not None else (per_bay or {}).get(bay, ())
-            units = tuple(sorted(int(u) for u in reported))
+            content = bay_content(st, (per_bay or {}).get(bay, ()))
+            units, counts = content
             if bay in self._baseline_pending:
                 kind = "baseline"
-            elif self._saved.get(bay) != units:
+            elif self._saved.get(bay) != content:
                 kind = "change"
             else:
                 continue
@@ -132,9 +167,9 @@ class EvidenceRecorder:
             if x2 <= x1 or y2 <= y1:
                 continue
             crop = Crop(self.session_id, bay, kind, frame[y1:y2, x1:x2].copy(), ts_ms, list(units),
-                        tag_boxes(detections, box))
+                        tag_boxes(detections, box), dict(counts), yolo_boxes_in(yolo_boxes, box))
             self._baseline_pending.discard(bay)
-            self._saved[bay] = units
+            self._saved[bay] = content
             try:
                 self._queue.put_nowait(crop)
                 queued.append(crop)
@@ -153,7 +188,8 @@ class EvidenceRecorder:
     def notice(self, crop: Crop, path: Path) -> dict:
         h, w = crop.image.shape[:2]
         return {"session_id": crop.session_id, "bay": crop.bay, "kind": crop.kind, "file": path.name,
-                "ts": crop.ts_ms, "width": int(w), "height": int(h), "units": crop.units, "tags": crop.tags}
+                "ts": crop.ts_ms, "width": int(w), "height": int(h), "units": crop.units, "tags": crop.tags,
+                "yolo_counts": dict(crop.yolo_counts), "boxes": {k: [list(b) for b in v] for k, v in crop.boxes.items()}}
 
     def _post(self, crop: Crop, path: Path) -> None:
         if self._client is None:

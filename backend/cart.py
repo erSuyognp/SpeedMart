@@ -57,8 +57,9 @@ def priced_cart(session: dict[str, Any], qty: dict[str, int], member: dict[str, 
     total = subtotal + tax
     budget_usd = member.get("budget_usd", settings.store.get("default_budget_usd", 20))
 
+    # tag_id is None in YOLO only mode (vision.mode "yolo"): the item is known by SKU and count, not by a tag.
     warnings = [{"kind": "misplaced", "sku": m["sku"], "name": m["name"], "bay": m["bay"],
-                 "tag_id": m["tag_id"], "message": f"{m['name']} is in the wrong bay"}
+                 "tag_id": m.get("tag_id"), "message": f"{m['name']} is in the wrong bay"}
                 for m in (misplaced or [])]
 
     return {

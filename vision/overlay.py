@@ -29,11 +29,22 @@ class BayStatusLike(Protocol):
     motion: bool
 
 
-def _fmt_content(units, yolo) -> str:
+MODE_LABEL = {"tags": "MODE tags", "fusion": "MODE fusion (tags + YOLO)", "yolo": "MODE yolo (no tags)"}
+
+
+def _fmt_content(units, yolo, mode: str = "fusion") -> str:
+    if mode == "yolo":  # nothing carries a tag: the content is the counts
+        return ",".join(f"{k}:{v}" for k, v in sorted((yolo or {}).items())) or "empty"
     text = str(list(units))
     if yolo:
         text += " yolo " + ",".join(f"{k}:{v}" for k, v in sorted(yolo.items()))
     return text
+
+
+def mode_line(mode: str, fps: float, camera_fps: float | None = None) -> str:
+    """The overlay's top line: the vision mode first, then the FPS."""
+    fps_text = f"FPS {fps:4.1f}" + ("" if camera_fps is None else f"  (camera {camera_fps:4.1f})")
+    return f"{MODE_LABEL.get(mode, 'MODE ' + str(mode))}  |  {fps_text}"
 
 
 def bay_state_text(st) -> str:
@@ -83,12 +94,13 @@ def draw_overlay(
     message: str = "",
     yolo_boxes=None,
     yolo_status: str = "",
+    mode: str = "fusion",
 ) -> np.ndarray:
     """Bay boxes (green stable, yellow unstable) with id, SKU name, reported units, changed fraction,
     MOTION / settling / hold / stable and the pending candidate; the motion area (ROI + margin) in gray;
-    tag outlines with ids (loose tags orange); YOLO boxes with class and confidence (magenta) when YOLO
-    is on; FPS; motion tuning values and YOLO status; backend status line with the age of the last
-    successful post."""
+    tag outlines with ids (loose tags orange); YOLO boxes with class and confidence (magenta) in every mode
+    where YOLO runs; the vision mode and FPS on the top line; motion tuning values and YOLO status; backend
+    status line with the age of the last successful post. In "yolo" mode the bay line shows the counts."""
     view = frame.copy()
     h = view.shape[0]
     loose = set(loose)
@@ -107,12 +119,14 @@ def draw_overlay(
         _text(view, f"bay {bay_id} {name}", (x1 + 4, y1 + 22), color)
         reported = per_bay.get(bay_id, []) if st is None or getattr(st, "units", None) is None else list(st.units)
         yolo = None if st is None else getattr(st, "yolo_counts", None)
-        _text(view, f"{len(reported)} units {_fmt_content(reported, yolo)}", (x1 + 4, y2 - 58), color, 0.55)
+        n = sum((yolo or {}).values()) if mode == "yolo" else len(reported)
+        _text(view, f"{n} units {_fmt_content(reported, yolo, mode)}", (x1 + 4, y2 - 58), color, 0.55)
         if st is not None:
             _text(view, bay_state_text(st), (x1 + 4, y2 - 34), color, 0.55)
             pending = getattr(st, "pending_units", None)
-            if pending is not None:
-                _text(view, f"pending {_fmt_content(pending, getattr(st, 'pending_yolo', None))}",
+            pending_yolo = getattr(st, "pending_yolo", None)
+            if pending is not None or (mode == "yolo" and pending_yolo is not None):
+                _text(view, f"pending {_fmt_content(pending or (), pending_yolo, mode)}",
                       (x1 + 4, y2 - 10), YELLOW, 0.55)
 
     draw_yolo_boxes(view, yolo_boxes)
@@ -124,8 +138,7 @@ def draw_overlay(
         cx, cy = (int(v) for v in det.center)
         _text(view, str(det.tag_id), (cx - 8, cy + 8), color, 0.8)
 
-    fps_text = f"FPS {fps:4.1f}" + ("" if camera_fps is None else f"  (camera {camera_fps:4.1f})")
-    _text(view, fps_text, (10, 30), WHITE, 0.8)
+    _text(view, mode_line(mode, fps, camera_fps), (10, 30), WHITE, 0.8)
     if motion is not None:
         tune = f"motion thr {motion.threshold:g}  settle {int(motion.settle_ms)} ms  margin {motion.margin_px}px"
     else:

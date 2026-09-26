@@ -142,6 +142,9 @@ ADDED_COLUMNS = {
     "store_sessions": ("return_of TEXT", "first_pick_at TEXT", "quoted_at TEXT", "approved_at TEXT"),
     "refunds": ("reason TEXT", "dispute_id TEXT"),  # cart disputes (8.13): reason "return" | "dispute"
     "disputes": ("review_json TEXT", "decision_json TEXT"),  # AI review + staff / auto decision (8.14)
+    # Tag free mode (vision.mode "yolo"): YOLO counts and boxes per crop, counts around each clip's change.
+    "evidence": ("yolo_json TEXT",),
+    "clips": ("counts_before_json TEXT", "counts_after_json TEXT"),
 }
 
 

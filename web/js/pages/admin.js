@@ -264,8 +264,11 @@
     const grid = el("div", "clip-list");
     clips.forEach((c) => {
       const card = el("div", "clip");
-      card.append(el("div", "small", "Bay " + c.card + " changed at " + clock(c.change_at) + " · tags " +
-        (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none") +
+      const hasTags = c.units_before.length || c.units_after.length || !Object.keys(c.counts_before || {}).length && !Object.keys(c.counts_after || {}).length;
+      const fmt = (o) => Object.keys(o || {}).sort().map((k) => k + ":" + o[k]).join(", ") || "empty";
+      card.append(el("div", "small", "Bay " + c.card + " changed at " + clock(c.change_at) + (hasTags
+        ? " · tags " + (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none")
+        : " · counts " + fmt(c.counts_before) + " → " + fmt(c.counts_after)) +
         (c.motion.length ? " · motion " + c.motion.map((m) => clock(m.from) + "–" + clock(m.to)).join(", ") : "")));
       if (c.url) {
         const video = el("video");
@@ -303,13 +306,20 @@
     if (!t) { box.append(el("p", "muted small", "No timeline.")); return box; }
     const lines = [];
     if (t.session_started_at) lines.push(clock(t.session_started_at) + "  visit started");
-    (t.tags_seen || []).forEach((x) => lines.push(clock(x.at) + "  " + x.kind + " photo, tags " + (x.tag_ids.join(", ") || "none")));
+    const counts = (c) => Object.keys(c || {}).sort().map((k) => k + ":" + c[k]).join(", ");
+    const tagFree = t.detection === "yolo";
+    (t.tags_seen || []).forEach((x) => lines.push(clock(x.at) + "  " + x.kind + " photo, " +
+      (tagFree ? "counts " + (counts(x.yolo_counts) || "empty") : "tags " + (x.tag_ids.join(", ") || "none"))));
     (t.clips || []).forEach((c) => {
-      lines.push(clock(c.change_at) + "  stable change, units " + (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none"));
+      lines.push(clock(c.change_at) + "  stable change, " + (tagFree
+        ? "counts " + (counts(c.counts_before) || "empty") + " → " + (counts(c.counts_after) || "empty")
+        : "units " + (c.units_before.join(", ") || "none") + " → " + (c.units_after.join(", ") || "none")));
       (c.motion_periods || []).forEach((m) => lines.push(clock(m.from) + "  motion until " + clock(m.to)));
     });
     (t.cart_changes || []).forEach((c) => lines.push(clock(c.at) + "  cart " + JSON.stringify(c.items) + " · " + api.money(c.total_usd) + " (" + c.source + ")"));
-    lines.push(clock(t.dispute_opened_at) + "  dispute opened (" + t.stage.replace("_", " ") + "), missing tag " + (t.missing_tag_id === null ? "unknown" : t.missing_tag_id));
+    lines.push(clock(t.dispute_opened_at) + "  dispute opened (" + t.stage.replace("_", " ") + "), " + (tagFree
+      ? "no tags (YOLO only), " + t.item + " count " + (t.baseline_counts ? (t.baseline_counts[t.sku] || 0) : "?") + " → " + (t.latest_counts ? (t.latest_counts[t.sku] || 0) : "?")
+      : "missing tag " + (t.missing_tag_id === null ? "unknown" : t.missing_tag_id)));
     const list = el("ul");
     lines.sort().forEach((l) => list.append(el("li", null, l)));
     box.append(list);

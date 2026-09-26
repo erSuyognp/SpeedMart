@@ -1,8 +1,12 @@
 # YOLO training guide (F13)
 
-Goal: a YOLO11n model that finds the three products on the shelf even when their ArUco tags are
-covered, saved as `models/speedmart_yolo.pt`. Acceptance (S5.1): validation **mAP50 >= 0.90 for every
-class**.
+Goal: a YOLO11n model that finds the 5 products on the shelf with **no ArUco tags at all** (the tag
+free store, `config.json` `vision.mode: "yolo"`), and that also fills in for a covered tag when tags are
+used (`"fusion"`), saved as `models/speedmart_yolo.pt`. Acceptance (S5.1): validation **mAP50 >= 0.90 for
+every class**.
+
+> **Tag free capture (the plan for the demo):** every training frame is captured **without any tag** on
+> any product, and about **10 % of the frames show an empty shelf** (or empty bays). See section 1.
 
 Time budget: capture 30 min, label 60 to 90 min, train 15 to 25 min (Colab GPU, mostly waiting).
 
@@ -13,13 +17,17 @@ cd D:\SpeedMart
 .venv\Scripts\Activate.ps1
 ```
 
-Class names used everywhere (they come from `catalog.json` `yolo_class`, spelled exactly like this):
+Class names used everywhere (they come from `catalog.json` `yolo_class`, spelled exactly like this; when
+the catalog changes, this table and Roboflow's class list change with it, `training/check_dataset.py`
+checks that they match):
 
 | SKU | Product | YOLO class name |
 |---|---|---|
 | `elx` | Electrolyte tabs | `electrolytes` |
 | `rec` | Recovery drink | `recovery_drink` |
 | `bar` | Protein bar | `protein_bar` |
+| `wat` | Sparkling water | `sparkling_water` |
+| `mix` | Vegan trail mix | `trail_mix` |
 
 ---
 
@@ -31,22 +39,32 @@ Class names used everywhere (they come from `catalog.json` `yolo_class`, spelled
 3. Close the vision worker (only one program can hold the camera).
 4. Accounts: Roboflow (free) and Google (for Colab).
 
-## 1. Capture 250 to 400 frames
+## 1. Capture 250 to 400 frames, tag free
+
+Set `"mode": "yolo"` under `vision` in `config.json` first (that is how the store will run). The capture
+window then shows **`No tags: remove all tags before capturing`** on screen, wants **100 %** of frames
+without a visible tag, and shows the empty shelf counter.
 
 ```powershell
 python -m training.capture
 ```
 
 - `space` turns auto save on or off (one frame every 0.5 s). `s` saves a single frame. `q` quits.
+- `e` turns **empty shelf marking** on or off: frames saved while it is on count as empty shelf frames.
+  Turn it on, clear the bays (all of them, or one or two at a time), let auto save run for a while, put
+  the products back, turn it off.
 - Frames go to `training\raw\<date-time>\`. The green bay boxes and counters are drawn on the preview
   only, never on the saved images.
-- Target: **250 to 400 frames** in total (several runs are fine; each run gets its own folder).
+- Target: **250 to 400 frames** in total (several runs are fine; each run gets its own folder), of which
+  about **10 % empty shelf frames** (`empty shelf frames: N/M (want ~10%)` on screen, orange while below).
 
-> **IMPORTANT: at least half of the frames must have the ArUco tags covered or removed.**
-> Otherwise YOLO learns to find the black and white tags instead of the products, and it will fail
-> exactly when we need it (tag covered by a hand or glare). Peel the tags off, or cover them with a
-> sticky note or painter's tape, for at least half the capture. The capture window shows
-> `no tags visible: N/M (want >= 50%)` and turns orange while you are below half.
+> **IMPORTANT: peel every ArUco tag off every product before you start, and keep them off.**
+> The store runs tag free, so the model must find the products themselves. A frame with a tag in it
+> teaches YOLO to look for the black and white square, which will not be there at the demo. The capture
+> window shows `no tags visible: N/M (want >= 100%)`, turns orange as soon as one frame had a tag, and the
+> reminder line turns red while a tag is in view. At the end it warns how many frames to delete.
+> (If you are training a fusion model for a tagged shelf instead, keep tags on for at most half the
+> frames; the window then wants >= 50 %.)
 
 Vary the scene while auto save runs (move something every second or two):
 
@@ -57,8 +75,9 @@ Vary the scene while auto save runs (move something every second or two):
 - **held above the shelf** at different heights, in a hand, as if being picked
 - **bright and dim light**: room lights on and off, a phone flashlight from the side, a shadow cast over
   one bay
-- a few frames of the **empty shelf** and of hands with nothing in them (teaches "no product here")
-- tags visible for the other half, so the model does not treat the tag as a warning sign either
+- **empty shelf frames, about 1 in 10** (press `e` first): the whole shelf empty, single empty bays, and
+  hands with nothing in them (teaches "no product here", which keeps the counts at zero when a bay is bare)
+- products in the **wrong bay** too (the store flags a misplaced product by the bay its box lands in)
 
 At the venue, capture about **50 more frames** under the expo lighting and add them to the dataset.
 
@@ -72,11 +91,13 @@ Count what you have:
 
 1. roboflow.com > **Create New Project** > type **Object Detection**, any name (e.g. `speedmart`).
 2. **Upload**: drag every folder from `training\raw\` into the upload page. Save and continue.
-3. **Classes**: create exactly `electrolytes`, `recovery_drink`, `protein_bar` (lower case, underscore,
-   no spaces, no plural changes). A different spelling means the product is never mapped to its SKU.
+3. **Classes**: create exactly `electrolytes`, `recovery_drink`, `protein_bar`, `sparkling_water`, `trail_mix` (lower case, underscore, no spaces, no plural
+   changes: the `yolo_class` values of `catalog.json`). A different spelling means the product is never
+   mapped to its SKU.
 4. **Annotate**: draw a tight box around **every visible product** in every image, including partly
-   covered ones, ones held in a hand, and ones outside the bays. Box the product, not the tag. Leave empty
-   shelf frames with no boxes (mark them as null / background when Roboflow asks).
+   covered ones, ones held in a hand, and ones outside the bays. Box the product. Leave the empty shelf
+   frames with no boxes (mark them as null / background when Roboflow asks): they are the ~10 % that teach
+   the model to report nothing for an empty bay, so do not drop them.
    Tip: after ~30 images, Roboflow's **Label Assist** / auto-label can pre-draw boxes; check each one.
 5. **Generate** a version:
    - Split: **80% train / 10% valid / 10% test**.
@@ -177,12 +198,13 @@ python -m vision.yolo_detect training\raw\<run>\<file>.jpg
 
 It prints the device used (cuda / mps / cpu), every box with class and confidence, and per bay SKU counts.
 
-## 7. Turn YOLO on
+## 7. Turn YOLO on: tag free mode
 
-1. In `config.json` set `"yolo": true` under `features`. Optional tuning in `vision`:
+1. In `config.json` set `"yolo": true` under `features` and `"mode": "yolo"` under `vision` (no tags on
+   the products; ArUco detection is skipped entirely). Optional tuning in `vision`:
    `yolo_conf` (0.55: raise if it sees products that are not there, lower if it misses covered ones) and
    `yolo_every_n_frames` (3: raise to 5 or 6 if the overlay FPS drops below 15 on a CPU laptop).
-2. Restart everything (the backend reads the flag for fusion, the worker for inference):
+2. Restart everything (the backend reads the mode for counting, the worker for inference):
 
    ```powershell
    .\scripts\run_all.ps1
@@ -190,10 +212,18 @@ It prints the device used (cuda / mps / cpu), every box with class and confidenc
 
    (or start `uvicorn backend.main:app --host 0.0.0.0 --port 8000` and `python -m vision.worker` in two
    terminals).
-3. The overlay now draws YOLO boxes with class and confidence, and each bay line shows `yolo sku:n`.
-   Per bay per SKU, the shelf count is `max(tag count, YOLO count)` (Section 9.4).
-4. S5.2 acceptance: cover the tags with tape; 10 picks and put backs per bay should register 9/10 or
-   better. With `"yolo": false` everything behaves exactly as before.
+3. The overlay's top line reads `MODE yolo (no tags)`, it draws YOLO boxes with class and confidence,
+   and each bay line shows the counts (`elx:2`). The shelf count per bay per SKU is the YOLO count;
+   stability and motion freeze work on the counts; a product whose box lands in another bay is flagged
+   as misplaced; dispute photos outline the box that disappeared; clips and the review timeline carry
+   counts instead of tag ids.
+4. Acceptance: 10 picks and put backs per bay should register 9/10 or better with no tags anywhere.
 
-To turn it off again: `"yolo": false` and restart. If `ultralytics` is not installed or the model file is
-missing, the worker logs one warning and runs tags only; nothing crashes.
+Without a camera: `python scripts\fake_shelf.py --yolo-only loop` posts counts with empty units lists;
+`python scripts\e2e_sim.py --yolo-only` walks the whole loop that way.
+
+The other modes: `"fusion"` (the default) fuses tags and YOLO, `max(tag count, YOLO count)` per bay per
+SKU (Section 9.4), the S5.2 check is "cover the tags with tape, 9/10 picks register"; `"tags"` never loads
+YOLO, whatever `features.yolo` says. With `"yolo": false` the worker and the backend count tags only in
+every mode. If `ultralytics` is not installed or the model file is missing, the worker logs one warning
+and runs tags only (in `"yolo"` mode it says so loudly, because a tag free shelf then counts nothing).

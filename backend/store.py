@@ -204,7 +204,7 @@ def cart_for(session: dict[str, Any]) -> dict[str, Any]:
 def _cart_key(snapshot: dict[str, Any]) -> tuple:
     return (snapshot["session_id"], snapshot["state"],
             tuple((i["sku"], i["qty"]) for i in snapshot["items"]),
-            tuple((w["tag_id"], w["bay"]) for w in snapshot["warnings"]))
+            tuple((w["tag_id"], w["sku"], w["bay"]) for w in snapshot["warnings"]))
 
 
 def _log_cart_if_changed(snapshot: dict[str, Any], source: str) -> bool:

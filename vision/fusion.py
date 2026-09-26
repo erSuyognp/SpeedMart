@@ -9,11 +9,48 @@ Per bay, per SKU:
 Tags can never overcount; YOLO fills in when a tag is covered or glared. Without YOLO, fused = tag_count.
 The backend applies the same rule to the snapshot (backend/shelf_state.py); the worker uses this module
 for the overlay and the tests check that both agree.
+
+config.json vision.mode picks how the shelf is counted (configured_mode / effective_mode):
+
+    "tags"    ArUco tags only; YOLO is never loaded.
+    "yolo"    YOLO only, no tags on the products: ArUco detection is skipped, counts, stability, misplaced
+              items and evidence come from YOLO boxes. Needs features.yolo and a working model, else the
+              worker falls back to tags with a warning.
+    "fusion"  tags + YOLO with the rule above (the default). With features.yolo off it is tags only.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Mapping
+
+VISION_MODES = ("tags", "yolo", "fusion")
+DEFAULT_MODE = "fusion"
+
+log = logging.getLogger("vision.fusion")
+
+
+def configured_mode(config: dict) -> str:
+    """vision.mode from config.json ("fusion" when missing). Raises ValueError for anything else."""
+    mode = str(config.get("vision", {}).get("mode", DEFAULT_MODE))
+    if mode not in VISION_MODES:
+        raise ValueError(f"config.json vision.mode {mode!r} is not one of {', '.join(VISION_MODES)}")
+    return mode
+
+
+def effective_mode(config: dict, yolo_available: bool) -> str:
+    """The mode the worker runs in: "yolo" and "fusion" need features.yolo and a loaded model, else "tags".
+    Logs a warning when "yolo" was asked for and tags have to stand in (the shelf would otherwise be blind)."""
+    mode = configured_mode(config)
+    yolo_on = bool(config.get("features", {}).get("yolo", False))
+    if mode == "tags":
+        return "tags"
+    if not yolo_on or not yolo_available:
+        if mode == "yolo":
+            why = "features.yolo is false" if not yolo_on else "the YOLO model is unavailable"
+            log.warning("WARNING: vision.mode is \"yolo\" but %s. Running tags only until that is fixed.", why)
+        return "tags"
+    return mode
 
 
 def unit_skus(catalog: dict) -> dict[int, str]:

@@ -23,6 +23,21 @@ class SettingsError(Exception):
     """Raised when .env, config.json or catalog.json is missing or inconsistent."""
 
 
+# config.json vision.mode: how the shelf is counted (9.4).
+#   "tags"   ArUco tags only; yolo_counts in snapshots are ignored even with features.yolo on.
+#   "yolo"   YOLO only, no tags at all: counts, stability, misplaced items and evidence come from YOLO boxes.
+#   "fusion" tags + YOLO, max(tag_count, yolo_count) per bay per SKU (the default; tags only while features.yolo is off).
+VISION_MODES = ("tags", "yolo", "fusion")
+DEFAULT_VISION_MODE = "fusion"
+
+
+def effective_vision_mode(mode: str, yolo_on: bool) -> str:
+    """The mode the backend counts in: "yolo" and "fusion" need features.yolo, else they count tags only."""
+    if mode == "tags" or not yolo_on:
+        return "tags"
+    return mode
+
+
 @dataclass(frozen=True)
 class Features:
     motion_freeze: bool
@@ -102,6 +117,16 @@ class Settings:
     skus: dict[str, Sku]
     units: dict[int, Unit]
 
+    @property
+    def vision_mode(self) -> str:
+        """config.json vision.mode as written ("tags" | "yolo" | "fusion")."""
+        return str(self.vision.get("mode", DEFAULT_VISION_MODE))
+
+    @property
+    def counting_mode(self) -> str:
+        """The mode the shelf is actually counted in, given features.yolo (effective_vision_mode)."""
+        return effective_vision_mode(self.vision_mode, self.features.yolo)
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
@@ -159,6 +184,11 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
         raise SettingsError(f"config.json: features missing flags: {', '.join(missing)}")
     features = Features(**{n: bool(config["features"][n]) for n in feature_names})
 
+    vision = dict(config["vision"])
+    vision.setdefault("mode", DEFAULT_VISION_MODE)
+    if vision["mode"] not in VISION_MODES:
+        raise SettingsError(f"config.json: vision.mode {vision['mode']!r} is not one of {', '.join(VISION_MODES)}")
+
     try:
         skus = {s["sku"]: Sku(s["sku"], s["name"], float(s["price_usd"]), list(s.get("tags", [])), s.get("yolo_class", ""))
                 for s in catalog["skus"]}
@@ -189,7 +219,7 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
         features=features,
         store=config["store"],
         camera=config["camera"],
-        vision=config["vision"],
+        vision=vision,
         serial=config["serial"],
         bays=bays,
         skus=skus,

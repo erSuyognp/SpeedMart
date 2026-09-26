@@ -1,4 +1,10 @@
-"""Latest shelf snapshot from vision, per-bay stable contents (7.3), and POST /internal/shelf (8.2)."""
+"""Latest shelf snapshot from vision, per-bay stable contents (7.3), and POST /internal/shelf (8.2).
+
+Counting follows config.json vision.mode (settings.counting_mode): "tags" counts unit tags, "fusion" takes
+max(tag_count, yolo_count) per bay per SKU (9.4), "yolo" counts YOLO boxes only (no tags on the products).
+Misplaced items come from tags in the first two modes and from YOLO counts in the last (a SKU counted in a
+bay that is not its home bay).
+"""
 
 from __future__ import annotations
 
@@ -58,18 +64,35 @@ def reset() -> None:
 reset()
 
 
+def counting_mode() -> str:
+    """"tags" | "yolo" | "fusion": vision.mode, reduced to "tags" while features.yolo is off."""
+    return settings.counting_mode
+
+
+def sku_home_bay(sku: str) -> int | None:
+    """The bay a SKU belongs in: the bay configured for it, else the home_bay of its first unit."""
+    bay = next((b.id for b in settings.bays if b.sku == sku), None)
+    if bay is None:
+        bay = next((u.home_bay for u in settings.units.values() if u.sku == sku), None)
+    return bay
+
+
 def _counts_locked() -> dict[str, int]:
     counts = {sku: 0 for sku in settings.skus}
+    mode = counting_mode()
     for bay_id, units in _bay_units.items():
         tag_counts: dict[str, int] = {}
         for tag in units:
             sku = settings.units[tag].sku
             tag_counts[sku] = tag_counts.get(sku, 0) + 1
-        if settings.features.yolo:
+        yolo = _bay_yolo.get(bay_id, {})
+        if mode == "fusion":
             # 9.4 fusion: per bay, per SKU, max(tag_count, yolo_count).
-            yolo = _bay_yolo.get(bay_id, {})
             for sku in settings.skus:
                 counts[sku] += max(tag_counts.get(sku, 0), yolo.get(sku, 0))
+        elif mode == "yolo":
+            for sku, n in yolo.items():
+                counts[sku] += n
         else:
             for sku, n in tag_counts.items():
                 counts[sku] += n
@@ -78,12 +101,21 @@ def _counts_locked() -> dict[str, int]:
 
 def _misplaced_locked() -> list[dict[str, Any]]:
     out = []
+    if counting_mode() == "yolo":
+        # No tags: a SKU counted in a bay that is not its home bay is misplaced (it stays "on shelf").
+        for bay_id in sorted(_bay_yolo):
+            for sku, n in sorted(_bay_yolo[bay_id].items()):
+                home = sku_home_bay(sku)
+                if n > 0 and home is not None and home != bay_id:
+                    out.append({"tag_id": None, "sku": sku, "name": settings.skus[sku].name,
+                                "bay": bay_id, "home_bay": home, "count": int(n)})
+        return out
     for bay_id in sorted(_bay_units):
         for tag in sorted(_bay_units[bay_id]):
             unit = settings.units[tag]
             if unit.home_bay != bay_id:
                 out.append({"tag_id": tag, "sku": unit.sku, "name": settings.skus[unit.sku].name,
-                            "bay": bay_id, "home_bay": unit.home_bay})
+                            "bay": bay_id, "home_bay": unit.home_bay, "count": 1})
     return out
 
 
@@ -105,7 +137,8 @@ def apply_snapshot(snapshot: dict[str, Any] | ShelfSnapshot) -> bool:
                 if other_id != report.bay:
                     other_units -= units
             _bay_units[report.bay] = units
-            _bay_yolo[report.bay] = {k: int(v) for k, v in report.yolo_counts.items() if k in settings.skus}
+            _bay_yolo[report.bay] = {k: int(v) for k, v in report.yolo_counts.items()
+                                     if k in settings.skus and int(v) > 0}
         _loose_units[:] = [t for t in snap.loose_units if t in settings.units]
         _last_snapshot_at = time.monotonic()
         _last_frame_id = snap.frame_id
@@ -113,7 +146,7 @@ def apply_snapshot(snapshot: dict[str, Any] | ShelfSnapshot) -> bool:
     changed = before != after
     if changed:
         eventlog.log("shelf_changed", frame_id=snap.frame_id, shelf=after[0],
-                     misplaced=[{"tag_id": m["tag_id"], "bay": m["bay"]} for m in after[1]])
+                     misplaced=[{"tag_id": m["tag_id"], "sku": m["sku"], "bay": m["bay"]} for m in after[1]])
     return changed
 
 
@@ -130,7 +163,8 @@ def misplaced() -> list[dict[str, Any]]:
 def bay_occupancy() -> dict[int, bool]:
     """bay id -> True if its last stable contents hold at least one unit."""
     with _lock:
-        return {b: bool(u) or (settings.features.yolo and any(_bay_yolo.get(b, {}).values()))
+        mode = counting_mode()
+        return {b: (bool(u) and mode != "yolo") or (mode != "tags" and any(_bay_yolo.get(b, {}).values()))
                 for b, u in _bay_units.items()}
 
 
@@ -151,6 +185,7 @@ def state() -> dict[str, Any]:
     """Full shelf view for admin/debug."""
     with _lock:
         return {
+            "mode": counting_mode(),
             "bays": {b: sorted(u) for b, u in _bay_units.items()},
             "bay_status": {b: dict(_bay_status.get(b, {"stable": None, "motion": None})) for b in _bay_units},
             "yolo_counts": {b: dict(y) for b, y in _bay_yolo.items()},

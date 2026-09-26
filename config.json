@@ -33,6 +33,7 @@
     "focus": 0
   },
   "vision": {
+    "mode": "fusion",
     "aruco_dict": "DICT_4X4_50",
     "clahe": true,
     "snapshot_hz": 5,

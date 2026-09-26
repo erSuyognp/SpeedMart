@@ -1,7 +1,10 @@
-"""End-to-end check of a running SpeedMart backend with no camera and no phone.
+r"""End-to-end check of a running SpeedMart backend with no camera and no phone.
 
     python scripts\e2e_sim.py                    against http://127.0.0.1:8000
     python scripts\e2e_sim.py --url http://...   against somewhere else
+    python scripts\e2e_sim.py --yolo-only        tag free store: snapshots carry yolo_counts and no units
+                                                 (the backend needs features.yolo true and vision.mode
+                                                 "yolo" or "fusion"; the shelf state reports its mode)
 
 Walks the whole demo loop the way a judge would, but driving the shelf over /internal/shelf instead of
 picking things up: health -> admin login -> reset -> full shelf -> demo login -> start session -> pick one
@@ -98,6 +101,8 @@ class Catalog:
         self.name = {s["sku"]: s["name"] for s in catalog["skus"]}
         self.units = {int(u["tag_id"]): (u["sku"], int(u["home_bay"])) for u in catalog["units"]}
         self.bay_ids = [int(b["id"]) for b in config["bays"]]
+        self.vision_mode = str(config["vision"].get("mode", "fusion"))
+        self.yolo_flag = bool(config["features"].get("yolo", False))
         self.sku_order = [s["sku"] for s in catalog["skus"]]  # catalog order; the sim never names a SKU itself
         self.tax_rate = config["store"]["tax_rate"]
 
@@ -130,11 +135,12 @@ class ShelfPoster(threading.Thread):
 
     daemon = True
 
-    def __init__(self, url: str, token: str, catalog: Catalog) -> None:
+    def __init__(self, url: str, token: str, catalog: Catalog, yolo_only: bool = False) -> None:
         super().__init__(name="shelf-poster")
         self.url = url
         self.token = token
         self.catalog = catalog
+        self.yolo_only = yolo_only  # tag free store: yolo_counts per bay, units always empty
         self.removed: set[int] = set()
         self.frame_id = 0
         self.last_error: str | None = None
@@ -151,15 +157,20 @@ class ShelfPoster(threading.Thread):
             removed = set(self.removed)
         self.frame_id += 1
         bays: dict[int, list[int]] = {b: [] for b in self.catalog.bay_ids}
-        for tag, (_, home) in sorted(self.catalog.units.items()):
-            if tag not in removed:
+        counts: dict[int, dict[str, int]] = {b: {} for b in self.catalog.bay_ids}
+        for tag, (sku, home) in sorted(self.catalog.units.items()):
+            if tag in removed:
+                continue
+            if self.yolo_only:
+                counts.setdefault(home, {})[sku] = counts.setdefault(home, {}).get(sku, 0) + 1
+            else:
                 bays.setdefault(home, []).append(tag)
         return {
             "ts": int(time.time() * 1000),
             "frame_id": self.frame_id,
-            "bays": [{"bay": b, "stable": True, "motion": False, "units": u, "yolo_counts": {}}
+            "bays": [{"bay": b, "stable": True, "motion": False, "units": u, "yolo_counts": counts.get(b, {})}
                      for b, u in sorted(bays.items())],
-            "loose_units": sorted(removed),
+            "loose_units": [] if self.yolo_only else sorted(removed),
         }
 
     def post_once(self, client: httpx.Client) -> dict:
@@ -267,6 +278,11 @@ def step_reset(api: Api) -> str:
 
 
 def step_full_shelf(poster: ShelfPoster, api: Api) -> str:
+    if poster.yolo_only:
+        c = poster.catalog
+        if not c.yolo_flag or c.vision_mode == "tags":
+            raise Fail(f"--yolo-only needs features.yolo true and vision.mode yolo or fusion in config.json "
+                       f"(now yolo={c.yolo_flag}, mode={c.vision_mode}): the backend would count an empty shelf")
     poster.set_removed(set())
     poster.start()
     deadline = time.monotonic() + SETTLE_TIMEOUT_S
@@ -424,6 +440,8 @@ def step_receipt_refund(api: Api, session_id: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="backend base URL")
+    parser.add_argument("--yolo-only", action="store_true",
+                        help="tag free store: post yolo_counts with empty units lists (vision.mode yolo)")
     args = parser.parse_args()
     url = args.url.rstrip("/")
 
@@ -433,10 +451,11 @@ def main() -> int:
 
     catalog = Catalog()
     api = Api(url)
-    poster = ShelfPoster(url, internal_token, catalog)
+    poster = ShelfPoster(url, internal_token, catalog, yolo_only=args.yolo_only)
     report = Report()
 
-    print(f"SpeedMart end-to-end simulation against {url}\n")
+    print(f"SpeedMart end-to-end simulation against {url}"
+          f"{'  (yolo only: counts, no tags)' if args.yolo_only else ''}\n")
     started = time.monotonic()
     try:
         if not internal_token:

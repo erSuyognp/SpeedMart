@@ -10,6 +10,10 @@
     --yolo   also send yolo_counts (F13) as a perfect YOLO would: every unit on the shelf is counted by
              SKU in its home bay, covered or not. With features.yolo true in config.json, covering a tag
              then leaves the cart unchanged; with it false, the backend counts tags only.
+    --yolo-only   tag free store (config.json vision.mode "yolo"): send yolo_counts and NO units at all,
+             exactly what the worker posts when nothing carries a tag. "cover" has no effect (there is no
+             tag to cover); "remove <tag>" drops that unit from its SKU's count. Needs features.yolo true
+             and vision.mode "yolo" (or "fusion") on the backend, else it counts an empty shelf.
 
 Reads INTERNAL_TOKEN from .env. Backend URL defaults to http://127.0.0.1:8000 (override with --url).
 """
@@ -50,16 +54,18 @@ def load_bay_ids() -> list[int]:
 
 
 def build_snapshot(units: dict[int, int], bay_ids: list[int], removed: set[int], frame_id: int,
-                   covered: set[int] | None = None, unit_skus: dict[int, str] | None = None) -> dict:
+                   covered: set[int] | None = None, unit_skus: dict[int, str] | None = None,
+                   yolo_only: bool = False) -> dict:
     """Every unit not removed sits in its home bay. Covered tags are left out of units. With unit_skus
-    (--yolo) each bay also gets yolo_counts of all its units, covered ones included."""
+    (--yolo) each bay also gets yolo_counts of all its units, covered ones included. yolo_only (--yolo-only)
+    sends the counts with empty units lists: the tag free store."""
     covered = covered or set()
     bays = {b: [] for b in bay_ids}
     yolo: dict[int, dict[str, int]] = {b: {} for b in bay_ids}
     for tag, home in sorted(units.items()):
         if tag in removed:
             continue
-        if tag not in covered:
+        if tag not in covered and not yolo_only:
             bays.setdefault(home, []).append(tag)
         if unit_skus is not None:
             counts = yolo.setdefault(home, {})
@@ -88,12 +94,14 @@ def shelf_line(units: dict[int, int], removed: set[int], covered: set[int] | Non
     return line + (f"   tags covered: {hidden}" if hidden else "")
 
 
-def run_once(url: str, token: str, removed: set[int], covered: set[int] | None = None, yolo: bool = False) -> None:
+def run_once(url: str, token: str, removed: set[int], covered: set[int] | None = None, yolo: bool = False,
+             yolo_only: bool = False) -> None:
     units, bay_ids = load_units(), load_bay_ids()
-    skus = load_unit_skus() if yolo else None
+    skus = load_unit_skus() if (yolo or yolo_only) else None
     with httpx.Client() as client:
-        result = post(client, url, token, build_snapshot(units, bay_ids, removed, 1, covered, skus))
-    print(f"sent ({shelf_line(units, removed, covered)}{'  +yolo' if yolo else ''}) -> {result}")
+        result = post(client, url, token, build_snapshot(units, bay_ids, removed, 1, covered, skus, yolo_only))
+    how = "  yolo only, no units" if yolo_only else ("  +yolo" if yolo else "")
+    print(f"sent ({shelf_line(units, removed, covered)}{how}) -> {result}")
 
 
 def read_stdin(lines: queue.Queue) -> None:
@@ -101,9 +109,9 @@ def read_stdin(lines: queue.Queue) -> None:
         lines.put(line.strip())
 
 
-def run_loop(url: str, token: str, yolo: bool = False) -> None:
+def run_loop(url: str, token: str, yolo: bool = False, yolo_only: bool = False) -> None:
     units, bay_ids = load_units(), load_bay_ids()
-    skus = load_unit_skus() if yolo else None
+    skus = load_unit_skus() if (yolo or yolo_only) else None
     removed: set[int] = set()  # the shelf state kept between iterations
     covered: set[int] = set()
     lines: queue.Queue[str] = queue.Queue()
@@ -111,7 +119,8 @@ def run_loop(url: str, token: str, yolo: bool = False) -> None:
 
     print(f"Posting to {url}/internal/shelf every {int(LOOP_INTERVAL_S * 1000)} ms. "
           f"Type a tag id + Enter to toggle it, c<tag> to toggle covering it"
-          f"{' (sending yolo_counts)' if yolo else ''}. Ctrl+C to stop.")
+          f"{' (yolo only: counts, no units; covering does nothing)' if yolo_only else ''}"
+          f"{' (sending yolo_counts)' if yolo and not yolo_only else ''}. Ctrl+C to stop.")
     print(shelf_line(units, removed))
     frame_id = 0
     backend_ok: bool | None = None
@@ -144,7 +153,7 @@ def run_loop(url: str, token: str, yolo: bool = False) -> None:
 
             frame_id += 1
             try:
-                post(client, url, token, build_snapshot(units, bay_ids, removed, frame_id, covered, skus))
+                post(client, url, token, build_snapshot(units, bay_ids, removed, frame_id, covered, skus, yolo_only))
                 if backend_ok is not True:
                     print("backend reachable, snapshots flowing")
                 backend_ok = True
@@ -159,6 +168,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Post fake shelf snapshots (no camera needed).")
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="backend base URL")
     parser.add_argument("--yolo", action="store_true", help="also send yolo_counts (F13), covered tags included")
+    parser.add_argument("--yolo-only", action="store_true",
+                        help="tag free store (vision.mode yolo): yolo_counts and empty units lists")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("full", help="every unit in its home bay")
     rm = sub.add_parser("remove", help="full shelf without one tag")
@@ -177,17 +188,19 @@ def main() -> int:
 
     try:
         if args.cmd == "full":
-            run_once(url, token, set(), yolo=args.yolo)
+            run_once(url, token, set(), yolo=args.yolo, yolo_only=args.yolo_only)
         elif args.cmd in ("remove", "cover"):
             if args.tag not in load_units():
                 print(f"Unknown tag {args.tag}. Known tags: {sorted(load_units())}", file=sys.stderr)
                 return 1
             if args.cmd == "remove":
-                run_once(url, token, {args.tag}, yolo=args.yolo)
+                run_once(url, token, {args.tag}, yolo=args.yolo, yolo_only=args.yolo_only)
             else:
-                run_once(url, token, set(), covered={args.tag}, yolo=args.yolo)
+                if args.yolo_only:
+                    print("cover does nothing in yolo only mode: there is no tag to cover", file=sys.stderr)
+                run_once(url, token, set(), covered={args.tag}, yolo=args.yolo, yolo_only=args.yolo_only)
         else:
-            run_loop(url, token, yolo=args.yolo)
+            run_loop(url, token, yolo=args.yolo, yolo_only=args.yolo_only)
     except KeyboardInterrupt:
         print("\nstopped")
     except (httpx.HTTPError, RuntimeError) as e:

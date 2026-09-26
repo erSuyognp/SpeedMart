@@ -73,6 +73,9 @@ class ClipNotice(BaseModel):
     ends_ts: int
     units_before: list[int] = []
     units_after: list[int] = []
+    # Tag free mode (vision.mode "yolo"), optional: the bay's stable YOLO counts before and after the change.
+    counts_before: dict[str, int] = {}
+    counts_after: dict[str, int] = {}
     motion: list[list[int]] = []  # [[start_ms, end_ms], ...]
     width: int
     height: int
@@ -101,23 +104,26 @@ def clip_notice(body: ClipNotice, request: Request):
         raise ApiError(404, "file_missing", "The clip is not on disk.")
     keyframes = [{"id": k.id, "file": k.file, "captured_at": iso_ms(k.ts)} for k in body.keyframes]
     motion = [[iso_ms(int(a)), iso_ms(int(b))] for a, b in (m[:2] for m in body.motion if len(m) >= 2)]
+    counts_before = {k: int(v) for k, v in body.counts_before.items() if k in settings.skus and int(v) > 0}
+    counts_after = {k: int(v) for k, v in body.counts_after.items() if k in settings.skus and int(v) > 0}
     conn = db.connect()
     try:
         cur = conn.execute(
             "INSERT INTO clips (store_session_id, bay, sku, file, keyframes_json, change_at, starts_at, ends_at, "
-            "units_before_json, units_after_json, motion_json, width, height, fps, frames, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "units_before_json, units_after_json, counts_before_json, counts_after_json, motion_json, width, "
+            "height, fps, frames, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (body.session_id, body.bay, body.sku, body.file, json.dumps(keyframes), iso_ms(body.change_ts),
              iso_ms(body.starts_ts), iso_ms(body.ends_ts), json.dumps(sorted(set(body.units_before))),
-             json.dumps(sorted(set(body.units_after))), json.dumps(motion), body.width, body.height, body.fps,
-             body.frames or len(keyframes), db.now_iso()))
+             json.dumps(sorted(set(body.units_after))), json.dumps(counts_before), json.dumps(counts_after),
+             json.dumps(motion), body.width, body.height, body.fps, body.frames or len(keyframes), db.now_iso()))
         clip_id = cur.lastrowid
         conn.commit()
     finally:
         conn.close()
     eventlog.log("clip_saved", session_id=body.session_id, clip_id=clip_id, bay=body.bay, sku=body.sku,
                  file=body.file, keyframes=len(keyframes), units_before=sorted(set(body.units_before)),
-                 units_after=sorted(set(body.units_after)), motion_periods=len(motion))
+                 units_after=sorted(set(body.units_after)), counts_before=counts_before, counts_after=counts_after,
+                 motion_periods=len(motion))
     return {"ok": True, "clip_id": clip_id}
 
 
@@ -128,6 +134,8 @@ def _parse_row(r: Any) -> dict[str, Any]:
     d["keyframes"] = json.loads(d.pop("keyframes_json"))
     d["units_before"] = json.loads(d.pop("units_before_json"))
     d["units_after"] = json.loads(d.pop("units_after_json"))
+    d["counts_before"] = json.loads(d.pop("counts_before_json", None) or "{}")
+    d["counts_after"] = json.loads(d.pop("counts_after_json", None) or "{}")
     d["motion"] = json.loads(d.pop("motion_json"))
     return d
 
@@ -165,6 +173,7 @@ def clip_view(row: dict[str, Any], url_prefix: str, with_video: bool) -> dict[st
                       for k in row["keyframes"] if (folder / k["file"]).is_file()],
         "change_at": row["change_at"], "starts_at": row["starts_at"], "ends_at": row["ends_at"],
         "units_before": row["units_before"], "units_after": row["units_after"],
+        "counts_before": row.get("counts_before", {}), "counts_after": row.get("counts_after", {}),
         "motion": [{"from": a, "to": b} for a, b in row["motion"]],
         "fps": row["fps"], "frames": row["frames"], "width": row["width"], "height": row["height"],
     }

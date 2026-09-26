@@ -72,7 +72,9 @@ SYSTEM_PROMPT = (
     "You review shelf camera evidence for a small smart store. A shopper says one unit of an item was put in "
     "their cart or on their receipt but they did not take it. You get shelf photos (crops of one bay or of the "
     "shelf, never people's faces) with frame ids, and a timeline: unit tag ids seen in each photo, motion "
-    "periods, stable changes and cart changes. The missing unit is identified by its tag id.\n"
+    "periods, stable changes and cart changes. The missing unit is identified by its tag id. When the products "
+    "carry no tags (timeline detection \"yolo\"), photos and changes carry the number of units of each item the "
+    "detector counted instead, and the missing unit is the count of that item that dropped.\n"
     "Judge how strongly the evidence supports the shopper's account (the unit stayed on the shelf, was put back, "
     "moved to another bay, or was never clearly taken) versus the charge (the unit clearly left the shelf during "
     "the visit and did not come back).\n"
@@ -239,13 +241,18 @@ def gather(row: dict[str, Any]) -> dict[str, Any]:
     latest = crops[-1] if crops else None
     if baseline is not None and (root / baseline["file"]).is_file():
         frames.append({"id": "baseline", "path": str(root / baseline["file"]), "captured_at": baseline["captured_at"],
-                       "caption": f"Bay {bay + 1} when the shopper walked in", "units": baseline["units"]})
+                       "caption": f"Bay {bay + 1} when the shopper walked in", "units": baseline["units"],
+                       "yolo_counts": baseline.get("yolo_counts", {})})
     if latest is not None and latest is not baseline and (root / latest["file"]).is_file():
         frames.append({"id": "latest", "path": str(root / latest["file"]), "captured_at": latest["captured_at"],
-                       "caption": f"Bay {bay + 1} now", "units": latest["units"]})
+                       "caption": f"Bay {bay + 1} now", "units": latest["units"],
+                       "yolo_counts": latest.get("yolo_counts", {})})
 
-    # The most relevant clip: the newest one in which the missing unit was there before the change.
-    relevant = [c for c in clips if tag_id is not None and tag_id in c["units_before"]] or clips
+    # The most relevant clip: the newest one in which the missing unit was there before the change (by tag id,
+    # or without tags by the SKU's count dropping across the change).
+    relevant = [c for c in clips if tag_id is not None and tag_id in c["units_before"]] \
+        or [c for c in clips if c.get("counts_before", {}).get(sku, 0) > c.get("counts_after", {}).get(sku, 0)] \
+        or clips
     chosen = relevant[-1] if relevant else None
     if chosen is not None:
         for k in chosen["keyframes"]:
@@ -257,10 +264,16 @@ def gather(row: dict[str, Any]) -> dict[str, Any]:
                                "captured_at": k["captured_at"],
                                "caption": f"Shelf around the change in bay {bay + 1} at {chosen['change_at']}"})
 
+    # Tag free mode: no crop saw a tag but the crops carry YOLO counts; the timeline then speaks in counts.
+    tag_free = bool(crops) and not any(c["tags"] or c["units"] for c in crops) \
+        and any(c.get("yolo_counts") for c in crops)
+    b_counts = baseline.get("yolo_counts", {}) if baseline else {}
+    l_counts = latest.get("yolo_counts", {}) if latest else {}
     timeline = {
         "item": settings.skus[sku].name if sku in settings.skus else sku,
         "sku": sku,
         "bay_card": bay + 1,
+        "detection": "yolo" if tag_free else "tags",
         "missing_tag_id": tag_id,
         "sku_tag_ids": sorted(t for t, u in settings.units.items() if u.sku == sku),
         "stage": row["stage"],
@@ -268,11 +281,16 @@ def gather(row: dict[str, Any]) -> dict[str, Any]:
         "session_started_at": session.get("started_at"),
         "baseline_units": baseline["units"] if baseline else None,
         "latest_units": latest["units"] if latest else None,
-        "tags_seen": [{"at": c["captured_at"], "kind": c["kind"], "tag_ids": sorted(int(t) for t in c["tags"])}
-                      for c in crops],
-        "stable_changes": [{"at": c["captured_at"], "units": c["units"]} for c in crops if c["kind"] == "change"],
+        "baseline_counts": b_counts if baseline else None,
+        "latest_counts": l_counts if latest else None,
+        "missing_count": max(0, b_counts.get(sku, 0) - l_counts.get(sku, 0)) if tag_free and baseline and latest else None,
+        "tags_seen": [{"at": c["captured_at"], "kind": c["kind"], "tag_ids": sorted(int(t) for t in c["tags"]),
+                       "yolo_counts": c.get("yolo_counts", {})} for c in crops],
+        "stable_changes": [{"at": c["captured_at"], "units": c["units"], "yolo_counts": c.get("yolo_counts", {})}
+                           for c in crops if c["kind"] == "change"],
         "clips": [{"clip_id": c["id"], "change_at": c["change_at"], "from": c["starts_at"], "to": c["ends_at"],
                    "units_before": c["units_before"], "units_after": c["units_after"],
+                   "counts_before": c.get("counts_before", {}), "counts_after": c.get("counts_after", {}),
                    "motion_periods": [{"from": a, "to": b} for a, b in c["motion"]],
                    "keyframes": [{"id": evidence.frame_id(c["id"], k["id"]), "at": k["captured_at"]}
                                  for k in c["keyframes"]]} for c in clips],
@@ -292,7 +310,8 @@ def compose(inputs: dict[str, Any], with_images: bool) -> tuple[str, list[bytes]
             except OSError:
                 continue
         frames.append({"id": f["id"], "caption": f["caption"], "captured_at": f["captured_at"],
-                       **({"units": f["units"]} if "units" in f else {})})
+                       **({"units": f["units"]} if "units" in f else {}),
+                       **({"yolo_counts": f["yolo_counts"]} if f.get("yolo_counts") else {})})
     payload = {
         "task": "Review this cart dispute.",
         "images": ("The images are attached in the order listed under frames."

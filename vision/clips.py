@@ -5,8 +5,9 @@ small margin, never the full frame. When a bay's stable contents change during a
 "change" the EvidenceRecorder saves a crop for), the frames from PRE_MS before to POST_MS after the change become
 one clip: an MP4 written with cv2.VideoWriter (mp4v, which works on Windows without extra codecs) plus KEYFRAMES
 evenly spaced JPEG keyframes. Files go to data/evidence/<session_id>/clips/ and a notice goes to
-POST /internal/clips (X-Internal-Token) with the bay, its SKU, the unit tags before and after, the timestamps and
-the motion periods, so the review agent and the admin queue can find them. The backend deletes them with the
+POST /internal/clips (X-Internal-Token) with the bay, its SKU, the unit tags before and after (and, with YOLO on,
+the stable YOLO counts before and after: tag free mode has no tags), the timestamps and the motion periods, so
+the review agent and the admin queue can find them. The backend deletes them with the
 crops: at session close unless a dispute exists. Writing and posting run on a background thread; the camera loop
 only copies the crop into the ring.
 """
@@ -148,6 +149,8 @@ class Pending:
     end_ts: int
     units_before: list[int]
     units_after: list[int]
+    counts_before: dict[str, int] = field(default_factory=dict)
+    counts_after: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -163,6 +166,8 @@ class Clip:
     fps: float
     samples: list[Sample]
     motion: list[tuple[int, int]] = field(default_factory=list)
+    counts_before: dict[str, int] = field(default_factory=dict)
+    counts_after: dict[str, int] = field(default_factory=dict)
 
     @property
     def size(self) -> tuple[int, int]:
@@ -189,6 +194,7 @@ class ClipRecorder:
         self.session_id: str | None = None
         self._pending: dict[int, Pending] = {}
         self._units: dict[int, list[int]] = {}  # last known stable units per bay (from the evidence crops)
+        self._counts: dict[int, dict[str, int]] = {}  # and their stable YOLO counts (empty without YOLO)
         self._reported: dict[int, list[int]] = {}  # what the tracker reported per bay on the previous frame
         self._box: tuple[int, int, int, int] | None = None
         self._send = send or self._post
@@ -218,6 +224,7 @@ class ClipRecorder:
             self.session_id = wanted
             self._pending.clear()
             self._units.clear()
+            self._counts.clear()
         x1, y1, x2, y2 = self.box(frame.shape)
         if x2 > x1 and y2 > y1:
             motion = {bay: bool(getattr(st, "motion", False)) for bay, st in status.items()}
@@ -231,16 +238,20 @@ class ClipRecorder:
             bay = int(crop.bay)
             before = self._units.get(bay, previous.get(bay, []))
             after = [int(u) for u in crop.units]
+            counts_before = self._counts.get(bay, {})
+            counts_after = {str(k): int(v) for k, v in (getattr(crop, "yolo_counts", None) or {}).items()}
             self._units[bay] = after
+            self._counts[bay] = counts_after
             if crop.kind != "change" or bay not in self.bays:
                 continue
             pending = self._pending.get(bay)
             if pending is not None and int(crop.ts_ms) <= pending.end_ts:  # a second change inside the window
                 pending.end_ts = int(crop.ts_ms) + self.post_ms
                 pending.units_after = after
+                pending.counts_after = counts_after
             else:
                 self._pending[bay] = Pending(self.session_id, bay, self.skus.get(bay, ""), int(crop.ts_ms),
-                                             int(crop.ts_ms) + self.post_ms, before, after)
+                                             int(crop.ts_ms) + self.post_ms, before, after, counts_before, counts_after)
         done = []
         for bay, pending in list(self._pending.items()):
             if ts_ms < pending.end_ts:
@@ -262,7 +273,8 @@ class ClipRecorder:
         if not samples:
             return None
         return Clip(p.session_id, p.bay, p.sku, p.change_ts, start_ts, p.end_ts, list(p.units_before),
-                    list(p.units_after), self.ring.fps, samples, motion_periods(samples, p.bay, self.ring.period_ms))
+                    list(p.units_after), self.ring.fps, samples, motion_periods(samples, p.bay, self.ring.period_ms),
+                    dict(p.counts_before), dict(p.counts_after))
 
     def save(self, clip: Clip) -> tuple[Path, list[Path]]:
         """Write the MP4 and its keyframes. Returns (mp4 path, keyframe paths)."""
@@ -294,6 +306,7 @@ class ClipRecorder:
                           for i, (k, index) in enumerate(zip(keys, indexes))],
             "change_ts": clip.change_ts, "starts_ts": clip.samples[0].ts_ms, "ends_ts": clip.samples[-1].ts_ms,
             "units_before": clip.units_before, "units_after": clip.units_after,
+            "counts_before": dict(clip.counts_before), "counts_after": dict(clip.counts_after),
             "motion": [[a, b] for a, b in clip.motion],
             "width": w, "height": h, "fps": clip.fps, "frames": len(clip.samples),
         }

@@ -90,6 +90,10 @@ class EvidenceNotice(BaseModel):
     height: int
     units: list[int] = []  # unit tag ids in the bay at that moment
     tags: dict[str, list[float]] = {}  # tag id -> [x, y, w, h] in crop pixels
+    # Tag free mode (vision.mode "yolo"), optional: the bay's stable YOLO counts and every YOLO box in the crop,
+    # sku -> [[x, y, w, h, conf], ...] in crop pixels. The dispute outline comes from these when tags are absent.
+    yolo_counts: dict[str, int] = {}
+    boxes: dict[str, list[list[float]]] = {}
 
 
 _check_internal_token = evidence.check_internal_token
@@ -112,20 +116,26 @@ def evidence_notice(body: EvidenceNotice, request: Request):
         raise ApiError(404, "file_missing", "The crop is not on disk.")
     tags = {str(int(k)): [round(float(v), 1) for v in box[:4]] for k, box in body.tags.items()
             if k.lstrip("-").isdigit() and len(box) >= 4}
+    yolo = {
+        "counts": {k: int(v) for k, v in body.yolo_counts.items() if k in settings.skus and int(v) > 0},
+        "boxes": {k: [[round(float(v), 1) for v in b[:4]] + [round(float(b[4]), 3) if len(b) > 4 else 0.0]
+                      for b in boxes if len(b) >= 4]
+                  for k, boxes in body.boxes.items() if k in settings.skus},
+    }
     captured = datetime.fromtimestamp(body.ts / 1000, tz=timezone.utc)
     conn = db.connect()
     try:
         conn.execute(
             "INSERT INTO evidence (store_session_id, bay, kind, file, captured_at, width, height, units_json, "
-            "tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "tags_json, yolo_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (body.session_id, body.bay, body.kind, body.file,
              captured.isoformat(timespec="milliseconds").replace("+00:00", "Z"), body.width, body.height,
-             json.dumps(sorted(set(body.units))), json.dumps(tags), db.now_iso()))
+             json.dumps(sorted(set(body.units))), json.dumps(tags), json.dumps(yolo), db.now_iso()))
         conn.commit()
     finally:
         conn.close()
     eventlog.log("evidence_saved", session_id=body.session_id, bay=body.bay, kind=body.kind, file=body.file,
-                 units=sorted(set(body.units)))
+                 units=sorted(set(body.units)), yolo_counts=yolo["counts"])
     return {"ok": True}
 
 
@@ -134,9 +144,49 @@ def crops(session_id: str, bay: int) -> list[dict[str, Any]]:
     try:
         rows = conn.execute("SELECT * FROM evidence WHERE store_session_id = ? AND bay = ? ORDER BY captured_at, id",
                             (session_id, bay)).fetchall()
-        return [{**dict(r), "units": json.loads(r["units_json"]), "tags": json.loads(r["tags_json"])} for r in rows]
+        return [_crop_row(r) for r in rows]
     finally:
         conn.close()
+
+
+def _crop_row(r: Any) -> dict[str, Any]:
+    d = dict(r)
+    d["units"] = json.loads(d["units_json"])
+    d["tags"] = json.loads(d["tags_json"])
+    yolo = json.loads(d.get("yolo_json") or "null") or {}
+    d["yolo_counts"] = {k: int(v) for k, v in (yolo.get("counts") or {}).items()}
+    d["boxes"] = {k: [list(b) for b in v] for k, v in (yolo.get("boxes") or {}).items()}
+    return d
+
+
+def _box_overlap(a: list[float], b: list[float]) -> float:
+    """Intersection over union of two [x, y, w, h] boxes."""
+    ax2, ay2, bx2, by2 = a[0] + a[2], a[1] + a[3], b[0] + b[2], b[1] + b[3]
+    iw, ih = max(0.0, min(ax2, bx2) - max(a[0], b[0])), max(0.0, min(ay2, by2) - max(a[1], b[1]))
+    inter = iw * ih
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _fractions(box: list[float], row: dict[str, Any]) -> dict[str, float] | None:
+    if row["width"] <= 0 or row["height"] <= 0:
+        return None
+    x, y, w, h = box[:4]
+    return {"x": round(x / row["width"], 4), "y": round(y / row["height"], 4),
+            "w": round(w / row["width"], 4), "h": round(h / row["height"], 4)}
+
+
+def yolo_outline(rows: list[dict[str, Any]], now: dict[str, Any], sku: str) -> dict[str, float] | None:
+    """Tag free mode: the last known box of the unit that went missing, as fractions of its crop. It is the box
+    in the newest crop that had more boxes of that SKU than the latest crop, least overlapping the boxes the
+    latest crop still shows. None when no crop of that SKU has more boxes than the latest one."""
+    now_boxes = now.get("boxes", {}).get(sku, [])
+    for r in reversed(rows):
+        boxes = r.get("boxes", {}).get(sku, [])
+        if len(boxes) > len(now_boxes):
+            gone = min(boxes, key=lambda b: max((_box_overlap(b, o) for o in now_boxes), default=0.0))
+            return _fractions(gone, r)
+    return None
 
 
 def home_bay(sku: str) -> int:
@@ -148,10 +198,12 @@ def home_bay(sku: str) -> int:
 
 def build_evidence(session_id: str, sku: str) -> dict[str, Any]:
     """The baseline crop and the latest crop of the SKU's home bay, and the missing unit's last known outline
-    (fractions of the crop, from the newest crop that still saw its tag). Photos are None when none were saved."""
+    (fractions of the crop): from the newest crop that still saw its tag, or, without tags (vision.mode "yolo"),
+    from the YOLO box that disappeared (yolo_outline). Photos are None when none were saved."""
     bay = home_bay(sku)
     rows = crops(session_id, bay)
-    out: dict[str, Any] = {"bay": bay, "card": bay + 1, "tag_id": None, "before": None, "now": None, "outline": None}
+    out: dict[str, Any] = {"bay": bay, "card": bay + 1, "tag_id": None, "before": None, "now": None, "outline": None,
+                           "outline_from": None}
     if not rows:
         return out
     before = next((r for r in rows if r["kind"] == "baseline"), rows[0])
@@ -162,10 +214,14 @@ def build_evidence(session_id: str, sku: str) -> dict[str, Any]:
     if missing:
         out["tag_id"] = missing[0]
         seen = next((r for r in reversed(rows) if str(missing[0]) in r["tags"]), None)
-        if seen is not None and seen["width"] > 0 and seen["height"] > 0:
-            x, y, w, h = seen["tags"][str(missing[0])]
-            out["outline"] = {"x": round(x / seen["width"], 4), "y": round(y / seen["height"], 4),
-                              "w": round(w / seen["width"], 4), "h": round(h / seen["height"], 4)}
+        if seen is not None:
+            out["outline"] = _fractions(seen["tags"][str(missing[0])], seen)
+            out["outline_from"] = "tag" if out["outline"] else None
+    if out["outline"] is None:
+        out["outline"] = yolo_outline(rows, now, sku)
+        out["outline_from"] = "yolo" if out["outline"] else None
+    out["count_before"] = before["yolo_counts"].get(sku, 0) or len([t for t in before["units"] if t in sku_units])
+    out["count_now"] = now["yolo_counts"].get(sku, 0) or len([t for t in now["units"] if t in sku_units])
     for key, row in (("before", before), ("now", now)):
         out[key] = {"file": row["file"], "path": f"data/evidence/{session_id}/{row['file']}",
                     "captured_at": row["captured_at"]}

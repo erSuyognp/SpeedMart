@@ -179,7 +179,7 @@ demo tools) have no flag and can't be turned off.
 | `stripe` | F10: Stripe test-mode charge | `true` | Mock payment provider only |
 | `llm` | F11: LLM phrasing of the agent line, and F18: the intent planner | `true` | Template agent lines and a keyword intent planner (also the case when no API key is set) |
 | `hardware_leds` | F12: the gate screen over USB serial (the name predates the LED-free build) | `true` | No serial; the shelf maps still glow |
-| `yolo` | F13: YOLO detection fused with tags | `false` | Tags only |
+| `yolo` | F13: YOLO detection; `vision.mode` picks `tags`, `fusion` (tags + YOLO, default) or `yolo` (no tags at all: counts, stability, misplaced items and dispute outlines from YOLO boxes) | `false` | Tags only, whatever `vision.mode` says |
 | `https_tunnel` | F14: ngrok static domain | `true` | LAN http only (needs `passkeys` off) |
 | `loyalty` | F15: points on the receipt | `true` | No points |
 | `load_cells` | F16: HX711 load cells | `false` | Default |

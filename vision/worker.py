@@ -13,6 +13,10 @@ Per bay motion (9.2, vision/motion.py) and stability (9.3, StabilityTracker belo
 it has been motion free for vision.motion_settle_ms and its contents held for vision.stable_ms
 (additions) or vision.stable_remove_ms (removals). Unstable bays report their last stable contents.
 features.motion_freeze false turns the motion part off; stability timing still applies.
+
+config.json vision.mode (vision/fusion.py): "tags" (ArUco only), "fusion" (tags + YOLO, the default) or
+"yolo" (no tags at all: ArUco detection is skipped, every bay's units list is empty and YOLO counts drive
+stability, the snapshot, the evidence crops and the clips). The overlay's top line names the mode.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from vision.aruco_detect import TagDetector, assign_to_bays
 from vision.camera import CameraError, open_camera, save_section_settings
 from vision.clips import ClipRecorder, clips_url
 from vision.evidence import EvidenceRecorder, evidence_url
+from vision.fusion import configured_mode, effective_mode
 from vision.motion import MotionDetector
 from vision.overlay import draw_overlay
 from vision.yolo_detect import YoloDetector, load_yolo
@@ -228,14 +233,21 @@ def save_motion_tuning(motion: MotionDetector | None, path: Path | None = None) 
 
 
 def start_yolo(config: dict, catalog: dict, loader=load_yolo) -> tuple[YoloDetector | None, str]:
-    """(detector or None, overlay status text). None when features.yolo is false, or when ultralytics or
-    the model file is missing (loader logs one warning); the worker then runs exactly as with YOLO off."""
-    if not config.get("features", {}).get("yolo", False):
+    """(detector or None, overlay status text). None when features.yolo is false or vision.mode is "tags", or
+    when ultralytics or the model file is missing (loader logs one warning); the worker then runs exactly as
+    with YOLO off (tags only, even when vision.mode asked for "yolo": effective_mode warns about that)."""
+    if not config.get("features", {}).get("yolo", False) or configured_mode(config) == "tags":
         return None, ""
     detector = loader(config, catalog)
     if detector is None:
         return None, "YOLO unavailable (see log), tags only"
-    return detector, f"YOLO on ({detector.device}, every {detector.every_n})"
+    what = "YOLO only, tags off" if configured_mode(config) == "yolo" else "YOLO on"
+    return detector, f"{what} ({detector.device}, every {detector.every_n})"
+
+
+def empty_bays(bays: list[dict]) -> dict[int, list[int]]:
+    """per_bay for a frame in which no tag was looked for (vision.mode "yolo")."""
+    return {int(b["id"]): [] for b in bays}
 
 
 # --- snapshot (8.2) -----------------------------------------------------------------------------
@@ -392,10 +404,19 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
         print("INTERNAL_TOKEN is not set in .env; the backend would reject every snapshot.", file=sys.stderr)
         return 1
 
-    detector = TagDetector(vision["aruco_dict"], (u["tag_id"] for u in catalog["units"]),
-                           clahe=bool(vision.get("clahe", True)))
+    try:
+        configured_mode(config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     tracker = tracker or StabilityTracker.from_config(config)
     yolo, yolo_status = start_yolo(config, catalog)
+    mode = effective_mode(config, yolo is not None)
+    # Tag free mode never builds the ArUco detector: nothing on the shelf carries a tag.
+    detector = None if mode == "yolo" else TagDetector(vision["aruco_dict"], (u["tag_id"] for u in catalog["units"]),
+                                                        clahe=bool(vision.get("clahe", True)))
+    no_tags = empty_bays(bays)
+    log.info("vision mode: %s (config vision.mode %s)", mode, configured_mode(config))
     motion = getattr(tracker, "motion", None)
     interval = 1.0 / float(vision.get("snapshot_hz", 5))
     url = shelf_url(backend)
@@ -440,15 +461,19 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                     frame = cv2.resize(frame, (width, height))
                 now = time.monotonic()
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                detections = detector.detect(gray)
-                per_bay, loose = assign_to_bays(detections, bays)
+                if detector is not None:
+                    detections = detector.detect(gray)
+                    per_bay, loose = assign_to_bays(detections, bays)
+                else:
+                    detections, per_bay, loose = [], {b: list(u) for b, u in no_tags.items()}, []
                 yolo_result = yolo.update(frame) if yolo is not None else None
                 status = tracker.update(gray, per_bay, now,
                                         yolo_counts=None if yolo_result is None else yolo_result.per_bay)
                 fps = fps_meter.tick(now)
                 ts_ms = int(time.time() * 1000)
                 if evidence is not None:
-                    crops = evidence.update(frame, status, detections, ts_ms=ts_ms, per_bay=per_bay)
+                    crops = evidence.update(frame, status, detections, ts_ms=ts_ms, per_bay=per_bay,
+                                            yolo_boxes=None if yolo_result is None else yolo_result.boxes)
                     clips.update(frame, status, crops, ts_ms)
 
                 if not paused and now >= next_post:
@@ -461,8 +486,9 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                     state = "PAUSED" if paused else {True: "backend OK", False: "backend unreachable",
                                                      None: "no post yet"}[backend_ok]
                     unstable = [b for b, st in status.items() if not st.stable]
-                    log.info("%.1f fps (camera %.1f)  bays %s  unstable %s  loose %s  %s", fps, camera.measured_fps,
-                             dict(per_bay), unstable or "-", loose, state)
+                    shown = {b: dict(st.yolo_counts or {}) for b, st in status.items()} if mode == "yolo" else dict(per_bay)
+                    log.info("%s  %.1f fps (camera %.1f)  bays %s  unstable %s  loose %s  %s", mode, fps,
+                             camera.measured_fps, shown, unstable or "-", loose, state)
 
                 if not show_window:
                     continue
@@ -471,7 +497,7 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                     loose=loose, status=status, fps=fps, camera_fps=camera.measured_fps, backend_ok=backend_ok,
                     last_post_age_ms=age_ms, paused=paused, motion=motion,
                     yolo_boxes=None if yolo_result is None else yolo_result.boxes, yolo_status=yolo_status,
-                    message=message if now < message_until else "",
+                    mode=mode, message=message if now < message_until else "",
                 ))
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):

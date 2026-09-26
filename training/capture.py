@@ -9,6 +9,7 @@ if the camera delivers another size, same as the worker.
 Keys:
     space   toggle auto save (one frame every --interval seconds, default 0.5)
     s       save one frame now
+    e       toggle "empty shelf" marking: frames saved while it is on count as empty shelf frames
     q/Esc   quit
 
 Images go to training/raw/<YYYYmmdd-HHMMSS>/ (one folder per run, created on the first save) as JPEG.
@@ -16,6 +17,9 @@ The overlay (bay boxes, counters) is drawn on the preview only, never on the sav
 
 The counter also tracks how many saved frames had NO ArUco tag visible. At least half the dataset must
 have the tags covered or removed, otherwise YOLO learns the tags instead of the products (TRAINING.md).
+With config.json vision.mode "yolo" (tag free store) every frame must be tag free: the preview shows the
+reminder "No tags: remove all tags before capturing" and wants 100 % of frames without tags. About 10 %
+of the frames should show an empty shelf (press e while you clear the bays); the counter shows the share.
 """
 
 from __future__ import annotations
@@ -45,6 +49,8 @@ DEFAULT_OUT = ROOT / "training" / "raw"
 DEFAULT_INTERVAL_S = 0.5
 JPEG_QUALITY = 95
 TARGET_MIN, TARGET_MAX = 250, 400
+EMPTY_SHARE_TARGET = 0.10  # about one frame in ten shows an empty shelf
+NO_TAGS_REMINDER = "No tags: remove all tags before capturing"
 WINDOW = "SpeedMart capture"
 
 log = logging.getLogger("training.capture")
@@ -68,6 +74,10 @@ class CaptureSession:
     auto: bool = False
     saved: int = 0
     saved_without_tags: int = 0
+    # vision.mode from config.json: "yolo" is the tag free store, where every frame must be free of tags
+    mode: str = "fusion"
+    empty: bool = False  # "empty shelf" marking on (key e): frames saved now are empty shelf frames
+    saved_empty: int = 0
     _next_auto: float = field(default=0.0, repr=False)
 
     @property
@@ -78,6 +88,19 @@ class CaptureSession:
         self.auto = not self.auto
         self._next_auto = now  # first auto frame right away
         return self.auto
+
+    def toggle_empty(self) -> bool:
+        self.empty = not self.empty
+        return self.empty
+
+    @property
+    def tag_free(self) -> bool:
+        """True in the tag free store (vision.mode "yolo"): no saved frame may show a tag."""
+        return self.mode == "yolo"
+
+    @property
+    def no_tag_target(self) -> float:
+        return 1.0 if self.tag_free else 0.5
 
     def auto_due(self, now: float) -> bool:
         """True when auto save is on and the next frame is due; schedules the one after."""
@@ -101,11 +124,17 @@ class CaptureSession:
         self.saved += 1
         if tags_visible == 0:
             self.saved_without_tags += 1
+        if self.empty:
+            self.saved_empty += 1
         return path
 
     @property
     def no_tag_share(self) -> float:
         return self.saved_without_tags / self.saved if self.saved else 0.0
+
+    @property
+    def empty_share(self) -> float:
+        return self.saved_empty / self.saved if self.saved else 0.0
 
 
 def draw_capture_overlay(frame: np.ndarray, bays: list[dict], session: CaptureSession, tags_visible: int,
@@ -125,17 +154,27 @@ def draw_capture_overlay(frame: np.ndarray, bays: list[dict], session: CaptureSe
 
     count_color = (0, 200, 0) if session.saved >= TARGET_MIN else (255, 255, 255)
     text(f"saved {session.saved}  (target {TARGET_MIN}-{TARGET_MAX})", (10, 30), count_color, 0.8)
-    share_ok = session.saved == 0 or session.no_tag_share >= 0.5
-    text(f"no tags visible: {session.saved_without_tags}/{session.saved} ({session.no_tag_share:.0%}, want >= 50%)",
+    want = session.no_tag_target
+    share_ok = session.saved == 0 or session.no_tag_share >= want
+    text(f"no tags visible: {session.saved_without_tags}/{session.saved} ({session.no_tag_share:.0%}, want >= {want:.0%})",
          (10, 62), (0, 200, 0) if share_ok else (0, 140, 255), 0.65)
-    text(f"tags visible now: {tags_visible}   {fps:4.1f} fps", (10, 92), (255, 255, 255), 0.6)
+    empty_ok = session.saved < 10 or session.empty_share >= EMPTY_SHARE_TARGET
+    text(f"empty shelf frames: {session.saved_empty}/{session.saved} ({session.empty_share:.0%}, want ~{EMPTY_SHARE_TARGET:.0%})"
+         + ("   [EMPTY SHELF marking ON]" if session.empty else ""),
+         (10, 92), (0, 200, 0) if empty_ok else (0, 140, 255), 0.65)
+    text(f"tags visible now: {tags_visible}   {fps:4.1f} fps", (10, 122), (255, 255, 255), 0.6)
+    y = 152
+    if session.tag_free:
+        # tag free store (vision.mode "yolo"): the reminder stays on screen, red while a tag is in view
+        text(NO_TAGS_REMINDER, (10, y), (0, 0, 255) if tags_visible else (0, 220, 255), 0.7)
+        y += 30
     if session.auto:
         cv2.circle(view, (view.shape[1] - 30, 30), 12, (0, 0, 255), -1)
         text(f"AUTO every {session.interval_s:g} s", (view.shape[1] - 250, 38), (0, 0, 255), 0.7)
     if message:
-        text(message, (10, 124), (0, 220, 255), 0.6)
+        text(message, (10, y), (0, 220, 255), 0.6)
     text(f"folder {session.folder}", (10, h - 40), (200, 200, 200), 0.5)
-    text("space auto save on/off | s save one | q quit", (10, h - 12), (255, 255, 255), 0.6)
+    text("space auto save on/off | s save one | e empty shelf on/off | q quit", (10, h - 12), (255, 255, 255), 0.6)
     return view
 
 
@@ -149,15 +188,18 @@ def run(out_root: Path, interval_s: float) -> int:
     bays = config["bays"]
     detector = TagDetector(config["vision"]["aruco_dict"], (u["tag_id"] for u in catalog["units"]),
                            clahe=bool(config["vision"].get("clahe", True)))
-    session = CaptureSession(out_root, session_name(datetime.now()), interval_s)
+    mode = str(config["vision"].get("mode", "fusion"))
+    session = CaptureSession(out_root, session_name(datetime.now()), interval_s, mode=mode)
     try:
         camera = open_camera(config)
     except CameraError as exc:
         print(f"Camera error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Capture ready. Images go to {session.folder}")
-    print("Keys: space = auto save on/off, s = save one frame, q = quit")
+    print(f"Capture ready. Images go to {session.folder}  (vision.mode {mode})")
+    if session.tag_free:
+        print(NO_TAGS_REMINDER)
+    print("Keys: space = auto save on/off, s = save one frame, e = empty shelf marking on/off, q = quit")
     message, message_until = "", 0.0
     stamps: list[float] = []
     try:
@@ -182,12 +224,17 @@ def run(out_root: Path, interval_s: float) -> int:
                     print(message)
                 elif key == ord("s"):
                     save_now = True
+                elif key == ord("e"):
+                    on = session.toggle_empty()
+                    message, message_until = f"empty shelf marking {'ON' if on else 'OFF'}", now + 3.0
+                    print(message)
                 if save_now or session.auto_due(now):
                     path = session.save(frame, tags_visible)
                     if save_now:
                         message, message_until = f"saved {path.name}", now + 2.0
                     if session.saved % 25 == 0 or save_now:
-                        print(f"{session.saved} frames saved ({session.saved_without_tags} without tags)")
+                        print(f"{session.saved} frames saved ({session.saved_without_tags} without tags, "
+                              f"{session.saved_empty} empty shelf)")
 
                 cv2.imshow(WINDOW, draw_capture_overlay(frame, bays, session, tags_visible, fps,
                                                         message if now < message_until else ""))
@@ -201,7 +248,11 @@ def run(out_root: Path, interval_s: float) -> int:
     finally:
         cv2.destroyAllWindows()
     print(f"Done: {session.saved} frames in {session.folder if session.saved else '(nothing saved)'}; "
-          f"{session.saved_without_tags} without visible tags ({session.no_tag_share:.0%}).")
+          f"{session.saved_without_tags} without visible tags ({session.no_tag_share:.0%}); "
+          f"{session.saved_empty} empty shelf ({session.empty_share:.0%}).")
+    if session.tag_free and session.saved_without_tags < session.saved:
+        print(f"WARNING: {session.saved - session.saved_without_tags} frames show a tag. vision.mode is yolo: "
+              f"delete them or recapture without tags (TRAINING.md, tag free capture).")
     return 0
 
 
