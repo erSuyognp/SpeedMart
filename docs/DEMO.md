@@ -1,5 +1,9 @@
 # SpeedMart demo script (about 2 minutes)
 
+Visa's framework is Discover, Decide, Transact, Continue. The agent line and the planner cover Discover, the live
+cart and the permissions card cover Decide, Face ID on a scoped token covers Transact, and the camera-verified
+return covers Continue.
+
 ## Pre-judge reset checklist
 
 Run through this before **every** judge.
@@ -20,6 +24,7 @@ Run through this before **every** judge.
 - [ ] **Voice:** on the demo phone, `intent.html` shows **Talk to SpeedMart**. One test tap: it greets by name. Then
       tap **Start over** so the bays stop glowing on the kiosk map. (If it's down, the typed box is the fallback.)
 - [ ] **Stripe:** admin health shows `test` (or mock). **Force-decline is OFF.**
+- [ ] **No return open:** the admin Cart panel does not say "returning" (Reset clears it).
 - [ ] **Backup phone:** team phone logged in as Demo Shopper, charged, screen on, in case the judge's phone
       fails.
 - [ ] **QR codes:** 1 · JOIN, 2 · ENTER, 3 · EXIT printed or on the tablet, in that order on the table.
@@ -44,15 +49,25 @@ Run through this before **every** judge.
 5. **Pick (15 s):** the judge takes the electrolytes from bay 1. Point at the overlay, then at the phone: the
    row appears, the gate screen total goes up, and the agent line suggests the recovery drink.
 6. **Put back (10 s):** put it back and the row disappears. "It reads the shelf, not a script."
-7. **Real cart (10 s):** take the electrolytes and a protein bar. Show the budget bar.
-8. **Exit (15 s):** scan QR 3. Open "What the payment network sees": a scoped, single-use agent token and the
-   intent sentence. Approve with Face ID. The gate screen shows APPROVED. The receipt shows the auth code and
-   points.
-9. **Close (10 s):** "The shelf agent assembled the cart. The shopper authorized it. Agentic commerce you can
-   hold."
+7. **Real cart (10 s):** take the electrolytes and a protein bar. Show the budget bar. Tap **Your agent's
+   permissions** on the cart page: what the agent can do, what only the judge can do, and what never happens.
+   The $ limit on it is the judge's own budget.
+8. **Exit (15 s):** scan QR 3. The permissions card is open at the top of the approval. Open "What the payment
+   network sees": a scoped, single-use agent token and the intent sentence. Approve with Face ID. The gate screen
+   shows APPROVED. The receipt shows the auth code, points, "In and out in N seconds" and "1 tap to pay".
+9. **Return (15 s):** "Changed your mind? Put it back." On the receipt tap **Return an item**, Face ID, then put
+   the protein bar back on its bay. The phone lists it as it lands; tap **Confirm refund**. The gate screen shows
+   REFUNDED and the agent says the refund is on its way to the Visa ending 4242. The receipt now has a "Refunded"
+   line with the refund id.
+10. **Close (10 s):** "The shelf agent assembled the cart. The shopper authorized it, and the shelf proved the
+    return. Agentic commerce you can hold."
 
 If vision misbehaves, a teammate uses the admin override. If a judge asks, say plainly that it's the manual
 fallback.
+
+If the return misbehaves, tap **Cancel return** (nothing is refunded) and move on; admin **Reset** also ends it.
+The admin page's **Results today** card shows sessions, average time in store, exit scan to approval, and
+refunds, if a judge asks for numbers.
 
 If gates are still off on demo day, steps 3 and 8 use the **Start shopping** and **Checkout** buttons on the store
 page instead of QR 2 and QR 3. Everything else is the same.
@@ -68,4 +83,6 @@ page instead of QR 2 and QR 3. Everything else is the same.
 | Two shoppers? | Store lock: one shopper inside at a time. Multiple shoppers would need per-person association, which is future work. |
 | What does the AI actually do? | A deterministic policy decides (budget, complements, misplaced items) and the LLM phrases it for the shopper. The LLM's line is checked (one line, 25 words max, no emoji, only our product names and prices). If the LLM is down or says something off, templates keep it working. |
 | How accurate is detection? | Tags give identity, and motion freeze prevents hand flicker. If it's on, YOLO covers tags that are hidden. Show the 10/10 test. |
+| How do you know the item was really returned? | The camera confirms it on the shelf. A refund only counts units whose shelf count went up after the return started, never more than you bought, and anything else is shown as "not from this purchase". The refund is exactly those items plus their tax, on the original payment. |
+| What can the AI do on its own? | Point at the permissions card. The agent can see the shelf, suggest items and build your cart. Only you can approve a payment with Face ID, go over your budget, or request a refund. Never: your face data leaving your phone, a reusable payment token, or a charge without your approval. |
 | Can the voice agent make things up? | The voice agent can only act through the store's own tools, so it can't invent products or prices. It reads the catalog, asks the store's planner (which checks stock and budget) and reads the live cart. The ElevenLabs key stays on our server; the phone only gets a 15-minute signed link. |

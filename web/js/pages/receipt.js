@@ -1,14 +1,27 @@
-// Page script for receipt.html?s=<session_id> (11.5): paid receipt, auth code, points, payment record.
-// Everything shown comes from GET /api/receipt/{session_id}.
+// Page script for receipt.html?s=<session_id> (11.5): paid receipt, auth code, points, payment record, measured
+// results, and the Continue stage: "Return an item" within 30 minutes (Face ID, then put it back on the shelf and
+// the camera confirms it). Everything shown comes from GET /api/receipt/{session_id} and the returns routes;
+// the page never works out a refund itself.
 
 (function () {
   const $ = (id) => document.getElementById(id);
   const sessionId = new URLSearchParams(location.search).get("s") || "";
+  let cfg = { features: {} };
+  let returning = null; // ReturnSnapshot while a return for this visit is open
+  let timer = null;
+  let finishing = false; // confirm sent: the socket's session messages are expected, not news
+
+  const passkeysOn = () => !!cfg.features.passkeys;
 
   function time(iso) {
     try {
       return new Date(iso).toLocaleString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" });
     } catch (e) { return iso; }
+  }
+
+  function clock(iso) {
+    try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+    catch (e) { return iso; }
   }
 
   function fail(title, text) {
@@ -19,7 +32,63 @@
     $("meta").textContent = text || "";
   }
 
-  function render(r, cfg) {
+  function row(name, qty, line) {
+    const li = document.createElement("li");
+    li.className = "cart-row";
+    li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
+    li.querySelector(".name").textContent = name;
+    li.querySelector(".qty").textContent = qty;
+    li.querySelector(".line").textContent = line;
+    return li;
+  }
+
+  function renderResults(r) {
+    const box = $("results");
+    box.replaceChildren();
+    if (!r.paid || r.in_and_out_s === null || r.in_and_out_s === undefined) { box.hidden = true; return; }
+    const chips = ["In and out in " + r.in_and_out_s + (r.in_and_out_s === 1 ? " second" : " seconds"),
+      r.approvals + (r.approvals === 1 ? " tap to pay" : " taps to pay")];
+    chips.forEach((text) => {
+      const chip = document.createElement("span");
+      chip.className = "result-chip";
+      chip.textContent = text;
+      box.appendChild(chip);
+    });
+    box.hidden = false;
+  }
+
+  function renderRefunds(refunds) {
+    const box = $("refunds");
+    box.replaceChildren();
+    (refunds || []).forEach((f) => {
+      const strip = document.createElement("section");
+      strip.className = "strip ok";
+      const main = document.createElement("p");
+      main.textContent = "Refunded " + api.money(f.amount_usd) + " for " + f.items_text;
+      const sub = document.createElement("p");
+      sub.className = "small";
+      const provider = f.provider === "stripe_test" ? "Stripe test mode" : "sandbox mock";
+      sub.textContent = "Refund " + (f.provider_ref || f.refund_id) + " · " + provider +
+        (f.points_removed ? " · −" + f.points_removed + " points" : "");
+      strip.append(main, sub);
+      box.appendChild(strip);
+    });
+    box.hidden = !box.children.length;
+  }
+
+  function renderOffer(r) {
+    const ret = r.return || {};
+    const show = r.paid && !returning && (ret.eligible || ret.reason === "return_window_closed");
+    $("return-offer").hidden = !show;
+    if (!show) return;
+    $("return-btn").hidden = !ret.eligible;
+    $("return-note").textContent = ret.eligible
+      ? "Put it back on the shelf and get a refund. Returns close at " + clock(ret.deadline) + "."
+      : ret.message;
+    if (ret.eligible && passkeysOn()) passkey.prefetch("login", "return");
+  }
+
+  function render(r) {
     const p = r.payment;
     const loyalty = !!(cfg.features.loyalty && r.loyalty);
     if (!r.paid) {
@@ -35,35 +104,160 @@
       $("points").hidden = !loyalty;
       $("points").textContent = "+" + r.points_earned + " points · " + r.points_total + " total";
     }
+    renderResults(r);
+    renderRefunds(r.refunds);
 
     $("items-card").hidden = r.items.length === 0;
     $("store-name").textContent = r.store_name || "Items";
     $("items").innerHTML = "";
-    r.items.forEach((item) => {
-      const li = document.createElement("li");
-      li.className = "cart-row";
-      li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
-      li.querySelector(".name").textContent = item.name;
-      li.querySelector(".qty").textContent = "× " + item.qty;
-      li.querySelector(".line").textContent = api.money(item.line_total_usd);
-      $("items").appendChild(li);
-    });
+    r.items.forEach((item) => $("items").appendChild(row(item.name, "× " + item.qty, api.money(item.line_total_usd))));
     $("subtotal").textContent = api.money(r.subtotal_usd);
     $("tax").textContent = api.money(r.tax_usd);
     $("total").textContent = api.money(r.total_usd);
 
     $("record").hidden = !p;
-    if (p) $("record-json").textContent = JSON.stringify(p, null, 2);
+    if (p) $("record-json").textContent = JSON.stringify({ payment: p, refunds: r.refunds || [] }, null, 2);
+    renderOffer(r);
+  }
+
+  async function loadReceipt() {
+    render(await api.get("/api/receipt/" + encodeURIComponent(sessionId)));
+  }
+
+  // --- the return (RETURNING session) ---
+
+  function setReturnMode(on) {
+    $("return-panel").hidden = !on;
+    $("confirm-refund").hidden = !on;
+    $("cancel-return").hidden = !on;
+    $("done").hidden = on;
+    $("paid-card").hidden = on; // the instruction goes to the top of the screen
+    ["items-card", "record"].forEach((id) => { if (on) $(id).hidden = true; });
+    if (on) $("return-offer").hidden = true;
+    clearInterval(timer);
+    if (on) timer = setInterval(tick, 1000);
+  }
+
+  function tick() {
+    if (!returning) return;
+    const left = Math.max(0, Math.round((Date.parse(returning.expires_at) - Date.now()) / 1000));
+    $("return-timer").textContent = left > 0
+      ? "Time left " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + "."
+      : "Time's up.";
+    if (left === 0) $("confirm-refund").disabled = true;
+  }
+
+  function renderReturn(snap) {
+    returning = snap;
+    setReturnMode(true);
+    $("return-items").replaceChildren();
+    snap.items.forEach((i) => $("return-items").appendChild(row(i.name, "× " + i.qty, api.money(i.line_total_usd))));
+    $("return-empty").hidden = snap.items.length > 0;
+    $("return-ignored").replaceChildren();
+    snap.ignored.forEach((i) => $("return-ignored").appendChild(row(i.name, "× " + i.qty, i.message)));
+    $("return-subtotal").textContent = api.money(snap.subtotal_usd);
+    $("return-tax").textContent = api.money(snap.tax_usd);
+    $("return-total").textContent = api.money(snap.total_usd);
+    $("return-from").textContent = snap.returnable.length
+      ? "Refundable from this visit: " + snap.returnable.map((i) => i.qty + " " + i.name).join(", ") + "."
+      : "";
+    const btn = $("confirm-refund");
+    btn.textContent = snap.items.length ? "Confirm refund " + api.money(snap.total_usd) : "Confirm refund";
+    btn.disabled = snap.items.length === 0;
+    tick();
+  }
+
+  async function endReturn(message) {
+    returning = null;
+    setReturnMode(false);
+    if (message) api.toast(message);
+    try { await loadReceipt(); } catch (e) { api.toast(e.message); }
+  }
+
+  async function onReturn(ev) {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    $("return-error").hidden = true;
+    try {
+      if (passkeysOn()) await passkey.signIn("return"); // Face ID straight from the tap, same rule as the exit
+      const res = await api.post("/api/returns/start", { session_id: sessionId });
+      $("refund-agent").hidden = true;
+      renderReturn(res.return);
+    } catch (e) {
+      let text = e instanceof api.ApiError ? e.message : passkey.friendlyError(e);
+      if (e.code === "store_occupied") text = "Someone is shopping right now. Try again in a minute.";
+      $("return-error").textContent = text;
+      $("return-error").hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function onConfirm(ev) {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    $("return-panel-error").hidden = true;
+    finishing = true;
+    try {
+      const res = await api.post("/api/returns/confirm");
+      if (res.refund.status !== "SUCCEEDED") {
+        $("return-panel-error").textContent = res.message || "The refund did not go through. Try again.";
+        $("return-panel-error").hidden = false;
+        btn.disabled = false;
+        return;
+      }
+      $("refund-agent").textContent = res.agent_line;
+      $("refund-agent").hidden = false;
+      await endReturn();
+    } catch (e) {
+      $("return-panel-error").textContent = e.message;
+      $("return-panel-error").hidden = false;
+      if (e.code === "return_expired" || e.code === "no_active_return") await endReturn();
+      else btn.disabled = false;
+    } finally {
+      finishing = false;
+    }
+  }
+
+  async function onCancel(ev) {
+    ev.currentTarget.disabled = true;
+    try { await api.post("/api/returns/cancel"); } catch (e) { /* the receipt shows the real state */ }
+    ev.currentTarget.disabled = false;
+    await endReturn("Return cancelled. Nothing was refunded.");
+  }
+
+  async function syncReturn() {
+    try {
+      const res = await api.get("/api/returns/current");
+      const snap = res.return;
+      if (snap && snap.original_session_id === sessionId) renderReturn(snap);
+      else if (returning && !finishing) await endReturn("Your return has ended.");
+    } catch (e) { /* signed out: the receipt call already explained */ }
+  }
+
+  function onMessage(msg) {
+    if (msg.type === "return" && msg.data.original_session_id === sessionId) {
+      renderReturn(msg.data);
+    } else if (msg.type === "gate" && msg.data.event === "cancelled" && returning) {
+      endReturn("The return timed out. Nothing was refunded.");
+    }
   }
 
   async function init() {
     if (!sessionId) { fail("No receipt", "This link is missing the visit id."); return; }
+    $("return-btn").addEventListener("click", onReturn);
+    $("confirm-refund").addEventListener("click", onConfirm);
+    $("cancel-return").addEventListener("click", onCancel);
     try {
-      const cfg = await api.config();
-      render(await api.get("/api/receipt/" + encodeURIComponent(sessionId)), cfg);
+      cfg = await api.config();
+      if (passkeysOn()) passkey.load();
+      await loadReceipt();
     } catch (e) {
       fail("Can't show this receipt", e.message);
+      return;
     }
+    await syncReturn(); // reopened mid-return: pick it up again
+    connectSocket({ onMessage, onResync: syncReturn });
   }
 
   init();

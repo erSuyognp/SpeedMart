@@ -3,7 +3,7 @@
 //
 // Protocol (9.7), newline-terminated ASCII, unchanged:
 //   in:  DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
-//        DISP,DECLINED | DISP,OCCUPIED,<name> | DISP,FIND,<bays>        the onboard LCD screens
+//        DISP,DECLINED | DISP,OCCUPIED,<name> | DISP,FIND,<bays> | DISP,REFUND,<amount>   the LCD screens
 //        DISP,DEMO                 cycles every screen with sample data every 4 s until the next DISP command
 //        PING                      -> PONG
 //   legacy, accepted and ignored (nothing is wired to the board):
@@ -13,7 +13,7 @@
 // Timing. The backend (backend/serial_bridge.py DisplayDirector) owns the timed screens and sends the next
 // one itself: WELCOME -> TOTAL after 3 s, OCCUPIED -> back after 3 s, DECLINED -> TOTAL after 4 s,
 // FIND -> TOTAL after 6 s, IDLE 3 s after the session closes. The firmware keeps its own fallbacks for the
-// overlays (FIND 6 s, OCCUPIED 3 s, DECLINED 4 s) and returns PAID to IDLE after 5 s, so a lost line or a
+// overlays (FIND 6 s, OCCUPIED 3 s, DECLINED 4 s) and returns PAID / REFUND to IDLE after 5 s, so a lost line or a
 // filming session without the backend never strands a screen. The same DISP line twice is a no-op, so the
 // backend's command arriving after a fallback changes nothing.
 //
@@ -58,6 +58,7 @@
 #define OCCUPIED_HOLD_MS  3000   // backend OCCUPIED_HOLD_S
 #define DECLINED_HOLD_MS  4000   // backend DECLINED_HOLD_S
 #define PAID_HOLD_MS      5000   // firmware only: PAID -> IDLE
+#define REFUND_HOLD_MS    5000   // backend REFUND_HOLD_S: REFUND -> IDLE
 #define DEMO_STEP_MS      4000
 #define DIM_AFTER_MS      60000  // idle this long -> backlight to BL_DIM
 #define BL_FULL 255
@@ -148,6 +149,10 @@ void fillR(int x, int y, int w, int h, uint16_t c)            { if (w > 0 && h >
 void fillRR(int x, int y, int w, int h, int r, uint16_t c)    { if (w > 0 && h > 0) gfx->fillRoundRect(x + gDx, y + gDy, w, h, r, col(c)); }
 void fillC(int cx, int cy, int r, uint16_t c)                 { if (r > 0) gfx->fillCircle(cx + gDx, cy + gDy, r, col(c)); }
 void arc(int cx, int cy, int r1, int r2, float a0, float a1, uint16_t c) { gfx->drawArc(cx + gDx, cy + gDy, r1, r2, a0, a1, col(c)); }
+void fillTri(float x0, float y0, float x1, float y1, float x2, float y2, uint16_t c) {
+  gfx->fillTriangle(lroundf(x0) + gDx, lroundf(y0) + gDy, lroundf(x1) + gDx, lroundf(y1) + gDy,
+                    lroundf(x2) + gDx, lroundf(y2) + gDy, col(c));
+}
 
 void vGradient(int x, int y, int w, int h, uint16_t top, uint16_t bottom) {
   for (int i = 0; i < h; i++) gfx->drawFastHLine(x, y + i, w, mix565(top, bottom, h > 1 ? (float)i / (h - 1) : 0));
@@ -276,7 +281,7 @@ String fmtMoney(const String &prefix, float value, int decimals) {
 }
 
 // ---------------------------------------------------------------------------------------------- state
-enum ScreenType { S_NONE, S_IDLE, S_WELCOME, S_TOTAL, S_FIND, S_PAID, S_DECLINED, S_OCCUPIED };
+enum ScreenType { S_NONE, S_IDLE, S_WELCOME, S_TOTAL, S_FIND, S_PAID, S_DECLINED, S_OCCUPIED, S_REFUND };
 struct Screen {
   ScreenType type = S_NONE;
   String a, b;        // DISP arguments
@@ -301,7 +306,7 @@ uint32_t moneyChangedAt = 0;
 // DEMO
 const char *const DEMO_STEPS[] = {
     "DISP,IDLE", "DISP,WELCOME,Maya", "DISP,TOTAL,$12.96,3", "DISP,FIND,2 and 4", "DISP,TOTAL,$18.45,4",
-    "DISP,PAID,$18.45,A1B2C3", "DISP,DECLINED", "DISP,OCCUPIED,Maya",
+    "DISP,PAID,$18.45,A1B2C3", "DISP,REFUND,$8.64", "DISP,DECLINED", "DISP,OCCUPIED,Maya",
 };
 bool demo = false;
 int demoStep = 0;
@@ -372,6 +377,7 @@ ScreenType screenTypeOf(const String &name) {
   if (name == "PAID") return S_PAID;
   if (name == "DECLINED") return S_DECLINED;
   if (name == "OCCUPIED") return S_OCCUPIED;
+  if (name == "REFUND") return S_REFUND;
   return S_NONE;
 }
 ScreenType screenTypeOfKey(const String &key) {  // "DISP,TOTAL,$1.00,1" -> S_TOTAL
@@ -432,6 +438,7 @@ void pollTimers(uint32_t now) {
   else if (before == S_OCCUPIED && age >= OCCUPIED_HOLD_MS) handleDisp(returnTarget(occupiedBackKey));
   else if (before == S_DECLINED && age >= DECLINED_HOLD_MS) handleDisp(totalKey.length() ? totalKey : String("DISP,IDLE"));
   else if (before == S_PAID && age >= PAID_HOLD_MS)         handleDisp("DISP,IDLE");
+  else if (before == S_REFUND && age >= REFUND_HOLD_MS)     handleDisp("DISP,IDLE");
   else return;
   if (cur.type == before) handleDisp("DISP,IDLE");  // the target was the screen itself: never spin
 }
@@ -576,6 +583,37 @@ void drawPaid(const Screen &s, uint32_t now) {
   if (s.b.length()) drawText(u8g2_font_helvR12_tr, "Auth " + s.b, x, 148, mix565(C_WHITE, C_GREEN, 0.45f));
 }
 
+// REFUND: PAID's layout and green, with a return arrow instead of the check. The arrow draws itself in
+// counter-clockwise, then keeps turning backwards (one turn per 3 s) while the screen is up.
+void drawRefund(const Screen &s, uint32_t now) {
+  const int cx = 72, cy = 88;
+  float disc = easeOutBack(ramp(now, s.since + 120, 420));
+  int r = lroundf(42 * disc);
+  if (r > 0) {
+    glowCircle(cx, cy, r, C_GREEN, 0.45f, 3, 5);
+    fillC(cx, cy, r, C_GREEN);
+  }
+  float grow = easeInOut(ramp(now, s.since + 480, 520));
+  if (grow > 0.01f) {  // fillArc turns a near-zero sweep into a full ring
+    const float R = 19.5f;                                    // mid-radius of the arrow's ring
+    float spin = (now - s.since) / 3000.0f * 360.0f;          // degrees turned backwards so far
+    float tail = fmodf(300.0f - spin + 720.0f, 360.0f);       // angles run clockwise from 3 o'clock
+    float head = fmodf(tail - 290.0f * grow + 720.0f, 360.0f); // the head leads, counter-clockwise
+    gfx->fillArc(cx + gDx, cy + gDy, 22, 17, head, tail, col(C_WHITE));  // filled ring, head -> tail clockwise
+    float th = head * DEG_TO_RAD;
+    float ux = cosf(th), uy = sinf(th);                       // radial
+    float tx = sinf(th), ty = -cosf(th);                      // tangent, counter-clockwise
+    float px = cx + R * ux, py = cy + R * uy;
+    fillTri(px + tx * 10, py + ty * 10, px + ux * 8, py + uy * 8, px - ux * 8, py - uy * 8, C_WHITE);
+  }
+  const int x = 132, w = SCR_W - x - 14;
+  drawText(u8g2_font_fub20_tr, "REFUNDED", x, 62, C_WHITE);
+  String amount = s.a;
+  const uint8_t *f = fitText(MONEY_SMALL, COUNT_OF(MONEY_SMALL), amount, w);
+  drawText(f, amount, x, 116, C_WHITE);
+  drawText(u8g2_font_helvR12_tr, "Back to your card", x, 148, mix565(C_WHITE, C_GREEN, 0.45f));
+}
+
 void drawDeclined(const Screen &s, uint32_t now) {
   uint32_t age = now - s.since;
   int shake = age < 520 ? lroundf(sinf(age / 520.0f * PI * 6) * 9 * (1 - age / 520.0f)) : 0;
@@ -633,11 +671,12 @@ void drawScreen(const Screen &s, uint32_t now) {
     case S_PAID:     drawPaid(s, now); break;
     case S_DECLINED: drawDeclined(s, now); break;
     case S_OCCUPIED: drawOccupied(s, now); break;
+    case S_REFUND:   drawRefund(s, now); break;
     default: break;
   }
 }
 
-// Background tint per screen (top, bottom). PAID keeps the dark base and sweeps its green in.
+// Background tint per screen (top, bottom). PAID and REFUND keep the dark base and sweep their green in.
 void bgTint(ScreenType t, uint16_t &top, uint16_t &bottom) {
   switch (t) {
     case S_DECLINED: top = mix565(C_BG, C_BAD, 0.50f);  bottom = mix565(C_BG2, C_RED, 0.28f); break;
@@ -661,11 +700,12 @@ void renderFrame(uint32_t now) {
   gAlpha = 1; gDx = gDy = 0;
   vGradient(0, 0, SCR_W, SCR_H, top, bottom);
   gBase = mix565(top, bottom, 0.5f);
-  if (cur.type == S_PAID) {  // green sweep, left to right
+  if (cur.type == S_PAID || cur.type == S_REFUND) {  // green sweep: PAID left to right, REFUND back right to left
     float sw = easeOutCubic(ramp(now, cur.since, 420));
     uint16_t gt = mix565(C_BG, C_OK, 0.58f), gb = mix565(C_BG2, C_GREEN, 0.32f);
     int w = lroundf(SCR_W * sw);
-    for (int i = 0; i < SCR_H && w > 0; i++) gfx->drawFastHLine(0, i, w, mix565(gt, gb, (float)i / (SCR_H - 1)));
+    int x0 = cur.type == S_REFUND ? SCR_W - w : 0;
+    for (int i = 0; i < SCR_H && w > 0; i++) gfx->drawFastHLine(x0, i, w, mix565(gt, gb, (float)i / (SCR_H - 1)));
     if (sw > 0.3f) gBase = mix565(gt, gb, 0.5f);  // the sweep has passed the checkmark by then
   }
 

@@ -5,7 +5,8 @@
 
 Walks the whole demo loop the way a judge would, but driving the shelf over /internal/shelf instead of
 picking things up: health -> admin login -> reset -> full shelf -> demo login -> start session -> pick one
--> put it back -> pick two -> quote -> approve -> reset. Prices and tax come from catalog.json and
+-> put it back -> pick two -> quote -> approve -> receipt -> return one of the two (start return, put it back,
+confirm refund) -> receipt shows the refund -> reset. Prices and tax come from catalog.json and
 config.json, so the totals it asserts are the ones the catalog says, not ones copied from the backend.
 
 A background thread keeps posting the shelf at 5 Hz for the whole run, so /api/health vision_age_ms stays
@@ -352,6 +353,74 @@ def step_approve(api: Api, catalog: Catalog, passkeys_on: bool, want: dict[str, 
             f"auth {payment.get('auth_code')}")
 
 
+def step_receipt(api: Api, session_id: str) -> str:
+    """Measured results on the receipt, and the return offer (Continue stage)."""
+    r = api.get(f"/api/receipt/{session_id}")
+    if not r.get("paid"):
+        raise Fail(f"the receipt is not paid: {r}")
+    if r.get("in_and_out_s") is None or r.get("approvals") != 1:
+        raise Fail(f"expected 'In and out in N seconds' and 1 tap, got in_and_out_s={r.get('in_and_out_s')} "
+                   f"approvals={r.get('approvals')}")
+    if not (r.get("return") or {}).get("eligible"):
+        raise Fail(f"a fresh paid visit should be returnable: {r.get('return')}")
+    return f"in and out in {r['in_and_out_s']} s, {r['approvals']} tap to pay, returnable"
+
+
+def step_start_return(api: Api, session_id: str, passkeys_on: bool) -> str:
+    if passkeys_on:
+        raise Skip("features.passkeys is true, so starting a return needs a real Face ID prompt on a phone")
+    ret = api.post("/api/returns/start", {"session_id": session_id},
+                   skip_on_404="the returns routes are not written yet").get("return") or {}
+    if ret.get("state") != "RETURNING" or ret.get("items"):
+        raise Fail(f"expected a RETURNING session with nothing detected yet, got {ret}")
+    return f"{ret.get('session_id')} RETURNING, returnable {[(i['sku'], i['qty']) for i in ret['returnable']]}"
+
+
+def step_put_one_back(api: Api, poster: ShelfPoster, catalog: Catalog, bought: tuple[str, str]) -> str:
+    """Put the first SKU back on its bay; the camera (here: the poster) must show it as a detected return."""
+    back, kept = bought
+    poster.set_removed({catalog.tag_for(kept)})
+    want = {back: 1}
+    deadline = time.monotonic() + SETTLE_TIMEOUT_S
+    last = None
+    while time.monotonic() < deadline:
+        ret = api.get("/api/returns/current").get("return") or {}
+        last = {i["sku"]: i["qty"] for i in ret.get("items", [])}
+        if last == want:
+            _, _, total = catalog.totals(want)
+            if to_cents(ret["total_usd"]) != total:
+                raise Fail(f"refund shows {ret['total_usd']} but 1 {catalog.name[back]} with tax is {usd(total)}")
+            return f"{catalog.name[back]} detected back on the shelf, refund {usd(total)}"
+        time.sleep(0.15)
+    raise Fail(f"after {SETTLE_TIMEOUT_S:.0f}s the detected return is {last}, expected {want}")
+
+
+def step_confirm_refund(api: Api, catalog: Catalog, sku: str) -> str:
+    result = api.post("/api/returns/confirm")
+    refund = result.get("refund") or {}
+    _, _, total = catalog.totals({sku: 1})
+    if refund.get("status") != "SUCCEEDED" or to_cents(refund.get("amount_usd", 0)) != total:
+        raise Fail(f"expected a SUCCEEDED refund of {usd(total)}, got {refund}")
+    if "is on its way to" not in (result.get("agent_line") or ""):
+        raise Fail(f"agent line missing: {result.get('agent_line')!r}")
+    return f"{refund.get('refund_id')} {usd(total)} via {refund.get('provider')} ({refund.get('provider_ref')})"
+
+
+def step_receipt_refund(api: Api, session_id: str) -> str:
+    r = api.get(f"/api/receipt/{session_id}")
+    refunds = r.get("refunds") or []
+    if len(refunds) != 1:
+        raise Fail(f"the receipt lists {len(refunds)} refunds, expected 1")
+    state = api.get("/admin/state")
+    if state["lock"]["occupied"]:
+        raise Fail("the store is still locked after the refund")
+    m = state.get("metrics") or {}
+    if m.get("sessions_today", 0) < 1 or m.get("refunds_today", 0) < 1:
+        raise Fail(f"admin metrics did not count this visit: {m}")
+    return (f"Refunded {usd(to_cents(refunds[0]['amount_usd']))} for {refunds[0]['items_text']}; "
+            f"metrics: {m['sessions_today']} sessions, {m['refunds_today']} refunds today")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="backend base URL")
@@ -400,11 +469,25 @@ def main() -> int:
         report.run("pick 2 of different SKUs", step_pick_two, api, poster, catalog, two)
         quoted = report.run("checkout quote", step_quote, api, catalog, gates_on,
                             os.getenv("EXIT_GATE_TOKEN", "").strip(), want_two)
+        paid = None
         if quoted is None and not report.blocked:
             report.skipped += 1
             report.line("SKIP", "approve payment", "there is nothing quoted to approve")
         else:
-            report.run("approve payment", step_approve, api, catalog, passkeys_on, want_two)
+            paid = report.run("approve payment", step_approve, api, catalog, passkeys_on, want_two)
+
+        # Continue stage: put one item back and get it refunded, verified by the shelf.
+        if paid and isinstance(quoted, dict):
+            sid = quoted["session_id"]
+            report.run("receipt: time and taps", step_receipt, api, sid)
+            returning = report.run("start return", step_start_return, api, sid, passkeys_on)
+            if returning:
+                report.run(f"put 1 {catalog.name[first].lower()} back", step_put_one_back, api, poster, catalog, two)
+                report.run("confirm refund", step_confirm_refund, api, catalog, first)
+                report.run("receipt shows the refund", step_receipt_refund, api, sid)
+        elif not report.blocked:
+            report.skipped += 1
+            report.line("SKIP", "return and refund", "nothing was paid, so there is nothing to return")
     finally:
         poster.stop()
         # The final reset runs even after a failure, so the next run starts from a free store.

@@ -119,7 +119,7 @@ def check_gate_token(given: str, expected: str, gate: str) -> None:
 
 def own_active_session(member_id: str) -> dict[str, Any]:
     session = store.current_session()
-    if session is None or session["member_id"] != member_id:
+    if session is None or session["member_id"] != member_id or session["state"] not in store.SHOPPING_STATES:
         raise ApiError(409, "no_active_session", "You are not in the store.")
     return session
 
@@ -133,6 +133,8 @@ def gate_enter(body: GateBody, request: Request):
     check_gate_token(body.gate_token, settings.env.entry_gate_token, "entry")
     member = members.current_member(request)
     session = store.current_session()
+    if session is not None and session["member_id"] == member["id"] and session["state"] == store.RETURNING:
+        raise ApiError(409, "returning", "Finish or cancel your return first.")
     if session is not None and session["member_id"] == member["id"]:
         # Scanned twice / tapped twice: already inside, nothing to verify or consume.
         return {"session": public_session(session), "cart": store.cart_for(session)}
@@ -258,6 +260,10 @@ def receipt(session_id: str, request: Request):
     if session["state"] == store.PAID and session["member_id"] == viewer:
         session = store.close(session_id, reason="receipt_viewed")
     cart = session["final_cart"] or store.cart_for(session)
+    from backend import returns  # local: returns imports this module
+
+    refunds = [payments.refund_view(r, member.get("card_label"))
+               for r in (payments.payment_refunds(paid["id"]) if paid else []) if r["status"] == payments.REFUND_SUCCEEDED]
     return {
         "session_id": session_id,
         "state": session["state"],
@@ -271,4 +277,42 @@ def receipt(session_id: str, request: Request):
         "loyalty": settings.features.loyalty,
         "points_earned": payment["points_earned"] if payment else 0,
         "points_total": int(member.get("points") or 0),
+        # measured results: entry to approval, and how many approvals (Face ID or Confirm taps) it took
+        "in_and_out_s": store.seconds_between(session["started_at"], session["approved_at"]) if paid else None,
+        "approvals": len(rows) if paid else 0,
+        "refunds": refunds,
+        "refunded_usd": payments.cart_mod.to_usd(sum(payments.cart_mod.to_cents(r["amount_usd"]) for r in refunds)),
+        "return": returns.eligibility(session),
+    }
+
+
+# --- the permissions card (8.10): what the agent may do, and where only the shopper decides ---
+
+@router.get("/api/guardrails")
+def guardrails(request: Request):
+    """Built from the signed-in member and the agent token's scope: the pending checkout's instruction when
+    there is one, else the scope this member's next instruction will carry. Nothing here is hardcoded copy
+    about limits: the budget, single-use and confirmation method all come from the scope and the flags."""
+    from backend import agent, members
+
+    member = members.current_member(request)
+    session = store.current_session()
+    instruction = (payments.pending_instruction(session["id"])
+                   if session is not None and session["member_id"] == member["id"] else None)
+    scope = instruction["agent_token"]["scope"] if instruction else payments.token_scope(member)
+    method = "passkey" if settings.features.passkeys else "confirm_button"
+    approve = "Face ID" if method == "passkey" else "a tap on Confirm"
+    never = ["Your face data leaving your phone"]
+    if scope["single_use"]:
+        never.append("A reusable payment token")
+    never.append("A charge without your approval")
+    return {
+        "title": "Your agent's permissions",
+        "agent_can": ["See the shelf", "Suggest items", "Build your cart"],
+        "only_you": [f"Approve a payment with {approve}",
+                     f"Spend more than your ${agent.fmt_usd(scope['max_amount_usd'])} limit",
+                     "Request a refund"],
+        "never": never,
+        "scope": {**scope, "confirmation": method},
+        "source": "instruction" if instruction else "member",
     }

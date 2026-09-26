@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from backend import db, eventlog, serial_bridge, shelf_state, store, ws
+from backend import db, eventlog, returns, serial_bridge, shelf_state, store, ws
 from backend.routes_api import ApiError, public_session
 from backend.settings import settings
 
@@ -64,6 +65,39 @@ def _health() -> dict:
     }
 
 
+def _avg(values: list[int]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def metrics(now: datetime | None = None) -> dict:
+    """Measured results for today (the laptop's local day): shopping sessions, average time in store (entry to
+    approval), average time from the exit scan to approval, and refunds. Return visits are not sessions."""
+    now = now or datetime.now().astimezone()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    since = midnight.isoformat(timespec="seconds").replace("+00:00", "Z")
+    conn = db.connect()
+    try:
+        sessions = [dict(r) for r in conn.execute(
+            "SELECT started_at, quoted_at, approved_at FROM store_sessions WHERE return_of IS NULL AND started_at >= ?",
+            (since,))]
+        refund_row = conn.execute("SELECT COUNT(*), COALESCE(SUM(amount_cents), 0) FROM refunds "
+                                  "WHERE status = 'SUCCEEDED' AND created_at >= ?", (since,)).fetchone()
+    finally:
+        conn.close()
+    paid = [s for s in sessions if s["approved_at"]]
+    in_store = [store.seconds_between(s["started_at"], s["approved_at"]) for s in paid]
+    exit_to_approval = [store.seconds_between(s["quoted_at"], s["approved_at"]) for s in paid if s["quoted_at"]]
+    return {
+        "since": since,
+        "sessions_today": len(sessions),
+        "paid_today": len(paid),
+        "avg_in_store_s": _avg(in_store),
+        "avg_exit_to_approval_s": _avg(exit_to_approval),
+        "refunds_today": refund_row[0],
+        "refunded_usd_today": refund_row[1] / 100,
+    }
+
+
 @router.get("/admin/state")
 def state():
     session = store.current_session()
@@ -84,6 +118,8 @@ def state():
         "overrides": store.get_overrides(session["id"]) if session else {},
         "shelf": shelf_state.state(),
         "cart": store.cart_for(session) if session else None,
+        "return": returns.snapshot(session) if session and session["state"] == store.RETURNING else None,
+        "metrics": metrics(),
         "health": _health(),
         "force_decline": force_decline,
         "features": settings.features.as_dict(),

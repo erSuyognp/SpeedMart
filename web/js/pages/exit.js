@@ -72,6 +72,7 @@
 
     const instr = res.instruction;
     renderNetwork(instr);
+    Guardrails.mount($("guardrails"), { open: true }); // the scope of this instruction, expanded
     const overScope = !!instr && cart.total_usd > instr.agent_token.scope.max_amount_usd;
     $("over-scope").hidden = !overScope;
     if (overScope) {

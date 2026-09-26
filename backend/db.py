@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS store_sessions (
   baseline_json TEXT NOT NULL,
   final_cart_json TEXT,
   started_at TEXT NOT NULL,
-  ended_at TEXT
+  ended_at TEXT,
+  return_of TEXT,
+  first_pick_at TEXT,
+  quoted_at TEXT,
+  approved_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -58,7 +62,28 @@ CREATE TABLE IF NOT EXISTS payments (
   instruction_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS refunds (
+  id TEXT PRIMARY KEY,
+  payment_id TEXT NOT NULL REFERENCES payments(id),
+  store_session_id TEXT NOT NULL REFERENCES store_sessions(id),
+  return_session_id TEXT NOT NULL REFERENCES store_sessions(id),
+  member_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_ref TEXT,
+  status TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  points_removed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 """
+
+# Columns added after the first release. init_db() adds any that an older data/speedmart.db is missing.
+ADDED_COLUMNS = {
+    "store_sessions": ("return_of TEXT", "first_pick_at TEXT", "quoted_at TEXT", "approved_at TEXT"),
+}
 
 
 def now_iso() -> str:
@@ -91,6 +116,11 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        for table, columns in ADDED_COLUMNS.items():
+            have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for column in columns:
+                if column.split()[0] not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
         conn.commit()
     finally:
         conn.close()

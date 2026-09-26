@@ -24,13 +24,53 @@
     </header>
 
     <!-- receipt.js rewrites #icon's class ("big-icon ok" / "big-icon bad"), so it stays a .big-icon. -->
-    <section class="card notice">
+    <section id="paid-card" class="card notice">
       <div id="icon" class="big-icon" aria-hidden="true">…</div>
       <h1 id="title">Loading…</h1>
       <p id="card" class="lead"></p>
       <p id="meta" class="muted"></p>
       <p id="points" class="points" hidden></p>
+      <!-- Measured results: "In and out in 42 seconds", "1 tap to pay". -->
+      <div id="results" class="result-chips" hidden></div>
     </section>
+
+    <!-- One green line per refund: "Refunded $8.64 for 1 Electrolyte tabs", refund id underneath. -->
+    <div id="refunds" class="stack" hidden></div>
+
+    <!-- The agent's line when a return completes ("Refund of $8.64 is on its way to your Visa ending 4242."). -->
+    <section id="refund-agent" class="card agent-card" aria-live="polite" hidden></section>
+
+    <!-- Continue stage: returns within 30 minutes of paying. -->
+    <section id="return-offer" class="card stack" hidden>
+      <h2>Changed your mind?</h2>
+      <p id="return-note" class="muted small" style="margin:0"></p>
+      <button id="return-btn" class="secondary block" type="button">Return an item</button>
+      <p id="return-error" class="strip bad" role="alert" hidden></p>
+    </section>
+
+    <div id="return-panel" class="stack" hidden>
+      <section class="card notice">
+        <div class="big-icon brand" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+               stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v5h5"/></svg>
+        </div>
+        <h2>Place the item back on its bay</h2>
+        <p class="muted">The shelf camera confirms each item as it lands. <span id="return-timer" class="return-timer"></span></p>
+      </section>
+      <section class="card">
+        <h2>Coming back</h2>
+        <ul id="return-items" class="cart-list"></ul>
+        <p id="return-empty" class="empty-cart">Nothing yet. Put an item from this visit back in its bay.</p>
+        <ul id="return-ignored" class="cart-list ignored" aria-label="Not from this purchase"></ul>
+        <div class="totals mt-3">
+          <span class="muted">Subtotal</span><span id="return-subtotal">$0.00</span>
+          <span class="muted">Tax</span><span id="return-tax">$0.00</span>
+          <span class="grand">Refund</span><span id="return-total" class="grand">$0.00</span>
+        </div>
+        <p id="return-from" class="muted small mt-3"></p>
+      </section>
+      <p id="return-panel-error" class="strip bad" role="alert" hidden></p>
+    </div>
 
     <section id="items-card" class="card" hidden>
       <h2 id="store-name">Items</h2>
@@ -49,12 +89,16 @@
   </main>
 
   <div class="action-bar">
+    <button id="confirm-refund" class="primary" type="button" hidden disabled>Confirm refund</button>
+    <button id="cancel-return" class="ghost" type="button" hidden>Cancel return</button>
     <a id="done" class="button primary block" href="/">Done</a>
   </div>
 
   <footer class="site-footer">Sandbox demo · no real payments</footer>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ws.js"></script>
+  <script src="/js/passkey.js"></script>
   <script src="/js/pages/receipt.js"></script>
 </body>
 </html>

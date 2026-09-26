@@ -7,7 +7,7 @@
   const VISION_MAX_AGE_MS = 2000;
   // Gate screen tests (raw serial). There are no bay or status LEDs any more, so no LED/SHELF/GATE/HILITE.
   const LED_COMMANDS = ["DISP,IDLE", "DISP,WELCOME,Maya", "DISP,TOTAL,$8.64,1", "DISP,FIND,2 and 4",
-    "DISP,PAID,$8.64,A1B2C3", "DISP,DECLINED", "DISP,OCCUPIED,Maya", "PING"];
+    "DISP,PAID,$8.64,A1B2C3", "DISP,REFUND,$8.64", "DISP,DECLINED", "DISP,OCCUPIED,Maya", "PING"];
   const STRIPE_LABELS = { test: "Test mode", no_key: "No key", off: "Off" };
   let state = null;
   let events = [];
@@ -63,7 +63,7 @@
   }
 
   function statePill(sessionState) {
-    const kind = { IN_STORE: "live", CHECKOUT_PENDING: "warn", PAID: "ok", CANCELLED: "bad", CLOSED: "" }[sessionState];
+    const kind = { IN_STORE: "live", CHECKOUT_PENDING: "warn", RETURNING: "warn", PAID: "ok", CANCELLED: "bad", CLOSED: "" }[sessionState];
     return el("span", "pill" + (kind ? " " + kind : ""), sessionState ? sessionState.toLowerCase().replace("_", " ") : "idle");
   }
 
@@ -105,17 +105,65 @@
     fd.classList.toggle("on", s.force_decline);
     fd.setAttribute("aria-pressed", String(s.force_decline));
 
-    renderCart(s.cart);
+    renderCart(s.cart, s.return);
     renderOverrides(s);
+    renderMetrics(s.metrics);
     renderShelf(s.shelf);
     events = s.events.slice();
     renderLog();
     $("state-json").textContent = JSON.stringify(s, null, 2);
   }
 
-  function renderCart(cart) {
+  function seconds(v) {
+    return v === null || v === undefined ? "–" : v + " s";
+  }
+
+  // Measured results for today: sessions, time in store, exit scan to approval, refunds.
+  function renderMetrics(m) {
+    const box = $("metrics");
+    box.replaceChildren();
+    if (!m) return;
+    [["Sessions", String(m.sessions_today) + (m.paid_today !== m.sessions_today ? " · " + m.paid_today + " paid" : "")],
+      ["Avg in store", seconds(m.avg_in_store_s)],
+      ["Exit scan to approval", seconds(m.avg_exit_to_approval_s)],
+      ["Refunds", m.refunds_today + (m.refunds_today ? " · " + api.money(m.refunded_usd_today) : "")]]
+      .forEach(([k, v]) => {
+        const tile = el("span", "stat");
+        tile.append(el("span", "k", k), el("span", "v", v));
+        box.append(tile);
+      });
+  }
+
+  // A return in progress: what the camera has seen come back so far (items capped at the purchase).
+  function renderReturn(box, ret) {
+    const head = el("div", "cart-state");
+    head.append(el("span", "muted small", "Return of " + ret.original_session_id), statePill("RETURNING"));
+    box.append(head);
+    const list = el("ul", "cart-list");
+    ret.items.forEach((i) => {
+      const r = el("li", "cart-row");
+      r.append(el("span", "name", i.name), el("span", "qty", "× " + i.qty), el("span", "line", api.money(i.line_total_usd)));
+      list.append(r);
+    });
+    ret.ignored.forEach((i) => {
+      const r = el("li", "cart-row");
+      r.append(el("span", "name", i.name), el("span", "qty", "× " + i.qty), el("span", "line muted", i.message));
+      list.append(r);
+    });
+    box.append(ret.items.length || ret.ignored.length ? list : el("p", "empty-cart", "Nothing back on the shelf yet."));
+    const totals = el("div", "totals");
+    totals.append(el("span", "grand", "Refund"), el("span", "grand", api.money(ret.total_usd)));
+    box.append(totals);
+  }
+
+  function renderCart(cart, ret) {
     const box = $("cart");
     box.replaceChildren();
+    if (ret) {
+      box.className = "stack";
+      renderReturn(box, ret);
+      return;
+    }
     if (!cart) {
       box.className = "stack";
       box.append(el("p", "empty-cart", "No shopper in the store."));
@@ -242,7 +290,7 @@
     if (type.startsWith("ws_")) return "ws";
     if (/cart|override|shelf|bay/.test(type)) return "cart";
     if (/gate|enter|exit|session|dev_/.test(type)) return "gate";
-    if (/pay|charge|stripe|receipt/.test(type)) return "pay";
+    if (/pay|charge|stripe|receipt|refund|return/.test(type)) return "pay";
     return "";
   }
 

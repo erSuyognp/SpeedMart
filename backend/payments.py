@@ -51,6 +51,25 @@ def payments_log_path():
 
 # --- instruction (8.6) ---
 
+def token_scope(member: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """The agent token's scope (8.6) for this member. Also what the permissions card (8.10) shows."""
+    now = now or datetime.now(timezone.utc)
+    return {
+        "merchant": settings.store["name"],
+        "max_amount_usd": float(member["budget_usd"]),
+        "currency": settings.store.get("currency", "USD"),
+        "single_use": True,
+        "expires_at": _iso(now + INSTRUCTION_TTL),
+    }
+
+
+def pending_instruction(session_id: str) -> dict[str, Any] | None:
+    """The instruction issued at quote time for this checkout, if any (a copy)."""
+    with _lock:
+        instr = _pending.get(session_id)
+        return json.loads(json.dumps(instr)) if instr else None
+
+
 def build_instruction(session_id: str, cart: dict[str, Any], member: dict[str, Any],
                       now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
@@ -62,13 +81,7 @@ def build_instruction(session_id: str, cart: dict[str, Any], member: dict[str, A
         "agent": dict(AGENT),
         "agent_token": {
             "token_ref": f"tok_speedmart_{session_id}",
-            "scope": {
-                "merchant": store_name,
-                "max_amount_usd": float(member["budget_usd"]),
-                "currency": settings.store.get("currency", "USD"),
-                "single_use": True,
-                "expires_at": _iso(now + INSTRUCTION_TTL),
-            },
+            "scope": token_scope(member, now),
         },
         "user_intent": f"Pay ${cart['total_usd']:.2f} to {store_name} for {count} item{'s' if count != 1 else ''}",
         "items": [{"sku": i["sku"], "qty": i["qty"], "unit_price_usd": i["unit_price_usd"]} for i in cart["items"]],
@@ -299,16 +312,144 @@ def record(session_id: str, member: dict[str, Any], amount_cents: int, result: d
     finally:
         conn.close()
 
-    entry = {**payment, "session_id": session_id, "member_id": member["id"], "message": result.get("message"),
-             "instruction": instruction}
-    path = payments_log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _lock, path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
+    _append_log({"type": "CHARGE", **payment, "session_id": session_id, "member_id": member["id"],
+                 "message": result.get("message"), "instruction": instruction})
     eventlog.log("payment", session_id=session_id, member_id=member["id"], payment_id=payment["payment_id"],
                  provider=payment["provider"], status=payment["status"], amount_usd=payment["amount_usd"],
                  auth_code=payment["auth_code"], message=result.get("message"))
     return payment
+
+
+def _append_log(entry: dict[str, Any]) -> None:
+    path = payments_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _lock, path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+
+# --- refunds (Continue stage, 8.11) ---
+
+REFUND_SUCCEEDED, REFUND_FAILED = "SUCCEEDED", "FAILED"
+
+
+def mock_refund() -> dict[str, Any]:
+    return {"provider": "mock", "provider_ref": f"re_mock_{secrets.token_hex(6)}", "status": REFUND_SUCCEEDED,
+            "message": None}
+
+
+def stripe_refund(payment: dict[str, Any], amount_cents: int, return_session_id: str,
+                  attempt: int = 1) -> dict[str, Any] | None:
+    """A partial Refund on the original PaymentIntent. None means "not a card problem": fall back to mock."""
+    s = _stripe()
+    try:
+        refund = s.Refund.create(
+            payment_intent=payment["provider_ref"],
+            amount=amount_cents,
+            metadata={"session_id": payment["store_session_id"], "return_session_id": return_session_id,
+                      "payment_id": payment["id"]},
+            idempotency_key=f"speedmart-refund-{return_session_id}-{attempt}",
+        )
+    except s.CardError as e:
+        return {"provider": "stripe_test", "provider_ref": None, "status": REFUND_FAILED,
+                "message": getattr(e, "user_message", None) or str(e) or "The refund was refused."}
+    except Exception as e:
+        eventlog.log("stripe_refund_fallback", return_session_id=return_session_id, error=f"{type(e).__name__}: {e}")
+        return None
+    if refund.status in ("succeeded", "pending"):  # test cards settle at once; pending still reaches the card
+        return {"provider": "stripe_test", "provider_ref": refund.id, "status": REFUND_SUCCEEDED, "message": None}
+    return {"provider": "stripe_test", "provider_ref": refund.id, "status": REFUND_FAILED,
+            "message": f"The refund did not complete (Stripe status: {refund.status})."}
+
+
+def refund(payment: dict[str, Any], amount_cents: int, return_session_id: str, attempt: int = 1) -> dict[str, Any]:
+    """Refund part of an AUTHORIZED payment. Stripe test mode when the payment went through Stripe and Stripe is
+    on; mock otherwise, or on any Stripe failure that is not a card error. Never raises."""
+    if payment["provider"] == "stripe_test" and payment.get("provider_ref") and stripe_active():
+        try:
+            result = stripe_refund(payment, amount_cents, return_session_id, attempt)
+        except Exception as e:  # belt and braces, like charge()
+            eventlog.log("stripe_refund_fallback", return_session_id=return_session_id,
+                         error=f"{type(e).__name__}: {e}")
+            result = None
+        if result is not None:
+            return result
+    return mock_refund()
+
+
+def points_to_remove(amount_usd: float) -> int:
+    """Loyalty on a refund: floor of the refunded amount (the mirror of points_for)."""
+    return int(math.floor(amount_usd + 1e-9)) if settings.features.loyalty else 0
+
+
+def refund_view(row: dict[str, Any], card_label: str | None) -> dict[str, Any]:
+    """Refund (8.11) from a refunds row."""
+    items = json.loads(row["items_json"])
+    return {
+        "refund_id": row["id"],
+        "payment_id": row["payment_id"],
+        "session_id": row["store_session_id"],
+        "return_session_id": row["return_session_id"],
+        "provider": row["provider"],
+        "provider_ref": row["provider_ref"],
+        "amount_usd": cart_mod.to_usd(row["amount_cents"]),
+        "currency": row["currency"],
+        "status": row["status"],
+        "items": items,
+        "items_text": ", ".join(f"{i['qty']} {i['name']}" for i in items),
+        "points_removed": row["points_removed"],
+        "card_label": card_label or DEFAULT_CARD_LABEL,
+        "created_at": row["created_at"],
+    }
+
+
+def record_refund(payment: dict[str, Any], return_session_id: str, member: dict[str, Any], amount_cents: int,
+                  items: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Any]:
+    """Save one refund to SQLite and data/payments.log.jsonl (type REFUND); take the points back."""
+    succeeded = result["status"] == REFUND_SUCCEEDED
+    points = points_to_remove(cart_mod.to_usd(amount_cents)) if succeeded else 0
+    row = {
+        "id": db.new_id("ref"),
+        "payment_id": payment["id"],
+        "store_session_id": payment["store_session_id"],
+        "return_session_id": return_session_id,
+        "member_id": member["id"],
+        "amount_cents": amount_cents,
+        "currency": payment["currency"],
+        "provider": result["provider"],
+        "provider_ref": result["provider_ref"],
+        "status": result["status"],
+        "items_json": json.dumps(items),
+        "points_removed": 0,
+        "created_at": db.now_iso(),
+    }
+    conn = db.connect()
+    try:
+        if points:
+            have = conn.execute("SELECT points FROM members WHERE id = ?", (member["id"],)).fetchone()[0]
+            row["points_removed"] = min(points, int(have or 0))  # never below zero
+            conn.execute("UPDATE members SET points = points - ? WHERE id = ?", (row["points_removed"], member["id"]))
+        conn.execute(f"INSERT INTO refunds ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+        conn.commit()
+    finally:
+        conn.close()
+    view = refund_view(row, member.get("card_label"))
+    _append_log({"type": "REFUND", **view, "member_id": member["id"], "message": result.get("message")})
+    eventlog.log("refund", session_id=payment["store_session_id"], return_session_id=return_session_id,
+                 member_id=member["id"], refund_id=view["refund_id"], payment_id=payment["id"],
+                 provider=view["provider"], provider_ref=view["provider_ref"], status=view["status"],
+                 amount_usd=view["amount_usd"], items={i["sku"]: i["qty"] for i in items},
+                 points_removed=view["points_removed"], message=result.get("message"))
+    return view
+
+
+def payment_refunds(payment_id: str) -> list[dict[str, Any]]:
+    conn = db.connect()
+    try:
+        rows = conn.execute("SELECT * FROM refunds WHERE payment_id = ? ORDER BY created_at, rowid",
+                            (payment_id,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def session_payments(session_id: str) -> list[dict[str, Any]]:

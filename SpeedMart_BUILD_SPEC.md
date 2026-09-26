@@ -30,6 +30,10 @@ You are implementing this project step by step from this file. Rules:
 3. **Shopping.** Judge picks an item off the shelf. The overhead camera sees the item leave its bay. Within ~1 second the item appears in the phone cart. The bay LED turns off. A one-sentence AI store agent line appears ("Electrolytes added. A recovery drink is $4 and keeps you under your $20 budget.").
 4. **Put back.** Judge puts an item back. It disappears from the cart. (Proves it's live, not scripted.)
 5. **Exit.** Judge scans **QR C (exit gate)** → phone shows itemized receipt and total → Face ID to approve → sandbox charge runs → shelf flashes green → phone shows "Paid · auth code · points earned".
+6. **Continue (return).** Within 30 minutes, on the receipt: "Return an item" → Face ID → put the item back on its bay → the camera sees it return and the phone lists it → "Confirm refund $X" → sandbox refund of exactly those items plus tax → gate screen shows REFUNDED.
+
+The four stages of Visa's framework map onto this: Discover (agent line, F18 plan), Decide (live cart, budget,
+permissions card), Transact (scoped instruction + Face ID), Continue (camera-verified returns and refunds).
 
 **Definition of "in the cart":** an item is in the shopper's cart when it has left the shelf (not visible in any bay). An item returned to any bay is no longer in the cart.
 
@@ -135,8 +139,9 @@ SpeedMart/
 │   ├── payments.py              # VIC-shaped instruction + mock/Stripe charge
 │   ├── agent.py                 # AI store agent line: LLM + templates
 │   ├── serial_bridge.py         # ESP32 serial read/write thread
-│   ├── admin.py                 # admin routes: reset, overrides, logs
-│   └── routes_api.py            # public API routes (catalog, session, gates)
+│   ├── admin.py                 # admin routes: reset, overrides, logs, metrics
+│   ├── returns.py               # Continue stage: returns + camera-verified refunds (8.1, 8.11, 8.12)
+│   └── routes_api.py            # public API routes (catalog, session, gates, receipt, guardrails)
 │
 ├── vision/
 │   ├── worker.py                # main loop: camera → snapshot → POST /internal/shelf
@@ -169,6 +174,7 @@ SpeedMart/
 │   │   ├── api.js               # fetch helpers, error toasts
 │   │   ├── passkey.js           # wraps SimpleWebAuthnBrowser
 │   │   ├── ws.js                # WebSocket with auto-reconnect
+│   │   ├── guardrails.js        # "Your agent's permissions" card (8.10)
 │   │   └── pages/*.js           # one small script per page
 │   └── css/styles.css
 │
@@ -341,8 +347,12 @@ CREATE TABLE IF NOT EXISTS store_sessions (
   state TEXT NOT NULL,                         -- see 7.1
   baseline_json TEXT NOT NULL,                 -- {"elx": 2, "rec": 2, "bar": 2}
   final_cart_json TEXT,                        -- frozen at CHECKOUT_PENDING
-  started_at TEXT NOT NULL,
-  ended_at TEXT
+  started_at TEXT NOT NULL,                    -- measured results: "entered"
+  ended_at TEXT,
+  return_of TEXT,                              -- RETURNING sessions: the paid session being returned
+  first_pick_at TEXT,                          -- measured results: first item in the cart
+  quoted_at TEXT,                              -- measured results: last exit scan (quote)
+  approved_at TEXT                             -- measured results: payment approved
 );
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -358,7 +368,26 @@ CREATE TABLE IF NOT EXISTS payments (
   instruction_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS refunds (           -- Continue stage (8.11)
+  id TEXT PRIMARY KEY,                         -- ref_xxx
+  payment_id TEXT NOT NULL REFERENCES payments(id),
+  store_session_id TEXT NOT NULL REFERENCES store_sessions(id),   -- the paid visit
+  return_session_id TEXT NOT NULL REFERENCES store_sessions(id),  -- the RETURNING session
+  member_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  provider TEXT NOT NULL,                      -- "mock" | "stripe_test"
+  provider_ref TEXT,                           -- Stripe Refund id (re_...) or re_mock_...
+  status TEXT NOT NULL,                        -- SUCCEEDED | FAILED
+  items_json TEXT NOT NULL,                    -- [{"sku","name","qty"}]
+  points_removed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 ```
+
+`init_db()` adds the `store_sessions` columns after `ended_at` to an older `data/speedmart.db` with
+`ALTER TABLE ... ADD COLUMN`, so no reset is needed.
 
 Seed a **demo member** on startup if none exists: name "Demo Shopper", `is_demo=1`, budget 20, linked test card if Stripe is on.
 
@@ -386,17 +415,27 @@ Seed a **demo member** on startup if none exists: name "Demo Shopper", `is_demo=
 
   Any state ──admin reset / force-exit / timeout──▶ CANCELLED
   Exit with empty cart ──▶ CLOSED (no payment, "Nothing to pay, see you soon")
+
+  Continue stage: a NEW session with return_of = the paid visit
+                       returns/start (Face ID, within 30 min of payment)
+  PAID or CLOSED visit ──────────────────────────────────────────────▶ RETURNING
+                                                                          │
+        returns/confirm + refund SUCCEEDED ──▶ CLOSED (refunded)  ◀───────┤
+        returns/cancel                     ──▶ CLOSED (no refund) ◀───────┤
+        3 min timeout / admin reset        ──▶ CANCELLED (no refund) ◀────┘
 ```
 
-**Store lock:** at most one session may be in `IN_STORE` or `CHECKOUT_PENDING`. `gate/enter` while occupied returns `409 {"error":"store_occupied","occupant_first_name":"Maya"}`. Implement with a `threading.Lock` around state changes plus a DB check.
+**Store lock:** at most one session may be in `IN_STORE`, `CHECKOUT_PENDING` or `RETURNING`. `gate/enter` while occupied returns `409 {"error":"store_occupied","occupant_first_name":"Maya"}`. Implement with a `threading.Lock` around state changes plus a DB check.
 
-**Timeout:** a session in `IN_STORE` longer than `store.max_session_minutes` becomes `CANCELLED` (background task checks every 30 s). Admin can always force-exit.
+**Timeout:** a session in `IN_STORE` longer than `store.max_session_minutes` becomes `CANCELLED` (background task checks every 30 s). A `RETURNING` session older than 3 minutes becomes `CANCELLED` with no refund (same task; `returns/confirm` also refuses an expired one). Admin can always force-exit.
+
+**Returning:** baseline = shelf counts when the return starts. `returned[sku] = min(max(0, shelf_now − baseline), purchased − already_refunded)`; any other rise is ignored and listed as "not from this purchase". The refund is computed like the cart (never accumulated): `subtotal = Σ returned × unit price paid`, `tax = round(subtotal × tax_rate)` in integer cents, capped at what is left of the payment; returning everything that is left refunds exactly what is left, so several partial returns never add up to more than was charged. A returning session has no cart (`CartSnapshot.items` is always empty) and never charges anything.
 
 **Cart freezing:** on `gate/exit/quote`, copy the current cart into `final_cart_json`. The charge uses the frozen cart, not the live one. If the shopper cancels, unfreeze.
 
 ### 7.2 Fresh verification rule (F7)
 
-If `passkeys` is on, `gate/enter` and `gate/exit/approve` require a passkey authentication completed within the last 90 seconds for the same member (`request.session["verified_at"]`, `request.session["verified_member"]`). The flag is consumed after one use. If `passkeys` is off, these routes require only a logged-in member.
+If `passkeys` is on, `gate/enter`, `gate/exit/approve` and `returns/start` require a passkey authentication completed within the last 90 seconds for the same member (`request.session["verified_at"]`, `request.session["verified_member"]`). The flag is consumed after one use. If `passkeys` is off, these routes require only a logged-in member.
 
 ### 7.3 Cart rule (F4), the heart of the system
 
@@ -453,14 +492,19 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | POST | `/api/logout` | — | `{"ok":true}` | |
 | POST | `/api/passkey/register/options` | — | WebAuthn creation options JSON | Logged-in member only |
 | POST | `/api/passkey/register/verify` | `{"credential":{...}}` | `{"ok":true}` | Saves passkey |
-| POST | `/api/passkey/login/options` | `{"purpose":"enter"\|"exit"\|"login"}` | WebAuthn request options JSON | Works with no cookie (discoverable credentials) |
+| POST | `/api/passkey/login/options` | `{"purpose":"enter"\|"exit"\|"login"\|"return"}` | WebAuthn request options JSON | Works with no cookie (discoverable credentials) |
 | POST | `/api/passkey/login/verify` | `{"credential":{...},"purpose":...}` | `{"ok":true,"member":{...}}` | Logs in + sets fresh verification |
-| POST | `/api/gate/enter` | `{"gate_token":str}` | `{"session":{...},"cart":CartSnapshot}` | 403 bad token, 401 not verified, 409 occupied |
+| POST | `/api/gate/enter` | `{"gate_token":str}` | `{"session":{...},"cart":CartSnapshot}` | 403 bad token, 401 not verified, 409 occupied, 409 `returning` (your own return is open) |
 | GET | `/api/store/current` | — | `{"session":...,"cart":CartSnapshot}` or `{"session":null}` | |
 | POST | `/api/gate/exit/quote` | `{"gate_token":str}` | `{"cart":CartSnapshot,"instruction":Instruction,"plan_check":PlanCheck\|null}` | Freezes cart, state → CHECKOUT_PENDING. `plan_check` (8.9) is `null` unless the shopper made an F18 plan this visit. `POST /api/dev/checkout`, the gates-off fallback, returns the same three keys |
 | POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on |
 | POST | `/api/gate/exit/cancel` | — | `{"ok":true}` | Back to IN_STORE |
-| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points | Only the owner |
+| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points, `in_and_out_s`, `approvals`, `refunds: [Refund]`, `refunded_usd`, `return: {eligible, reason, message, deadline}` | Only the owner. `in_and_out_s` = entered → approved; `approvals` = payment attempts, each one Face ID (or Confirm) tap |
+| GET | `/api/guardrails` | — | `Guardrails` (8.10) | Logged-in member. 401 otherwise |
+| POST | `/api/returns/start` | `{"session_id":str}` (the paid visit) | `{"return":ReturnSnapshot}` | Needs fresh verification if F7 on (7.2). 404 not yours, 409 `not_returnable` / `return_window_closed` (30 min after payment) / `nothing_to_return` / `store_occupied` (with `occupant_first_name`), 503 `vision_unavailable`. Refusals that need no Face ID come first. The same visit tapped twice returns the open return |
+| GET | `/api/returns/current` | — | `{"return":ReturnSnapshot\|null}` | Your open return, if any |
+| POST | `/api/returns/confirm` | — | `{"refund":Refund,"agent_line":str}`, or `{"refund":Refund,"message":str}` when the refund FAILED | Refunds exactly the detected items + tax, then RETURNING → CLOSED. 409 `no_active_return` / `nothing_returned` / `return_expired` |
+| POST | `/api/returns/cancel` | — | `{"ok":true}` | RETURNING → CLOSED, no refund |
 | WS | `/ws` | — | stream of messages (8.4) | Identifies member by cookie |
 | POST | `/api/intent` | `{"text":str}` (≤ 300 chars) | `Plan` (8.8) | F18. Logged-in member. 401 `not_logged_in`, 400 `empty_text` / `text_too_long`, 404 `unknown_member` |
 | GET | `/api/intent/current` | — | `Plan` (8.8) or `null` | F18. 401 if not logged in |
@@ -491,7 +535,7 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 
 | Method | Path | Body | Effect |
 |---|---|---|---|
-| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, last 50 events, serial status |
+| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, `return` (ReturnSnapshot while RETURNING, else null), `metrics` (below), last 50 events, serial status |
 | POST | `/admin/reset` | — | Cancel active session, clear overrides, clear lock, LEDs idle |
 | POST | `/admin/force-exit` | — | Cancel active session only |
 | POST | `/admin/override` | `{"sku":"elx","delta":1}` | Adjust cart qty for that SKU by delta (manual fallback). Logged as `source:"override"` |
@@ -499,12 +543,15 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 | POST | `/admin/led` | `{"cmd":"DISP,IDLE"}` | Raw serial command (gate screen test) |
 | POST | `/admin/force-decline` | `{"on":bool}` | Next charge returns DECLINED (for Q&A demos) |
 
+`metrics` (the laptop's local day): `{"since", "sessions_today", "paid_today", "avg_in_store_s", "avg_exit_to_approval_s", "refunds_today", "refunded_usd_today"}`. Shopping sessions only (returns are not sessions); averages are over paid visits, `null` when there are none. The raw timestamps are also logged: `first_pick`, `session_metrics` (at approval: entered, first pick, quote, approved, seconds between), `return_started`, `return_detected`, `refund`.
+
 ### 8.4 WebSocket messages (server → client)
 
 ```json
 {"type":"cart","data":CartSnapshot}
 {"type":"agent","data":{"line":"Electrolytes added. A recovery drink is $4 and keeps you under $20."}}
-{"type":"gate","data":{"event":"entered"|"exit_pending"|"paid"|"declined"|"cancelled"}}
+{"type":"gate","data":{"event":"entered"|"exit_pending"|"paid"|"declined"|"cancelled"|"return_started"|"refunded"}}
+{"type":"return","data":ReturnSnapshot}   // the returning member + admins, on every shelf change
 {"type":"store_status","data":{"occupied":true}}
 {"type":"plan_bays","data":{"bays":[0,1]}}   // public: bays the current plan points at, [] when cleared
 {"type":"shelf","data":{...}}          // admin sockets only
@@ -632,6 +679,79 @@ the shortfall in `missing` and the surplus in `extra`.
 
 Pure function of the frozen `CartSnapshot` and the `Plan`. With no plan the quote returns `"plan_check": null`.
 
+### 8.10 Guardrails ("Your agent's permissions")
+
+What the agent may do on its own and where only the shopper decides. Built by the backend from the signed-in
+member and the agent token's scope (8.6): the pending checkout's instruction when there is one (`source:
+"instruction"`), else the scope this member's next instruction will carry (`source: "member"`). The limit
+comes from `scope.max_amount_usd`, "A reusable payment token" only appears when `scope.single_use` is true,
+and the approval wording follows F7 ("Face ID" or "a tap on Confirm"). Shown collapsed on `store.html` and
+expanded on `exit.html` (`web/js/guardrails.js`).
+
+```json
+{
+  "title": "Your agent's permissions",
+  "agent_can": ["See the shelf", "Suggest items", "Build your cart"],
+  "only_you": ["Approve a payment with Face ID", "Spend more than your $20 limit", "Request a refund"],
+  "never": ["Your face data leaving your phone", "A reusable payment token", "A charge without your approval"],
+  "scope": {"merchant": "SpeedMart #01", "max_amount_usd": 20.0, "currency": "USD", "single_use": true,
+            "expires_at": "2026-09-26T02:29:03Z", "confirmation": "passkey"},
+  "source": "member"
+}
+```
+
+### 8.11 Refund (`backend/payments.py`)
+
+```json
+{
+  "refund_id": "ref_8Hd2",
+  "payment_id": "pay_91Kd",
+  "session_id": "ses_Ab3xY9",
+  "return_session_id": "ses_Rt7Qa1",
+  "provider": "stripe_test",
+  "provider_ref": "re_3Q...",
+  "amount_usd": 8.64,
+  "currency": "USD",
+  "status": "SUCCEEDED",
+  "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1}],
+  "items_text": "1 Electrolyte tabs",
+  "points_removed": 8,
+  "card_label": "Visa •••• 4242 (test)",
+  "created_at": "2026-09-26T02:20:11Z"
+}
+```
+
+Stripe path (F10 on and the original payment was `stripe_test`): `stripe.Refund.create(payment_intent=<original
+PaymentIntent>, amount=<cents>, metadata={session_id, return_session_id, payment_id},
+idempotency_key=f"speedmart-refund-{return_session_id}-{attempt}")`. `succeeded` or `pending` → SUCCEEDED.
+`CardError` → FAILED (the return stays open for a retry or cancel). Any other exception, F10 off, or a mock
+payment → mock provider (`re_mock_` + hex, SUCCEEDED). Every refund goes to SQLite and to
+`data/payments.log.jsonl` with `"type":"REFUND"` (charges are logged with `"type":"CHARGE"`). Loyalty: subtract
+`floor(amount_usd)` points, never below zero. The agent line on success is fixed wording, not LLM phrased:
+"Refund of $8.64 is on its way to your Visa ending 4242."
+
+### 8.12 ReturnSnapshot
+
+```json
+{
+  "session_id": "ses_Rt7Qa1",
+  "state": "RETURNING",
+  "original_session_id": "ses_Ab3xY9",
+  "payment_id": "pay_91Kd",
+  "returnable": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1}],
+  "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1, "unit_price_usd": 8.00, "line_total_usd": 8.00}],
+  "ignored": [{"sku": "rec", "name": "Recovery drink", "qty": 1, "message": "not from this purchase"}],
+  "subtotal_usd": 8.00,
+  "tax_usd": 0.64,
+  "total_usd": 8.64,
+  "expires_at": "2026-09-26T02:23:03Z",
+  "updated_at": "2026-09-26T02:20:05Z"
+}
+```
+
+`returnable` = bought in that visit and not yet refunded; `items` = detected returns (7.1 Returning), priced at
+what was paid; `total_usd` is the refund `returns/confirm` will make.
+
 ---
 
 ## 9. CORE ALGORITHMS
@@ -743,6 +863,8 @@ old LED, GATE, SHELF and HILITE lines and ignores them harmlessly.
 DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
 DISP,DECLINED | DISP,OCCUPIED,<name>
 DISP,FIND,<cards>                     "Find bay 2 and 4" (cards as printed, "2 and 4"), 6 s, then back to TOTAL
+DISP,REFUND,<amount>                  green, animated return arrow, "REFUNDED", amount; held 5 s after the return
+                                      closes, then IDLE (the firmware also falls back to IDLE after 5 s)
 PING
 ```
 
@@ -756,7 +878,7 @@ W,<bay>,<grams>    load cell reading, F16 only
 ```
 
 Backend sends: the screen for each store event (WELCOME on enter, TOTAL on cart changes, PAID / DECLINED on
-payment, IDLE after the session) and FIND when a plan is made. Bays are found by printed number cards 1 to 5
+payment, REFUND on a successful refund, IDLE after the session) and FIND when a plan is made. Bays are found by printed number cards 1 to 5
 on the shelf front (`scripts/gen_bay_cards.py`).
 
 ### 9.8 Passkeys (`backend/auth_passkeys.py`, F7)
@@ -1039,21 +1161,30 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - Totals block: subtotal, tax, total; budget bar (green under 80%, amber 80 to 100%, red over).
 - Warnings strip for misplaced items.
 - Footer hint: "When you're done, scan the EXIT code." (gates on) or button "Checkout" (gates off).
+- Permissions card (8.10), collapsed, tap to expand.
 
 ### 11.4 `exit.html?g=…` (QR 3 · EXIT)
 - Itemized receipt preview and total.
 - Collapsible "What the payment network sees": agent, token scope (merchant, max amount, single use, expiry), user intent sentence, label that it is a sandbox mock.
+- Permissions card (8.10), expanded.
 - Button "Approve $X.XX with Face ID". Secondary "Keep shopping" (cancel).
 - Over scope: "This is over your $20 limit. Put something back to continue."
 - Declined: red state + retry.
 
 ### 11.5 `receipt.html`
 - Big green check, "Paid $8.64", card label, auth code, time, items, "+8 points · 23 total".
+- Measured results: "In and out in 42 seconds", "1 tap to pay".
+- Refund lines: "Refunded $8.64 for 1 Electrolyte tabs" with the refund id.
+- "Changed your mind?" card with "Return an item" (only within 30 minutes of a Stripe or mock payment). Tap →
+  Face ID → return panel: "Place the item back on its bay", detected returns listed live, "not from this
+  purchase" rows, refund totals, time left, "Confirm refund $X" and "Cancel return". On success the agent line
+  "Refund of $X is on its way to your Visa ending 4242." Store occupied → "Someone is shopping right now. Try
+  again in a minute."
 - Toggle "Show payment record" → payment JSON.
 - Button "Done" (clears to index).
 
 ### 11.6 `admin.html` (team only)
-- Password gate. Panels: store status and lock, current session and baseline, live shelf per bay (stable / motion), cart, overrides (+/− per SKU), reset, force-exit, demo-login, force-decline toggle, LED test buttons, health badges (vision age, serial, Stripe mode, LLM on/off), event log tail.
+- Password gate. Panels: store status and lock, results today (sessions, average time in store, average exit scan to approval, refunds), current session and baseline (a return in progress shows its detected items and refund), live shelf per bay (stable / motion), cart, overrides (+/− per SKU), reset, force-exit, demo-login, force-decline toggle, LED test buttons, health badges (vision age, serial, Stripe mode, LLM on/off), event log tail.
 
 ---
 

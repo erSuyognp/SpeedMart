@@ -40,7 +40,7 @@ from backend.settings import settings
 
 CHALLENGE_TTL_S = 300          # options fetched ahead of the tap stay usable this long
 FRESH_VERIFICATION_S = 90      # 7.2: gate/enter and exit/approve need Face ID this recent
-PURPOSES = ("enter", "exit", "login")
+PURPOSES = ("enter", "exit", "login", "return")
 
 # Errors py_webauthn raises for a bad or tampered credential; malformed JSON shows up as the others.
 VERIFY_ERRORS = (WebAuthnException, ValueError, KeyError, TypeError)
@@ -51,12 +51,12 @@ class RegisterVerifyBody(BaseModel):
 
 
 class LoginOptionsBody(BaseModel):
-    purpose: Literal["enter", "exit", "login"] = "login"
+    purpose: Literal["enter", "exit", "login", "return"] = "login"
 
 
 class LoginVerifyBody(BaseModel):
     credential: dict[str, Any]
-    purpose: Literal["enter", "exit", "login"] = "login"
+    purpose: Literal["enter", "exit", "login", "return"] = "login"
 
 
 router = APIRouter()

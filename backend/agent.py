@@ -118,6 +118,12 @@ def template(decision: dict[str, Any]) -> str:
     return TEMPLATES[decision["kind"]].format(**d)
 
 
+def refund_line(amount_usd: float, card_last4: str | None) -> str:
+    """The agent's line when a return completes. Fixed wording: a refund is money, so no LLM phrasing."""
+    card = f"your Visa ending {card_last4}" if card_last4 else "your card"
+    return f"Refund of ${to_cents(amount_usd) / 100:.2f} is on its way to {card}."
+
+
 # --- LLM phrasing ---
 
 def _first_name(member: dict[str, Any]) -> str:

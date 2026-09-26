@@ -50,6 +50,7 @@ Branch `claude/speedmart-display-bay-highlight-5d8c21`. Files touched: `firmware
 | `DISP,PAID,<total>,<auth>` | green circle with a check mark, "APPROVED", the total, "Auth `<auth>`" (left out when auth is empty) |
 | `DISP,DECLINED` | red bars, "DECLINED", "Try again on your phone" |
 | `DISP,OCCUPIED,<first name>` | amber bar, "`<name>` is shopping", "Please wait" |
+| `DISP,REFUND,<amount>` | green sweep from the right, a return arrow that draws in and keeps turning backwards, "REFUNDED", the amount, "Back to your card". Sent on a successful refund; held 5 s after the return closes, then IDLE |
 
 The board ignores unknown screens and keeps showing the current one.
 

@@ -8,7 +8,7 @@ missing or unplugged board only shows up as serial:false in /api/health. Runs on
 The board's LCD is the store's gate display (DISP,<screen>,...) and the only thing the backend drives. There
 are no bay or status LEDs: the backend never sends LED, SHELF, GATE or HILITE (the firmware still accepts
 them, harmlessly). The bridge remembers the current screen and resends it on every (re)connect and READY.
-DisplayDirector maps backend.eventlog events to screens, so no other module has to call the display;
+DisplayDirector maps backend.eventlog events to screens (a completed return shows DISP,REFUND,<amount>), so no other module has to call the display;
 docs/overnight/display.md lists the exact mapping. show_find() puts up "Find bay 2 and 4" for a new plan.
 
     python -m backend.serial_bridge --list-ports     print serial ports, to set config.json serial.port
@@ -28,13 +28,14 @@ from serial.tools import list_ports
 RETRY_S = 3.0
 READ_TIMEOUT_S = 0.1
 
-DISP_SCREENS = ("IDLE", "WELCOME", "TOTAL", "PAID", "DECLINED", "OCCUPIED", "FIND")
+DISP_SCREENS = ("IDLE", "WELCOME", "TOTAL", "PAID", "DECLINED", "OCCUPIED", "FIND", "REFUND")
 DISP_ARG_MAX = 20
 IDLE_AFTER_S = 3.0       # CLOSED / CANCELLED -> IDLE after this long
 WELCOME_HOLD_S = 3.0     # WELCOME stays up this long before the live TOTAL takes over
 OCCUPIED_HOLD_S = 3.0    # "<name> is shopping" overlay, then back to the shopper's screen
 DECLINED_HOLD_S = 4.0    # DECLINED overlay, then back to TOTAL (the session stays CHECKOUT_PENDING, 7.1)
 FIND_HOLD_S = 6.0        # "Find bay 2 and 4" after a plan, then back to TOTAL (the firmware also reverts at 6 s)
+REFUND_HOLD_S = 5.0      # REFUNDED stays up this long after the return closes, then IDLE (firmware: 5 s too)
 
 
 def open_port(port: str, baud: int, **kwargs: Any) -> Any:
@@ -251,9 +252,11 @@ def show_find(bays: Any) -> bool:
 
 # --- event log -> gate display. Event names below are the real ones emitted by the backend:
 # backend/payments.py logs "payment" (status AUTHORIZED / DECLINED / ERROR, amount_usd, auth_code),
-# backend/store.py logs "cart_changed", "store_occupied" and "session_state". ---
+# backend/store.py logs "cart_changed", "store_occupied" and "session_state"; backend/payments.py logs
+# "refund" (status SUCCEEDED / FAILED, amount_usd) when a return completes. ---
 
 PAYMENT_EVENTS = ("payment",)
+REFUND_EVENTS = ("refund",)
 
 
 def _query_one(sql: str, arg: Any) -> Any:
@@ -367,6 +370,8 @@ class DisplayDirector:
                 self._on_occupied(entry)
             elif kind in PAYMENT_EVENTS:
                 self._on_payment(entry)
+            elif kind in REFUND_EVENTS:
+                self._on_refund(entry)
 
     def _on_session(self, e: dict[str, Any]) -> None:
         to, frm = e.get("to"), e.get("from")
@@ -380,8 +385,9 @@ class DisplayDirector:
             if self._screen[0] != "PAID":  # no payment event seen (yet): still say approved
                 self._show("PAID", self._total, "")
         elif to in ("CLOSED", "CANCELLED"):
+            hold = REFUND_HOLD_S if self._screen[0] == "REFUND" else IDLE_AFTER_S
             self._cancel()
-            self._later(IDLE_AFTER_S, lambda: self._show("IDLE"))
+            self._later(hold, lambda: self._show("IDLE"))
 
     def _on_cart(self, e: dict[str, Any]) -> None:
         self._set_cart(e)
@@ -422,6 +428,11 @@ class DisplayDirector:
         elif status == "DECLINED":
             self._show("DECLINED")
             self._later(DECLINED_HOLD_S, self._show_total)
+
+    def _on_refund(self, e: dict[str, Any]) -> None:
+        # "refund" carries status and amount_usd (payments.py record_refund). A failed refund changes nothing.
+        if str(e.get("status") or "").upper() == "SUCCEEDED":
+            self._show("REFUND", _money(e.get("amount_usd")) or "")
 
 
 director = DisplayDirector()

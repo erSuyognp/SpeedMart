@@ -56,6 +56,9 @@
         <p id="card-line" class="muted small mt-3"></p>
       </section>
 
+      <!-- Permissions card (8.10): expanded at the exit, where the shopper decides. Filled by /js/guardrails.js. -->
+      <details id="guardrails" class="card disclosure guardrails" hidden></details>
+
       <details id="network" class="card panel disclosure" hidden>
         <summary>What the payment network sees</summary>
         <dl class="kv">
@@ -81,6 +84,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/passkey.js"></script>
+  <script src="/js/guardrails.js"></script>
   <script src="/js/pages/exit.js"></script>
 </body>
 </html>

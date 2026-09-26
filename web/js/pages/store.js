@@ -48,6 +48,7 @@
       PAID: "Paid. Thanks for shopping!",
       CLOSED: "Nothing to pay, see you soon.",
       CANCELLED: "Your session was ended by staff.",
+      RETURNING: "A return is in progress. Finish it on your receipt.",
     }[state] || "Your session has ended.";
     renderOutside("Session ended", text);
   }
@@ -103,6 +104,7 @@
   function render(snap) {
     if (!snap) { renderNoSession(); return; }
     if (!ACTIVE.includes(snap.state)) { renderEnded(snap.state, snap.session_id); return; }
+    if (!current) Guardrails.mount($("guardrails"), { open: false }); // entering: this member's limits
     current = snap;
     show("shopping");
     $("session-id").textContent = "#" + snap.session_id.slice(-4);

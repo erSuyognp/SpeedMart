@@ -10,8 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import (admin, auth_passkeys, db, eventlog, intent, kiosk, members, routes_api, serial_bridge,
-                     shelf_state, store, voice, ws)
+from backend import (admin, auth_passkeys, db, eventlog, intent, kiosk, members, returns, routes_api,
+                     serial_bridge, shelf_state, store, voice, ws)
 from backend.settings import WEB_DIR, settings
 
 
@@ -83,6 +83,7 @@ if SESSION_HTTPS_ONLY:  # added last, so it wraps SessionMiddleware and sees the
     app.add_middleware(PlainHttpCookieFix)
 app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
+app.include_router(returns.router)
 app.include_router(members.router)
 app.include_router(auth_passkeys.router)
 app.include_router(admin.public)
