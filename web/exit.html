@@ -1,1 +1,66 @@
-<!-- Exit gate: receipt review + approve (QR C target). Filled in by S3.4 / S4.1. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · Exit</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <h1>Exit gate</h1>
+      <p class="muted">Review and approve</p>
+    </header>
+
+    <section id="notice" class="card notice">
+      <div id="notice-icon" class="big-icon brand" aria-hidden="true">…</div>
+      <h2 id="notice-title">Loading your receipt…</h2>
+      <p id="notice-text" class="muted"></p>
+      <div class="stack">
+        <a id="notice-link" class="button primary block" href="/store.html" hidden>Go to your cart</a>
+      </div>
+    </section>
+
+    <div id="review" class="stack" hidden>
+      <section id="declined" class="strip bad" role="alert" hidden></section>
+      <section id="over-scope" class="strip warn" role="alert" hidden></section>
+
+      <section class="card">
+        <h2>Your items</h2>
+        <ul id="items" class="cart-list"></ul>
+        <div class="totals" style="margin-top:12px">
+          <span class="muted">Subtotal</span><span id="subtotal">$0.00</span>
+          <span class="muted">Tax</span><span id="tax">$0.00</span>
+          <span class="grand">Total</span><span id="total" class="grand">$0.00</span>
+        </div>
+        <p id="card-line" class="muted small" style="margin:12px 0 0"></p>
+      </section>
+
+      <details id="network" class="card panel" hidden>
+        <summary>What the payment network sees</summary>
+        <dl class="kv">
+          <dt>Agent</dt><dd id="n-agent"></dd>
+          <dt>Merchant</dt><dd id="n-merchant"></dd>
+          <dt>Max amount</dt><dd id="n-max"></dd>
+          <dt>Single use</dt><dd id="n-single"></dd>
+          <dt>Expires</dt><dd id="n-expires"></dd>
+          <dt>Intent</dt><dd id="n-intent"></dd>
+        </dl>
+        <p id="n-label" class="muted small"></p>
+        <pre id="n-json" class="json"></pre>
+      </details>
+
+      <button id="approve-btn" class="primary block" type="button" hidden>Approve</button>
+      <button id="cancel-btn" class="block" type="button">Keep shopping</button>
+    </div>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/passkey.js"></script>
+  <script src="/js/pages/exit.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
 | S3.1 tunnel | done |
 | S3.2 signup, members, demo account | done |
 | S3.3 passkeys | done (needs phones, see checklist) |
+| S3.4 gates, store lock, QR | done |
 
 ## Decisions
 
@@ -92,6 +93,33 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   (P-256, "none" attestation), so two extra tests run the **real** py_webauthn checks: register + sign in succeeds;
   wrong origin, missing user verification and a replayed challenge are refused.
 
+### S3.4 gates, store lock, QR
+
+- **`config.json` has `gates: false` tonight** (set before this session; I did not change it). All gate code is
+  guarded and tested with the flag both ways. Turn it on for the QR demo (Morning checklist).
+- **Gate routes with gates off** answer 404 `gates_off`, mirroring the S1.3 dev routes, which are 404 with gates on.
+  `enter.html` then says "Gates are off today" with a link to the cart, and `exit.html` without a token takes its
+  quote from `/api/dev/checkout`. The cart's "Checkout" button now opens `exit.html`, so the gates-off path gets
+  the same review, approval and receipt screens.
+- **Order of checks at `gate/enter`:** token (403) -> signed in (401 `not_logged_in`) -> already inside (200, same
+  session, nothing consumed) -> occupied (409 with `occupant_first_name`) -> vision fresh (503) -> fresh Face ID
+  (401 `not_verified`, consumed here) -> start session (the lock is checked again under `store._lock`). Refusals
+  that need no Face ID come first, so a shopper who hits "occupied" can retry within 90 s without another prompt.
+  On success the gate LED gets `GATE,OPEN` for 3 s via `serial_bridge.send_timed`.
+- **`gate/exit/quote`:** re-quoting a pending checkout (rescan, page reload) returns the same frozen cart instead
+  of an error, and an **empty cart closes the session** (7.1: "Nothing to pay, see you soon", `instruction: null`,
+  no payment row). `/api/dev/checkout` shares this code. Three S1.3 tests in `tests/test_live.py` expected the
+  old placeholder behaviour (freeze an empty cart, 409 on a second checkout); I updated them to the spec behaviour
+  and added `test_dev_checkout_with_empty_cart_closes_session`.
+- **`gate/exit/cancel`** needs no gate token (the shopper is standing at the exit page) and is a no-op when the
+  session is already back in the store. It works with gates off too.
+- **QR codes:** `scripts/gen_qr.py` reads `.env` with python-dotenv directly (no SESSION_SECRET needed), URL-encodes
+  the tokens, and writes `qr/1_join.png`, `qr/2_enter.png`, `qr/3_exit.png`, `qr/all.pdf` (one Letter page per
+  code at 300 DPI) with a big "1 · JOIN" style label and the URL in small print. I added `qr/` to `.gitignore`
+  (outside my file list): codes 2 and 3 contain the gate tokens.
+- **The gate tokens in `.env` are the spec's example values** (`entry-7d2f`, `exit-91ac`), which are public in
+  the spec. Change them before printing (Morning checklist).
+
 ## Morning checklist
 
 ### 1. Tunnel (S3.1)
@@ -115,3 +143,15 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
    Expected: `{"ok":true,...}` (the free ngrok domain may first show an ngrok "Visit Site" interstitial; tap it once).
 6. In desktop Chrome DevTools on the tunnel URL, Application → Cookies: after any login the `session` cookie
    shows `Secure` ticked.
+
+### 2. Gate tokens and QR codes (S3.4)
+
+1. Put new random gate tokens in `.env`. PowerShell, run twice and paste one value into each line:
+   `.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(6))"`
+   then set `ENTRY_GATE_TOKEN=entry-<value>` and `EXIT_GATE_TOKEN=exit-<value>`. Restart the backend.
+2. Turn the gates on: in `config.json` set `"gates": true`. Restart the backend.
+3. `.venv\Scripts\python.exe scripts\gen_qr.py` -> prints four `wrote qr\...` lines.
+4. Open `qrll.pdf`: three pages, labels "1 · JOIN", "2 · ENTER", "3 · EXIT", URLs on
+   `https://stump-isotope-glorious.ngrok-free.dev`. Print at 100% or show on a tablet.
+5. Scan each code with a phone camera: 1 opens the join page, 2 the entry gate ("Enter with Face ID"), 3 the exit
+   page ("You're not in the store" until you have entered).

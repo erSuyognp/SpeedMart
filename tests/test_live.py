@@ -151,7 +151,23 @@ def test_dev_checkout_freezes_cart(tmp_data):
         assert qty(r.json()["cart"], "elx") == 1
         r = client.post("/admin/override", json={"sku": "elx", "delta": 1})
         assert r.status_code == 409 and r.json()["error"] == "no_active_session"
-        assert client.post("/api/dev/checkout").status_code == 409
+        # S3.4: checking out again (page reload) returns the same frozen cart instead of an error.
+        again = client.post("/api/dev/checkout")
+        assert again.status_code == 200 and again.json()["cart"]["session_id"] == r_session(client)
+        assert qty(again.json()["cart"], "elx") == 1
+
+
+def r_session(client) -> str:
+    return client.get("/api/store/current").json()["session"]["id"]
+
+
+def test_dev_checkout_with_empty_cart_closes_session(tmp_data):
+    """7.1: exit with an empty cart -> CLOSED, no payment."""
+    with TestClient(app) as client:
+        enter_store(client)
+        r = client.post("/api/dev/checkout")
+        assert r.status_code == 200 and r.json()["cart"]["state"] == "CLOSED" and r.json()["instruction"] is None
+        assert store.current_session() is None
 
 
 def test_overrides_survive_backend_restart(tmp_data):
@@ -187,6 +203,7 @@ def test_dev_routes_work_for_admin_when_gates_on(tmp_data, monkeypatch):
     set_gates(monkeypatch, True)
     with TestClient(app) as client:
         enter_store(client)  # admin + demo-login in one cookie
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
         r = client.post("/api/dev/checkout")
         assert r.status_code == 200 and r.json()["cart"]["state"] == "CHECKOUT_PENDING"
 
@@ -199,5 +216,6 @@ def test_dev_routes_work_for_members_when_gates_off(tmp_data, monkeypatch, membe
         r = client.post("/api/dev/start")
         assert r.status_code == 200, r.text
         assert r.json()["session"]["member_id"] == member_id
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
         r = client.post("/api/dev/checkout")
         assert r.status_code == 200 and r.json()["cart"]["state"] == "CHECKOUT_PENDING"

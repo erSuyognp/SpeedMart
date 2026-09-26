@@ -1,1 +1,42 @@
-<!-- Entry gate page (QR B target). Filled in by S3.4. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · Entry gate</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <h1>Entry gate</h1>
+      <p class="muted">SpeedMart</p>
+    </header>
+
+    <section class="card notice">
+      <div id="icon" class="big-icon brand" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 21h16"/><path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><circle cx="14.5" cy="12.5" r="0.9" fill="currentColor"/>
+        </svg>
+      </div>
+      <h2 id="title">Loading…</h2>
+      <p id="text" class="muted"></p>
+      <div id="spinner" class="spinner" hidden></div>
+      <div class="stack">
+        <button id="enter-btn" class="primary block" type="button" hidden>Enter with Face ID</button>
+        <a id="cart-link" class="button primary block" href="/store.html" hidden>Go to your cart</a>
+        <a id="join-link" class="button block" href="/" hidden>New here? Join first</a>
+      </div>
+    </section>
+
+    <section id="error" class="strip bad" role="alert" hidden></section>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/passkey.js"></script>
+  <script src="/js/pages/enter.js"></script>
+</body>
+</html>

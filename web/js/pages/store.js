@@ -6,6 +6,7 @@
   const ACTIVE = ["IN_STORE", "CHECKOUT_PENDING"];
   let gates = true;
   let current = null; // last CartSnapshot rendered
+  let paidSession = null; // session id once PAID, so CLOSED afterwards still says "Paid"
 
   function show(which) {
     $("loading").hidden = which !== "loading";
@@ -20,12 +21,14 @@
     dot.setAttribute("aria-label", dot.title);
   }
 
-  function renderOutside(title, text) {
+  function renderOutside(title, text, receiptFor) {
     current = null;
     $("session-id").textContent = "";
     $("outside-title").textContent = title;
     $("outside-text").textContent = text;
-    $("start-wrap").hidden = gates; // gates-off fallback only
+    $("start-wrap").hidden = gates || !!receiptFor; // gates-off fallback only
+    $("receipt-link").hidden = !receiptFor;
+    if (receiptFor) $("receipt-link").href = "/receipt.html?s=" + encodeURIComponent(receiptFor);
     show("outside");
   }
 
@@ -34,7 +37,12 @@
       gates ? "Scan the ENTRY code at the door to start shopping." : "Tap Start shopping to begin.");
   }
 
-  function renderEnded(state) {
+  function renderEnded(state, sessionId) {
+    if (state === "PAID") paidSession = sessionId || paidSession;
+    if (paidSession && (state === "PAID" || (state === "CLOSED" && sessionId === paidSession))) {
+      renderOutside("Session ended", "Paid. Thanks for shopping!", paidSession);
+      return;
+    }
     const text = {
       PAID: "Paid. Thanks for shopping!",
       CLOSED: "Nothing to pay, see you soon.",
@@ -93,7 +101,7 @@
 
   function render(snap) {
     if (!snap) { renderNoSession(); return; }
-    if (!ACTIVE.includes(snap.state)) { renderEnded(snap.state); return; }
+    if (!ACTIVE.includes(snap.state)) { renderEnded(snap.state, snap.session_id); return; }
     current = snap;
     show("shopping");
     $("session-id").textContent = "#" + snap.session_id.slice(-4);
@@ -121,7 +129,8 @@
       ? "Checking out. Finish at the exit gate."
       : "Checkout started. Your cart is frozen.";
     $("exit-hint").hidden = !gates || pending;
-    $("checkout-btn").hidden = gates || pending;
+    $("checkout-btn").hidden = gates;
+    $("checkout-btn").textContent = pending ? "Finish checkout" : "Checkout";
   }
 
   async function resync(res) {
@@ -152,6 +161,8 @@
       render(msg.data);
     } else if (msg.type === "agent" && current) {
       renderAgent(msg.data.line); // agent lines arrive in S4.3
+    } else if (msg.type === "gate" && msg.data.event === "paid" && current) {
+      paidSession = current.session_id;
     } else if (msg.type === "gate" && msg.data.event === "cancelled") {
       api.toast("Your session was ended by staff.");
     }
@@ -159,7 +170,8 @@
 
   async function init() {
     $("start-btn").addEventListener("click", (e) => action(e.currentTarget, "/api/dev/start"));
-    $("checkout-btn").addEventListener("click", (e) => action(e.currentTarget, "/api/dev/checkout"));
+    // Gates off: the exit page does the quote (/api/dev/checkout), approval and receipt.
+    $("checkout-btn").addEventListener("click", () => { location.href = "/exit.html"; });
     try {
       const cfg = await api.config();
       gates = !!cfg.features.gates;
