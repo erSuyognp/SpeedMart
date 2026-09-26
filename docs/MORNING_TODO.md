@@ -21,7 +21,7 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
       ```powershell
       Remove-Item scripts\*.sh; git checkout -- scripts
       ```
-- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **348 passed**.
+- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **506 passed, 1 skipped**.
 - [ ] **Try the new Windows runner** (it replaces the two-window fallback the overnight notes described).
       It starts uvicorn, ngrok and the vision worker, prefixes their output, and stops all three on Ctrl+C.
       ```powershell
@@ -84,11 +84,11 @@ clean but **nothing here was run on hardware**.
 
 - [ ] **Print the bay number cards:**
       ```powershell
-      .venv\Scripts\python.exe scripts\gen_bay_cards.py
+      .venv\Scripts\python.exe scripts\gen_bay_cards.py --out tags\speedmart_bay_cards.pdf
       ```
-      Open `tagsay_cards.pdf`, print at 100% ("fit to page" off). Cut out cards **1 to 5** (big number, product
+      Open `tags\speedmart_bay_cards.pdf`, print at 100% ("fit to page" off). Cut out cards **1 to 5** (big number, product
       name underneath) and **tape them to the shelf front**, left to right, each under its product: card 1 under
-      bay id 0 (Electrolyte tabs) … card 5 under bay id 4 (Vegan trail mix). The same numbers show on every
+      bay id 0 (Hydration drink), then Energy drink, Chips, Water, and card 5 under bay id 4 (Vegan snack). The same numbers show on every
       shelf map, so a mismatch sends shoppers to the wrong bay. Keep the cards out of the camera's bay ROIs.
 - [ ] Find the port: `.venv\Scripts\python.exe -m backend.serial_bridge --list-ports`.
 - [ ] Flash (`pio` is not on PATH on this machine; the first build downloads the U8g2 font library, ~2 min):
@@ -142,8 +142,8 @@ clean but **nothing here was run on hardware**.
 - [ ] End to end: close the monitor, start the backend, admin demo-login, start a session. The LCD shows
       "Welcome, Demo", then "$0.00 / 0 items" after 3 s. Pick an item → the total counts up in about 1 s.
       Admin reset → the logo idle screen after 3 s.
-- [ ] With a session running, make a plan on the phone (`intent.html`, "Post run recovery under $15") → the LCD
-      shows the "Find bay" badges for 6 s, then the total again.
+- [ ] With a session running, make a plan on the phone (`intent.html`, chip "Rehydrate after a run") → the LCD
+      shows the "Find bay" badges 1 and 4 for 6 s, then the total again.
 - [ ] **Unplug and replug USB**: the screen comes back to the current state (resync on `READY`).
 - [ ] If the display stays black but `READY` and `PONG` work, the panel did not answer at boot (GPIO 15 power
       enable, or a bad flash): reflash once. The firmware keeps serial and the button alive when the LCD fails,
@@ -165,7 +165,7 @@ and start a session so the cart is visible.
       `r` redo all, `s` save, `q` quit. Saving rewrites only `bays[].roi`, so check with `git diff config.json`.
       Restart the worker afterwards.
 - [ ] **Print the new tags:** `.venv\Scripts\python.exe scripts\gen_aruco.py` now writes **10 tags on 2 pages**
-      (IDs 0 to 9; 6 and 7 are sparkling water, 8 and 9 vegan trail mix). Print at 100% scale with "fit to page"
+      (IDs 0 to 9; 6 and 7 are water, 8 and 9 vegan snack). Print at 100% scale with "fit to page"
       **off**, then measure a black square: 6.0 cm.
 
 | # | Do | Expect |
@@ -231,19 +231,20 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
 - [ ] Scan **QR 2** → **Enter with Face ID** → Face ID. Expect "Welcome in, `<name>`", the LCD showing "Welcome, `<name>`" then the total, and the cart page with a green live dot.
 - [ ] **Second phone** (or a desktop signed in as another member) scans QR 2 while the first shopper is inside.
       Expect "Someone is shopping right now. Try again in a minute." and `<name> is shopping` on the LCD for 3 s.
-- [ ] Take one electrolyte off the shelf → row "Electrolyte tabs × 1 $8.00", total **$8.64**, LCD total updates.
-- [ ] Scan **QR 3**. Expect the itemized preview, total $8.64, "Paying with Demo card · Visa test •••• 4242 · not your card", and the
+- [ ] Take one hydration drink off the shelf → row "Hydration drink × 1 $3.50", total **$3.78**, LCD total updates.
+- [ ] Scan **QR 3**. Expect the itemized preview, total $3.78, "Paying with Demo card · Visa test •••• 4242 · not your card", and the
       collapsible **"What the payment network sees"** (agent, merchant SpeedMart #01, max $20.00, single use,
-      expiry, intent "Pay $8.64 to SpeedMart #01 for 1 item", sandbox label). Button **Approve $8.64 with Face ID**.
+      expiry, intent "Pay $3.78 to SpeedMart #01 for 1 item", sandbox label). Button **Approve $3.78 with Face ID**.
 - [ ] Tap **Keep shopping** → back on the cart page, cart live again. Scan QR 3 again.
 - [ ] Admin page → turn **force-decline on**. Tap Approve → Face ID. Expect red "Declined: Card declined
       (sandbox: forced by staff). You can try again.", **LCD `DECLINED` for 4 s then
       back to the total**, button "Try again with Face ID".
 - [ ] Turn force-decline **off** → **Try again with Face ID** → Face ID. Expect **LCD
-      `APPROVED` with the auth code**, and the receipt page: green check, "Paid $8.64", card label, auth code,
-      "+8 points · 8 total", "Show payment record" JSON. `data\payments.log.jsonl` has a DECLINED and an
+      `APPROVED` with the auth code**, and the receipt page: green check, "Paid $3.78", card label, auth code,
+      "+3 points · 3 total", "Show payment record" JSON. `data\payments.log.jsonl` has a DECLINED and an
       AUTHORIZED line.
-- [ ] **Over budget:** sign up with budget $10, enter, take two electrolytes ($17.28), scan QR 3. Expect amber
+- [ ] **Over budget:** sign up with budget $10, enter, take the hydration drink, the energy drink and the vegan
+      snack ($11.34; the phone says "$1.34 over budget", put back the Vegan snack), scan QR 3. Expect amber
       "This is over your $10.00 limit. Put something back to continue." and **no approve button**. Keep shopping,
       put one back, scan QR 3 again → approve works.
 - [ ] **Empty cart:** enter, take nothing, scan QR 3 → "Nothing to pay, see you soon" and the store is free.
@@ -265,7 +266,7 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
       ```
       Type `yes`. Expect `status succeeded`, `amount $1.00 USD` and a dashboard link. Check
       https://dashboard.stripe.com/test/payments for "SpeedMart smoke test", Succeeded.
-- [ ] After a real app charge (section 6), the Stripe **test** dashboard shows $8.64, description
+- [ ] After a real app charge (section 6), the Stripe **test** dashboard shows $3.78, description
       "SpeedMart #01", metadata `session_id` and `instruction_id` matching the receipt, and a customer named
       after the member with the Visa 4242 test card attached. The receipt meta says "Stripe test mode" and the
       auth code is the last 6 characters of the PaymentIntent id.
@@ -282,37 +283,56 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
 
 With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
 
-- [ ] Enter the store, pick electrolytes → a **recovery drink suggestion** on the phone within ~2 s. Check
-      `data\events.log.jsonl` for `agent_line` with `"source": "llm"`.
-- [ ] Pick 2 electrolytes + 1 protein bar on a $20 budget → the phone says you're **$1.06 over** and suggests
-      putting back the Electrolyte tabs.
-- [ ] Put a protein bar in bay 0 → the **misplaced** line appears.
+- [ ] Enter the store, pick chips → an **energy drink suggestion that says it has caffeine** on the phone within
+      ~2 s. Check `data\events.log.jsonl` for `agent_line` with `"source": "llm"` (a reply that leaves out
+      caffeine is rejected and the template line shows instead, which also says caffeine).
+- [ ] Pick a water → a **hydration drink suggestion** at $3.50 (no caffeine mention).
+- [ ] Pick 2 vegan snacks + 2 hydration drinks + 2 energy drinks on a $20 budget ($22.68) → the phone says
+      you're **$2.68 over** and suggests putting back the Vegan snack.
+- [ ] Put a bag of chips in bay 0 → the **misplaced** line appears ("Chips is in the wrong bay. Please return
+      it to bay 3.").
 - [ ] Blank `ANTHROPIC_API_KEY`, restart → **template lines still appear**, no errors in the log.
 - [ ] Watch for `agent_llm_rejected` events. If good lines are being rejected over a capitalised word we did
       not expect, add it to `_ALWAYS_OK` in `backend/agent.py`.
 
 ### 7c. "Tell us what you need" (F18)
 
-- [ ] On the cart page, tap **Tell us what you need** → `intent.html`. Tap the chip "Post run recovery under $15".
-      Expect Electrolyte tabs + Recovery drink, est. total $12.96, budget $15.00, and "Planned by the store AI…"
+- [ ] On the cart page, tap **Tell us what you need** → `intent.html`. Tap the chip "Rehydrate after a run".
+      Expect Hydration drink + Water, est. total $5.40, budget $20.00, and "Planned by the store AI…"
       (or "…by keyword match" if the LLM is off or slow).
+- [ ] The other chips: "Study session fuel" → Energy drink + Chips, $5.94, and the Energy drink's reason
+      mentions caffeine. "Vegan snack and a drink" → Water + Vegan snack, $5.94 (never the chips or the energy
+      drink).
 - [ ] **Glowing bays:** under the plan cards a shelf map shows bays 1 to 5 with product names and counts; the
-      planned bays glow and pulse, and the strip says "Look for bay 1 and bay 2, they're glowing on your
+      planned bays glow and pulse, and the strip says "Look for bay 1 and bay 4, they're glowing on your
       screen." The cart page's small shelf map glows the same bays. They stop on **Start over** and when the
       session ends. With **Reduce motion** on (iPhone: Settings → Accessibility → Motion) the glow stays but
-      does not pulse. With `hardware_leds: true` the gate screen also shows "Find bay 1 and 2" (section 3).
+      does not pulse. With `hardware_leds: true` the gate screen also shows "Find bay 1 and 4" (section 3).
 - [ ] **Phone mic.** Android Chrome: the mic button appears; tap it, say "something to drink", and the plan
       appears when you stop talking. iPhone Safari: works only on iOS 14.5+ **over the tunnel**. If the button
       is missing it hides itself — that is expected, not a bug. *(Speech was never tested overnight — no microphone.)*
 - [ ] **With a plan active, pick items and watch the agent line** — it should now reference your goal
-      ("…right on track for post run recovery"). This is new at integration; if the lines ignore the goal,
+      ("…right on track for rehydrate after a run"). This is new at integration; if the lines ignore the goal,
       check `agent_llm_rejected` in the event log.
 - [ ] **Exit screen comparison:** with a plan active, scan QR 3. Above the receipt preview expect a line like
-      "You asked for post run recovery under $15: you have both items, $12.96." With no plan, nothing shows.
+      "You asked for rehydrate after a run under $20: you have both items, $5.40." With no plan, nothing shows.
 - [ ] LLM latency: `Get-Content data\events.log.jsonl -Tail 20 | Select-String intent_plan` —
       `"source": "llm"` means the AI planned it; `"fallback_reason"` says why rules answered instead.
 
-### 7d. The kiosk tablet (Dell Venue, 10", landscape)
+### 7d. Disputes and the auto refund line (F20)
+
+- [ ] `config.json` has `"disputes": {"auto_refund_max_usd": 2.00}`. Only the Water ($1.62 with tax) is under it.
+- [ ] **Instant AI refund:** while shopping, stick a blank note over one Water's tag and leave the bottle in
+      bay 4 (the camera now charges for it). Pay, then on the receipt tap **Report a problem** → Water. Within
+      about 20 s: "Refunded $1.62 after a review of the shelf photos", and the admin card says "Auto approved by
+      policy". Peel the note off.
+- [ ] **Admin review queue:** take an Energy drink for real, pay, **Report a problem** → Energy drink ($3.24).
+      The laptop chimes, the **Review queue** badge turns red, the card shows the verdict and the clip. **Keep
+      the charge** with a note → the receipt says "Charge confirmed" with the note. The AI never keeps or denies
+      a charge on its own.
+- [ ] Set `auto_refund_max_usd` to `0`, restart → every dispute waits for a person. Set it back to `2.00`.
+
+### 7e. The kiosk tablet (Dell Venue, 10", landscape)
 
 - [ ] Open the entrance kiosk in Edge kiosk mode:
       ```powershell
@@ -328,7 +348,7 @@ With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
 - [ ] **Shelf map** at the bottom: five bays with the card numbers 1 to 5, product names and "2 on shelf",
       readable from about 2 m. Take an item off the shelf → its count drops within ~5 s. Make a plan on a phone
       (store occupied by that shopper, or empty) → the planned bays glow **immediately** and the hint reads
-      "Glowing: bay 1 and bay 2 are on a shopper's list." **Start over** on the phone → the glow stops. No name
+      "Glowing: bay 1 and bay 4 are on a shopper's list." **Start over** on the phone → the glow stops. No name
       ever appears on this screen.
 - [ ] Start a session → the banner goes amber. Kill the backend → grey "Reconnecting…" **and the QR codes stay
       on screen**. Restart → green "Open" with no reload.
@@ -338,7 +358,7 @@ With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
       the demo.**
 - [ ] If there is only one tablet, run the **entrance** page; the exit variant assumes a second screen.
 
-### 7e. The phone UI on real devices
+### 7f. The phone UI on real devices
 
 - [ ] **iPhone over the tunnel:** notch and home-indicator padding on the header, bottom action bar, toast and
       footer; **Add to Home Screen** (name SpeedMart, right icon, opens standalone); dark mode; and that the
@@ -381,7 +401,7 @@ Fusion check without a camera (backend running, worker stopped):
 .venv\Scripts\python.exe scripts\fake_shelf.py --yolo loop
 ```
 Type `c1` + Enter (cover tag 1): with `"yolo": true` the cart does **not** change; with `"yolo": false`
-Electrolyte tabs enter the cart. Type `1` + Enter (really remove unit 1): it enters the cart either way.
+a Hydration drink enters the cart. Type `1` + Enter (really remove unit 1): it enters the cart either way.
 
 ---
 
@@ -403,7 +423,7 @@ Electrolyte tabs enter the cart. Type `1` + Enter (really remove unit 1): it ent
       item **names** to the LLM (never its prices, which the validator would reject) and allows the goal's own
       words in the reply. No plan means no `goal` key, exactly as before.
 - [ ] **Gate tokens in `.env` are still the spec's public example values** until you do section 2.
-- [ ] Decide whether the kiosk's **NFC hint** stays (section 7d).
+- [ ] Decide whether the kiosk's **NFC hint** stays (section 7e).
 
 ---
 

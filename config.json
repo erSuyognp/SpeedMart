@@ -21,6 +21,9 @@
     "default_budget_usd": 20,
     "max_session_minutes": 15
   },
+  "disputes": {
+    "auto_refund_max_usd": 2.00
+  },
   "camera": {
     "index": 1,
     "width": 1280,

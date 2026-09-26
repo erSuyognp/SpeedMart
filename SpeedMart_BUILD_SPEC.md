@@ -310,9 +310,11 @@ Every **physical unit** has its own ArUco tag ID. Multiple units can share a SKU
 ```json
 {
   "skus": [
-    {"sku": "elx", "name": "Electrolyte tabs", "price_usd": 8.00, "tags": ["recovery"], "yolo_class": "electrolytes"},
-    {"sku": "rec", "name": "Recovery drink",   "price_usd": 4.00, "tags": ["drink", "complements:elx"], "yolo_class": "recovery_drink"},
-    {"sku": "bar", "name": "Protein bar",      "price_usd": 3.50, "tags": ["snack"], "yolo_class": "protein_bar"}
+    {"sku": "elx", "name": "Hydration drink", "price_usd": 3.50, "tags": ["drink", "hydration", "complements:wat"], "yolo_class": "hydration_drink"},
+    {"sku": "rec", "name": "Energy drink",    "price_usd": 3.00, "tags": ["drink", "caffeine", "complements:bar"], "yolo_class": "energy_drink"},
+    {"sku": "bar", "name": "Chips",           "price_usd": 2.50, "tags": ["snack", "complements:rec"], "yolo_class": "chips"},
+    {"sku": "wat", "name": "Water",           "price_usd": 1.50, "tags": ["drink", "hydration", "vegan", "complements:mix"], "yolo_class": "water"},
+    {"sku": "mix", "name": "Vegan snack",     "price_usd": 4.00, "tags": ["snack", "vegan", "complements:wat"], "yolo_class": "vegan_snack"}
   ],
   "units": [
     {"tag_id": 0, "sku": "elx", "home_bay": 0},
@@ -320,12 +322,18 @@ Every **physical unit** has its own ArUco tag ID. Multiple units can share a SKU
     {"tag_id": 2, "sku": "rec", "home_bay": 1},
     {"tag_id": 3, "sku": "rec", "home_bay": 1},
     {"tag_id": 4, "sku": "bar", "home_bay": 2},
-    {"tag_id": 5, "sku": "bar", "home_bay": 2}
+    {"tag_id": 5, "sku": "bar", "home_bay": 2},
+    {"tag_id": 6, "sku": "wat", "home_bay": 3},
+    {"tag_id": 7, "sku": "wat", "home_bay": 3},
+    {"tag_id": 8, "sku": "mix", "home_bay": 4},
+    {"tag_id": 9, "sku": "mix", "home_bay": 4}
   ]
 }
 ```
 
-To add SKUs 4 and 5 (chips, water) later: add rows to `skus`, `units`, and `bays`. No code changes.
+SKU codes are short internal ids and never shown; only `name` reaches a screen. `complements:<sku>` on a SKU
+means "suggest me when <sku> is in the cart" (7.4). The agent says "has caffeine" whenever it suggests a SKU
+tagged `caffeine`. To add a SKU later: add rows to `skus`, `units`, and `bays`. No code changes.
 
 ---
 
@@ -758,25 +766,27 @@ Plans live in memory, one per member, and are lost on a backend restart.
 ```json
 {
   "plan_id": "pln_Ab3xY9",
-  "goal_summary": "run recovery",
+  "goal_summary": "rehydrate after a run",
   "items": [
-    {"sku": "elx", "name": "Electrolyte tabs", "qty": 1, "unit_price_usd": 8.00,
-     "reason": "Replaces salts lost on your run"}
+    {"sku": "elx", "name": "Hydration drink", "qty": 1, "unit_price_usd": 3.50,
+     "reason": "Keeps you hydrated"},
+    {"sku": "wat", "name": "Water", "qty": 1, "unit_price_usd": 1.50,
+     "reason": "Keeps you hydrated"}
   ],
-  "est_total_usd": 12.96,
-  "budget_usd": 15.00,
+  "est_total_usd": 5.40,
+  "budget_usd": 10.00,
   "fits_budget": true,
-  "bays": [0, 1],
+  "bays": [0, 3],
   "source": "llm",
   "created_at": "2026-09-26T02:14:03Z"
 }
 ```
 
 `est_total_usd` includes tax, like `CartSnapshot.total_usd`, so a plan and a cart compare like for like.
-`budget_usd` is the **lowest** of the member's budget, any dollar amount in the text ("under $15") and the
+`budget_usd` is the **lowest** of the member's budget, any dollar amount in the text ("under $10") and the
 LLM's own override — an override may only lower it. `source` is `"llm"` or `"rules"`. `bays` are the bays
 holding the planned SKUs; they glow on every shelf map (`plan_bays`, 8.4) while the plan is current, and with
-F12 on the gate screen shows `DISP,FIND,<cards>` ("Find bay 2 and 4") for 6 s. There are no bay LEDs.
+F12 on the gate screen shows `DISP,FIND,<cards>` ("Find bay 1 and 4") for 6 s. There are no bay LEDs.
 An empty `items` list is a valid rules plan ("nothing on our shelf matches that yet"); an empty list from
 the LLM is invalid and falls back to rules.
 
@@ -1599,11 +1609,11 @@ The MCU is a dumb display and sensor hat. No cart logic on the ESP32. Timed effe
 Before each judge: admin reset, shelf full, LEDs on, overlay visible, phone for "Demo Shopper" ready in case the judge's phone fails.
 
 1. **Hook (10 s):** "Stores already watch shelves with cameras. SpeedMart lets that camera build your cart, but only you can say yes to the charge."
-2. **Join (20 s):** judge scans QR 1, types a name, Face ID. "That's a passkey. Your face never leaves your phone; your phone vouches for you."
+2. **Join (20 s):** judge scans QR 1, types a name, sets the budget to $10, Face ID. "That's a passkey. Your face never leaves your phone; your phone vouches for you."
 3. **Enter (10 s):** scan QR 2, Face ID, gate LED turns green. "You're in. One shopper at a time, no one else is tracked."
-4. **Pick (15 s):** judge grabs electrolytes. Point at the overlay, then the phone: row appears, bay LED goes dark, agent line suggests the recovery drink.
+4. **Pick (15 s):** judge grabs the chips. Point at the overlay, then the phone: row appears, agent line suggests the energy drink and says it has caffeine ("Chips added. Energy drink has caffeine, pairs well at $3 and keeps you under budget.").
 5. **Put back (10 s):** put it back, row disappears. "It reads the shelf, not a script."
-6. **Real cart (10 s):** grab electrolytes and a protein bar. Show budget bar.
+6. **Over budget (15 s):** grab the hydration drink, the energy drink and the vegan snack: $11.34 on the $10 budget. The budget bar turns red and the agent says "You're $1.34 over budget. Putting back the Vegan snack fixes it." Put it back: $7.02.
 7. **Exit (15 s):** scan QR 3. Open "What the payment network sees": scoped single-use agent token, intent sentence. Face ID to approve. Shelf flashes green. Receipt with auth code and points.
 8. **Close (10 s):** "The shelf agent assembled the cart. The shopper authorized it. Agentic commerce you can hold."
 
@@ -1621,7 +1631,7 @@ If vision misbehaves: a teammate uses the admin override, and if a judge asks, s
 | What does the AI actually do? | A deterministic policy decides (budget, complements, misplaced items) and the LLM phrases it for the shopper. If the LLM is down, templates keep it working. |
 | How accurate is detection? | Tags give identity; motion freeze prevents hand flicker; (if on) YOLO covers occluded tags. Show the 10/10 test. |
 | What if the cart is wrong? | Tap "Not mine?". The store rechecks the shelf: if the camera sees it back, it's removed at once. If not, you see the shelf photos from when you walked in and now, and can remove it anyway (twice per visit, then staff). After paying, "Report a problem" refunds it the same way. Photos are bay crops only and are deleted after the visit. |
-| Can the AI deny a refund? | No. It reviews the shelf clips and can only speed up small refunds it clearly supports (under $5). Everything else, and every "keep the charge", is a person's decision on the admin page, with a note the shopper sees. |
+| Can the AI deny a refund? | No. It reviews the shelf clips and can only speed up small refunds it clearly supports (under $2, `config.json` `disputes.auto_refund_max_usd`, so only the Water). Everything else, and every "keep the charge", is a person's decision on the admin page, with a note the shopper sees. |
 
 ---
 

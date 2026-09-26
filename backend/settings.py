@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ class SettingsError(Exception):
 #   "fusion" tags + YOLO, max(tag_count, yolo_count) per bay per SKU (the default; tags only while features.yolo is off).
 VISION_MODES = ("tags", "yolo", "fusion")
 DEFAULT_VISION_MODE = "fusion"
+DEFAULT_AUTO_REFUND_MAX_USD = 2.00  # config.json disputes.auto_refund_max_usd when the section is absent
 
 
 def effective_vision_mode(mode: str, yolo_on: bool) -> str:
@@ -116,6 +117,7 @@ class Settings:
     bays: list[Bay]
     skus: dict[str, Sku]
     units: dict[int, Unit]
+    disputes: dict[str, Any] = field(default_factory=lambda: {"auto_refund_max_usd": DEFAULT_AUTO_REFUND_MAX_USD})
 
     @property
     def vision_mode(self) -> str:
@@ -197,6 +199,12 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
     except (KeyError, TypeError, ValueError) as e:
         raise SettingsError(f"malformed entry in config.json bays or catalog.json skus/units: {e!r}") from e
 
+    disputes = dict(config.get("disputes") or {})  # optional section: F20 dispute review settings
+    disputes.setdefault("auto_refund_max_usd", DEFAULT_AUTO_REFUND_MAX_USD)
+    line = disputes["auto_refund_max_usd"]
+    if isinstance(line, bool) or not isinstance(line, (int, float)) or line < 0:
+        errors.append(f"config.json: disputes.auto_refund_max_usd must be a dollar amount of 0 or more, got {line!r}")
+
     bay_ids = {b.id for b in bays}
     for b in bays:
         if b.sku not in skus:
@@ -224,6 +232,7 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
         bays=bays,
         skus=skus,
         units=units,
+        disputes=disputes,
     )
 
 

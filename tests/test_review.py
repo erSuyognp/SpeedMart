@@ -4,7 +4,6 @@ startup probe. The model is mocked everywhere; no test reaches the network."""
 
 from __future__ import annotations
 
-import dataclasses
 import json
 
 import httpx
@@ -20,7 +19,9 @@ from test_returns import EXIT, buy, face_id, points_of, refund_rows, shelf
 
 pytestmark = pytest.mark.usefixtures("tmp_data")
 
-BAR_TAKEN = with_bays(b2=[5])  # one bag of chips: $2.50 + $0.20 tax = $2.70, under the $5 auto approve line
+# config.json disputes.auto_refund_max_usd is $2.00: a clear review of a smaller dispute is refunded at once.
+WAT_TAKEN = with_bays(b3=[6])  # one water: $1.50 + $0.12 tax = $1.62, under the line
+REC_TAKEN = with_bays(b1=[2])  # one energy drink: $3.00 + $0.24 tax = $3.24, over it
 GOOD = json.dumps({"supports_customer_pct": 92, "verdict": "supports_customer",
                    "summary": "Tag 0 is visible in every keyframe; the unit never left bay 1.",
                    "evidence": [{"frame": "baseline", "observation": "Both units present."},
@@ -28,8 +29,7 @@ GOOD = json.dumps({"supports_customer_pct": 92, "verdict": "supports_customer",
 CHARGE = json.dumps({"supports_customer_pct": 4, "verdict": "supports_charge",
                      "summary": "Tag 0 leaves bay 1 during the motion period and does not return.",
                      "evidence": [{"frame": "latest", "observation": "Only tag 1 remains."}]})
-# Supports the customer, but under the 80 % auto approve line: a person decides whatever the amount. Every single
-# unit in the catalog is now under $5, so this is how the admin decision tests reach a person.
+# Supports the customer, but under the 80 % auto approve line: a person decides whatever the amount.
 LEANS = json.dumps({"supports_customer_pct": 72, "verdict": "supports_customer",
                     "summary": "Tag 0 is probably still in bay 1; one keyframe is blurred.",
                     "evidence": [{"frame": "latest", "observation": "Tag 0 likely present."}]})
@@ -47,20 +47,20 @@ def setup(monkeypatch):
     monkeypatch.setattr(review, "probe", lambda: None)  # the app's startup probe: only the probe tests run it
 
 
-BAY2_TAGS = {"4": [20.0, 40.0, 60.0, 60.0], "5": [120.0, 40.0, 60.0, 60.0]}
+BAY3_TAGS = {"6": [20.0, 40.0, 60.0, 60.0], "7": [120.0, 40.0, 60.0, 60.0]}
 
 
-def bay2_photos(client: TestClient, sid: str) -> None:
-    """Baseline of bay 2 (chips) with both units, then tag 5 gone. Only while the visit is shopping."""
-    assert crop(client, sid, bay=2, kind="baseline", units=(4, 5), tags=BAY2_TAGS, ts=1_800_000_000_000)[0].status_code == 200
-    assert crop(client, sid, bay=2, kind="change", units=(4,), tags={"4": BAY2_TAGS["4"]},
+def bay3_photos(client: TestClient, sid: str) -> None:
+    """Baseline of bay 3 (water) with both units, then tag 7 gone. Only while the visit is shopping."""
+    assert crop(client, sid, bay=3, kind="baseline", units=(6, 7), tags=BAY3_TAGS, ts=1_800_000_000_000)[0].status_code == 200
+    assert crop(client, sid, bay=3, kind="change", units=(6,), tags={"6": BAY3_TAGS["6"]},
                 ts=1_800_000_005_000)[0].status_code == 200
 
 
-def buy_bar_with_photos(client: TestClient, mid: str) -> str:
-    """Enter, take one bag of chips (photos of its bay saved), pay. Returns the paid session id."""
-    sid = enter(client, mid, taken=BAR_TAKEN)
-    bay2_photos(client, sid)
+def buy_water_with_photos(client: TestClient, mid: str) -> str:
+    """Enter, take one water (photos of its bay saved), pay. Returns the paid session id."""
+    sid = enter(client, mid, taken=WAT_TAKEN)
+    bay3_photos(client, sid)
     assert client.post("/api/gate/exit/quote", json=EXIT).status_code == 200
     face_id(client, mid)
     r = client.post("/api/gate/exit/approve")
@@ -136,16 +136,53 @@ def test_banned_words_are_replaced_everywhere_and_texts_are_capped():
 
 # --- the policy (code, never the model) ---
 
+def p(pct, cents, verdict="supports_customer"):
+    return review.policy({"verdict": verdict, "supports_customer_pct": pct}, cents)
+
+
 def test_auto_approve_policy_boundaries():
-    def p(pct, cents, verdict="supports_customer"):
-        return review.policy({"verdict": verdict, "supports_customer_pct": pct}, cents)
-    assert p(80, 499) == "auto_approve"
-    assert p(80, 500) == "human"  # $5.00 is not under $5.00
-    assert p(79, 499) == "human"
-    assert p(100, 499) == "auto_approve"
-    assert p(100, 499, "unclear") == "human"
+    assert review.settings.disputes["auto_refund_max_usd"] == 2.00  # config.json
+    assert review.auto_refund_max_cents() == 200
+    assert p(80, 199) == "auto_approve"  # $1.99 is refunded at once
+    assert p(80, 200) == "human"  # $2.00 is not under $2.00: a person reviews it
+    assert p(79, 199) == "human"
+    assert p(100, 199) == "auto_approve"
+    assert p(100, 199, "unclear") == "human"
     assert p(100, 1, "supports_charge") == "human"  # never a denial, whatever the number
     assert p(80, 0) == "auto_approve"
+
+
+def test_the_line_comes_from_config(monkeypatch):
+    monkeypatch.setitem(review.settings.disputes, "auto_refund_max_usd", 5.00)
+    assert p(80, 499) == "auto_approve" and p(80, 500) == "human"
+    monkeypatch.setitem(review.settings.disputes, "auto_refund_max_usd", 0)
+    assert p(100, 0) == "human"  # a $0 line turns auto refunds off: a person decides every dispute
+
+
+def test_the_line_defaults_to_two_dollars_and_is_validated():
+    from pathlib import Path
+
+    from backend import settings as settings_mod
+
+    root = Path(__file__).resolve().parent.parent
+    config = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+    env = settings_mod.settings.env
+    without = {k: v for k, v in config.items() if k != "disputes"}
+    assert settings_mod._build(env, without, catalog).disputes == {"auto_refund_max_usd": 2.00}
+    for bad in ("2", -1, True, None):
+        with pytest.raises(settings_mod.SettingsError, match="auto_refund_max_usd"):
+            settings_mod._build(env, {**config, "disputes": {"auto_refund_max_usd": bad}}, catalog)
+
+
+def test_the_policy_can_only_approve_or_ask_a_person():
+    # "deny" or "keep the charge" is never an answer, for any verdict, percentage or amount
+    for verdict in ("supports_customer", "supports_charge", "unclear", None, "deny"):
+        for pct in (0, 34, 50, 79, 80, 100):
+            for cents in (0, 1, 199, 200, 10_000):
+                out = p(pct, cents, verdict)
+                assert out in ("auto_approve", "human")
+                assert out == "human" or (verdict == "supports_customer" and pct >= 80 and cents < 200)
 
 
 def test_unavailable_review_shape():
@@ -163,24 +200,24 @@ def review_of(dispute_id: str) -> dict:
 def test_small_clear_case_is_refunded_at_once_by_the_policy(member_id, monkeypatch):
     calls = with_model(monkeypatch, [GOOD])
     with TestClient(app) as client:
-        sid = buy_bar_with_photos(client, member_id)
+        sid = buy_water_with_photos(client, member_id)
         points = points_of(member_id)
-        r = dispute(client, "bar", sid)
+        r = dispute(client, "wat", sid)
         assert r.status_code == 200, r.text
         body = r.json()
         d = body["dispute"]
-        assert d["outcome"] == "refunded" and d["status"] == "resolved" and d["amount_usd"] == 2.70
-        assert d["message"] == "Refunded $2.70 after a review of the shelf photos."
+        assert d["outcome"] == "refunded" and d["status"] == "resolved" and d["amount_usd"] == 1.62
+        assert d["message"] == "Refunded $1.62 after a review of the shelf photos."
         assert d["customer_status"] == {"label": "Refunded", "note": None}
         assert body["refund"]["reason"] == "ai_auto_small" and body["refund"]["status"] == "SUCCEEDED"
         assert refund_rows()[-1]["reason"] == "ai_auto_small" and refund_rows()[-1]["dispute_id"] == d["dispute_id"]
-        assert points_of(member_id) == points - 2
+        assert points_of(member_id) == points - 1
         # the model got the photos and the timeline
         assert len(calls) == 1 and len(calls[0]["images"]) == 2 and calls[0]["timeout"] == 20
         sent = json.loads(calls[0]["text"])
         assert [f["id"] for f in sent["frames"]] == ["baseline", "latest"]
-        assert sent["timeline"]["item"] == "Chips" and sent["timeline"]["missing_tag_id"] == 5
-        assert sent["timeline"]["baseline_units"] == [4, 5] and sent["timeline"]["latest_units"] == [4]
+        assert sent["timeline"]["item"] == "Water" and sent["timeline"]["missing_tag_id"] == 7
+        assert sent["timeline"]["baseline_units"] == [6, 7] and sent["timeline"]["latest_units"] == [6]
         assert "cheat" not in calls[0]["system"].lower().replace("cheat, fraud", "")  # only in the "never use" rule
         stored = review_of(d["dispute_id"])
         assert stored["verdict"] == "supports_customer" and stored["source"] == "vision" and stored["attempts"] == 1
@@ -198,15 +235,12 @@ def test_small_clear_case_is_refunded_at_once_by_the_policy(member_id, monkeypat
         assert (m["disputes_today"], m["auto_approved_today"], m["ai_human_agreement_pct"]) == (1, 1, None)
 
 
-def test_a_clear_case_over_five_dollars_waits_for_a_person(member_id, monkeypatch):
+def test_a_clear_case_over_the_line_waits_for_a_person(member_id, monkeypatch):
     with_model(monkeypatch, [GOOD])
-    # Every unit in the catalog is under $5 and a dispute is always one unit, so price the hydration drink at
-    # $5.00 for this visit: $5.00 + $0.40 tax = $5.40, over the line.
-    monkeypatch.setitem(review.settings.skus, "elx", dataclasses.replace(review.settings.skus["elx"], price_usd=5.00))
     with TestClient(app) as client:
-        sid = buy(client, member_id)  # one hydration drink: $5.40
-        d = dispute(client, "elx", sid).json()["dispute"]
-        assert d["outcome"] == "needs_review" and d["status"] == "open" and d["disputed_usd"] == 5.40
+        sid = buy(client, member_id, taken=REC_TAKEN)  # the energy drink: $3.24, over the $2.00 line
+        d = dispute(client, "rec", sid).json()["dispute"]
+        assert d["outcome"] == "needs_review" and d["status"] == "open" and d["disputed_usd"] == 3.24
         assert d["customer_status"] == {"label": "Under review", "note": None}
         assert refund_rows() == []
         assert events("dispute_policy")[-1]["decision"] == "human"
@@ -216,11 +250,21 @@ def test_a_clear_case_over_five_dollars_waits_for_a_person(member_id, monkeypatc
         assert listed["review"]["evidence"] == [] and listed["decision"] is None  # no photos: frame ids unknown, dropped
 
 
+def test_a_clear_case_exactly_at_the_line_waits_for_a_person(member_id, monkeypatch):
+    with_model(monkeypatch, [GOOD])
+    monkeypatch.setitem(review.settings.disputes, "auto_refund_max_usd", 1.62)  # the water's price with tax
+    with TestClient(app) as client:
+        sid = buy(client, member_id, taken=WAT_TAKEN)
+        d = dispute(client, "wat", sid).json()["dispute"]
+        assert d["outcome"] == "needs_review" and d["status"] == "open" and d["disputed_usd"] == 1.62
+        assert refund_rows() == [] and events("dispute_policy")[-1]["decision"] == "human"
+
+
 def test_the_ai_can_never_deny_a_dispute(member_id, monkeypatch):
     with_model(monkeypatch, [CHARGE])
     with TestClient(app) as client:
-        sid = buy(client, member_id, taken=BAR_TAKEN)
-        d = dispute(client, "bar", sid).json()["dispute"]
+        sid = buy(client, member_id, taken=WAT_TAKEN)
+        d = dispute(client, "wat", sid).json()["dispute"]
         assert d["status"] == "open" and d["outcome"] == "needs_review"
         assert review_of(d["dispute_id"])["verdict"] == "supports_charge"
         assert disputes._row(d["dispute_id"])["decision_json"] is None  # nobody decided anything
@@ -231,8 +275,8 @@ def test_the_ai_can_never_deny_a_dispute(member_id, monkeypatch):
 
 def test_no_model_configured_means_unavailable_at_once(member_id):
     with TestClient(app) as client:
-        sid = buy(client, member_id, taken=BAR_TAKEN)
-        d = dispute(client, "bar", sid).json()["dispute"]
+        sid = buy(client, member_id, taken=WAT_TAKEN)
+        d = dispute(client, "wat", sid).json()["dispute"]
         assert d["status"] == "open"
         stored = review_of(d["dispute_id"])
         assert stored["summary"] == "AI review unavailable" and stored["verdict"] == "unclear" and stored["source"] == "unavailable"
@@ -241,8 +285,8 @@ def test_no_model_configured_means_unavailable_at_once(member_id):
 def test_timeout_then_retry_then_unavailable(member_id, monkeypatch):
     calls = with_model(monkeypatch, [httpx.ReadTimeout("slow"), httpx.ReadTimeout("slower")])
     with TestClient(app) as client:
-        sid = buy(client, member_id, taken=BAR_TAKEN)
-        d = dispute(client, "bar", sid).json()["dispute"]
+        sid = buy(client, member_id, taken=WAT_TAKEN)
+        d = dispute(client, "wat", sid).json()["dispute"]
         assert d["status"] == "open"
         stored = review_of(d["dispute_id"])
         assert stored["summary"] == "AI review unavailable" and stored["verdict"] == "unclear"
@@ -254,8 +298,8 @@ def test_timeout_then_retry_then_unavailable(member_id, monkeypatch):
 def test_one_bad_reply_then_a_good_one(member_id, monkeypatch):
     calls = with_model(monkeypatch, ["not json at all", GOOD])
     with TestClient(app) as client:
-        sid = buy(client, member_id, taken=BAR_TAKEN)
-        d = dispute(client, "bar", sid).json()["dispute"]
+        sid = buy(client, member_id, taken=WAT_TAKEN)
+        d = dispute(client, "wat", sid).json()["dispute"]
         assert d["outcome"] == "refunded" and len(calls) == 2
         assert review_of(d["dispute_id"])["attempts"] == 2
 
@@ -265,8 +309,8 @@ def test_model_without_image_support_falls_back_to_the_timeline(member_id, monke
     assert real_probe() is False  # the startup check: the tiny image was refused
     assert review.vision_ok is False and events("review_model_probe")[-1]["ok"] is False
     with TestClient(app) as client:
-        sid = buy_bar_with_photos(client, member_id)
-        d = dispute(client, "bar", sid).json()["dispute"]
+        sid = buy_water_with_photos(client, member_id)
+        d = dispute(client, "wat", sid).json()["dispute"]
         assert d["outcome"] == "refunded"
         assert calls[-1]["images"] == [] and "timeline only" in json.loads(calls[-1]["text"])["images"]
         assert review_of(d["dispute_id"])["source"] == "timeline"
@@ -287,9 +331,9 @@ def test_probe_without_a_model_does_nothing(monkeypatch):
 # --- the admin decision flow ---
 
 def test_admin_approves_the_refund_with_a_note(member_id, monkeypatch):
-    with_model(monkeypatch, [LEANS])
+    with_model(monkeypatch, [GOOD])
     with TestClient(app) as client:
-        sid = buy(client, member_id)
+        sid = buy(client, member_id)  # a hydration drink, $3.78: over the line, a person decides
         points = points_of(member_id)
         d = dispute(client, "elx", sid).json()["dispute"]
         login_as(client, member_id, admin=True)
@@ -314,7 +358,7 @@ def test_admin_approves_the_refund_with_a_note(member_id, monkeypatch):
 
 
 def test_admin_keeps_the_charge_with_a_note(member_id, monkeypatch):
-    with_model(monkeypatch, [LEANS])
+    with_model(monkeypatch, [GOOD])
     with TestClient(app) as client:
         sid = buy(client, member_id)
         d = dispute(client, "elx", sid).json()["dispute"]
@@ -349,8 +393,8 @@ def test_agreement_is_unknown_when_the_review_was_unclear(member_id):
 def test_admin_approval_while_shopping_takes_the_unit_off_the_cart(member_id, monkeypatch):
     with_model(monkeypatch, [LEANS])
     with TestClient(app) as client:
-        enter(client, member_id)  # a hydration drink in the cart, $3.78, reviewed under 80 %: waits for a person
-        d = dispute(client, "elx").json()["dispute"]
+        enter(client, member_id, taken=WAT_TAKEN)  # a water, $1.62, reviewed under 80 %: waits for a person
+        d = dispute(client, "wat").json()["dispute"]
         assert d["status"] == "open"
         login_as(client, member_id, admin=True)
         body = client.post(f"/admin/disputes/{d['dispute_id']}/approve", json={"note": "Tag visible."}).json()
@@ -363,15 +407,15 @@ def test_admin_approval_while_shopping_takes_the_unit_off_the_cart(member_id, mo
 def test_small_case_while_shopping_is_taken_off_the_cart_by_the_policy(member_id, monkeypatch):
     with_model(monkeypatch, [GOOD])
     with TestClient(app) as client:
-        enter(client, member_id, taken=BAR_TAKEN)
-        r = dispute(client, "bar").json()
+        enter(client, member_id, taken=WAT_TAKEN)
+        r = dispute(client, "wat").json()
         assert r["dispute"]["outcome"] == "removed" and r["cart"]["items"] == []
         assert events("override")[-1]["source"] == "ai_auto_small"
         assert r["dispute"]["message"] == "Removed from your cart after a review of the shelf photos."
 
 
 def test_decisions_and_reviews_are_pushed_to_admins_and_the_shopper(member_id, monkeypatch):
-    with_model(monkeypatch, [LEANS])  # supports the customer under 80 %: stays open, "Under review"
+    with_model(monkeypatch, [GOOD])  # a clear review, but $3.78 is over the line: stays open, "Under review"
     pushed = []
     from backend import ws
     monkeypatch.setattr(ws.manager, "publish", lambda msg, **kw: pushed.append((msg["type"], kw, msg["data"])))

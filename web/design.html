@@ -137,12 +137,12 @@
         <div class="card">
           <h2>Type scale <span class="text-3 small" style="font-weight:600">system stack, 17 px base</span></h2>
           <div class="type-scale">
-            <div><span class="m">--text-4xl · .display</span><span class="display">$8.64</span></div>
+            <div><span class="m">--text-4xl · .display</span><span class="display">$3.78</span></div>
             <div><span class="m">--text-3xl · .page-title</span><span class="page-title">SpeedMart</span></div>
             <div><span class="m">--text-2xl · h1</span><h1>Welcome in, Maya</h1></div>
-            <div><span class="m">--text-xl</span><span style="font-size:var(--text-xl);font-weight:800">Total $12.96</span></div>
+            <div><span class="m">--text-xl</span><span style="font-size:var(--text-xl);font-weight:800">Total $7.02</span></div>
             <div><span class="m">--text-lg · h2</span><h2 style="margin:0">Your cart</h2></div>
-            <div><span class="m">--text-base · body</span><span>Electrolytes added. A recovery drink is $4.</span></div>
+            <div><span class="m">--text-base · body</span><span>Chips added. An energy drink is $3 and has caffeine.</span></div>
             <div><span class="m">--text-sm · .small</span><span class="small">Demo card · Visa test •••• 4242 · not your card</span></div>
             <div><span class="m">--text-xs · .eyebrow</span><span class="eyebrow">Sandbox demo</span></div>
             <div><span class="m">--font-mono · .mono</span><span class="mono">ses_Ab3xY9 · A1B2C3</span></div>
@@ -210,7 +210,7 @@
       <p class="desc">48 px minimum, 56 px with <code>.lg</code> (the bottom bar makes every button large). Pressing scales to 97%. <code>.busy</code> swaps the label for a spinner. Anchors take <code>.button</code>.</p>
       <div class="example" data-title="Buttons">
         <div class="row">
-          <button class="primary">Approve $12.96</button>
+          <button class="primary">Approve $7.02</button>
           <button class="secondary">Demo login</button>
           <button>Keep shopping</button>
           <button class="ghost">Cancel</button>
@@ -303,20 +303,20 @@
         <section class="card">
           <h2>Your cart</h2>
           <ul class="cart-list">
-            <li class="cart-row" data-sku="elx"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
-            <li class="cart-row" data-sku="rec"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+            <li class="cart-row" data-sku="elx"><span class="name">Hydration drink</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
+            <li class="cart-row" data-sku="rec"><span class="name">Energy drink</span><span class="qty">× 1</span><span class="line">$3.00</span></li>
           </ul>
           <p class="empty-cart" hidden>Nothing yet. Pick something off the shelf.</p>
         </section>
         <div class="row demo-controls">
-          <button class="secondary" data-action="add-row">Add protein bar</button>
-          <button data-action="remove-row">Remove protein bar</button>
+          <button class="secondary" data-action="add-row">Add chips</button>
+          <button data-action="remove-row">Remove chips</button>
         </div>
         <section class="card">
           <h2>Rich rows</h2>
           <ul class="cart-list">
-            <li class="cart-row rich"><span class="thumb">⚡</span><span class="name">Electrolyte tabs</span><span class="sub">$8.00 each · recovery</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
-            <li class="cart-row rich"><span class="thumb">🥤</span><span class="name">Recovery drink</span><span class="sub">$4.00 each · pairs with electrolytes</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+            <li class="cart-row rich"><span class="thumb">💧</span><span class="name">Hydration drink</span><span class="sub">$3.50 each · hydration</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
+            <li class="cart-row rich"><span class="thumb">⚡</span><span class="name">Energy drink</span><span class="sub">$3.00 each · caffeine</span><span class="qty">× 1</span><span class="line">$3.00</span></li>
           </ul>
         </section>
         <section class="card">
@@ -334,38 +334,38 @@
       <div class="example" data-title="Totals">
         <section class="card">
           <div class="totals">
-            <span class="muted">Subtotal</span><span data-t="sub">$12.00</span>
-            <span class="muted">Tax</span><span data-t="tax">$0.96</span>
-            <span class="grand">Total</span><span class="grand" data-t="total">$12.96</span>
+            <span class="muted">Subtotal</span><span data-t="sub">$6.50</span>
+            <span class="muted">Tax</span><span data-t="tax">$0.52</span>
+            <span class="grand">Total</span><span class="grand" data-t="total">$7.02</span>
           </div>
           <div class="budget">
-            <div class="budget-label"><span>Budget</span><span data-t="label">$12.96 of $20.00</span></div>
+            <div class="budget-label"><span>Budget</span><span data-t="label">$7.02 of $20.00</span></div>
             <div class="bar" role="progressbar" aria-label="Budget used" aria-valuenow="65"><span style="width:64.8%"></span></div>
           </div>
           <div class="field mt-4">
             <div class="field-head"><label>Demo: move the total</label><span class="small text-3">budget $20</span></div>
-            <input type="range" min="0" max="26" step="0.01" value="12.96" data-budget-demo style="--range-pct:49.8%">
+            <input type="range" min="0" max="26" step="0.01" value="7.02" data-budget-demo style="--range-pct:27%">
           </div>
         </section>
         <section class="card">
           <div class="totals">
-            <span class="muted">Subtotal</span><span>$16.00</span>
-            <span class="muted">Tax</span><span>$1.28</span>
-            <span class="grand">Total</span><span class="grand">$17.28</span>
+            <span class="muted">Subtotal</span><span>$15.00</span>
+            <span class="muted">Tax</span><span>$1.20</span>
+            <span class="grand">Total</span><span class="grand">$16.20</span>
           </div>
           <div class="budget">
-            <div class="budget-label"><span>Budget</span><span>$17.28 of $20.00</span></div>
+            <div class="budget-label"><span>Budget</span><span>$16.20 of $20.00</span></div>
             <div class="bar amber" role="progressbar" aria-valuenow="86"><span style="width:86.4%"></span></div>
           </div>
         </section>
         <section class="card">
           <div class="totals">
-            <span class="muted">Subtotal</span><span>$20.00</span>
-            <span class="muted">Tax</span><span>$1.60</span>
-            <span class="grand">Total</span><span class="grand">$21.60</span>
+            <span class="muted">Subtotal</span><span>$21.00</span>
+            <span class="muted">Tax</span><span>$1.68</span>
+            <span class="grand">Total</span><span class="grand">$22.68</span>
           </div>
           <div class="budget">
-            <div class="budget-label"><span>Budget</span><span>$21.60 of $20.00</span></div>
+            <div class="budget-label"><span>Budget</span><span>$22.68 of $20.00</span></div>
             <div class="bar red" role="progressbar" aria-valuenow="108"><span style="width:100%"></span></div>
           </div>
           <div class="strip bad mt-3">This is over your $20 limit. Put something back to continue.</div>
@@ -378,8 +378,8 @@
       <h2>Agent message bubble <code>.agent-card · .agent-msg · .fading</code></h2>
       <p class="desc">One sentence from the store agent. Works on the existing <code>&lt;section class="card agent-card"&gt;</code> (text only) and on <code>.agent-msg</code> with a label. <code>store.js</code> adds <code>.fading</code> for 150 ms when the line changes.</p>
       <div class="example" data-title="Agent">
-        <section class="card agent-card" aria-live="polite">Electrolytes added. A recovery drink is $4 and keeps you under $20.</section>
-        <div class="agent-msg" aria-live="polite"><span class="who">Store agent</span><p>Recovery drink added. You're at $12.96 of your $20 budget.</p></div>
+        <section class="card agent-card" aria-live="polite">Chips added. An energy drink has caffeine and is $3, keeping you under $20.</section>
+        <div class="agent-msg" aria-live="polite"><span class="who">Store agent</span><p>Energy drink added. You're at $7.02 of your $20 budget.</p></div>
         <div class="row demo-controls"><button class="secondary" data-action="agent-fade">Change the line</button></div>
       </div>
     </section>
@@ -390,7 +390,7 @@
       <p class="desc">Inline alerts with an icon drawn by CSS. Text can be a bare node or several <code>&lt;p&gt;</code>. Used for misplaced-item warnings, checkout state, over-scope and declined messages.</p>
       <div class="example" data-title="Strips">
         <div class="strip">Checking out. Finish at the exit gate.</div>
-        <div class="strip warn"><p>Recovery drink is in the wrong bay. Please return it to its lit slot.</p><p>Protein bar is in the wrong bay. Please return it to its lit slot.</p></div>
+        <div class="strip warn"><p>Energy drink is in the wrong bay. Please return it to bay 2.</p><p>Chips is in the wrong bay. Please return it to bay 3.</p></div>
         <div class="strip bad">This is over your $20 limit. Put something back to continue.</div>
         <div class="strip ok">Approved. Your card was charged in the Stripe sandbox.</div>
       </div>
@@ -424,7 +424,7 @@
           <dl class="kv rows">
             <dt>Agent</dt><dd>SpeedMart Store Agent · speedmart-shelf-agent-01</dd>
             <dt>Token scope</dt><dd>SpeedMart #01 · max $20.00 · single use · expires 02:29</dd>
-            <dt>Your intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+            <dt>Your intent</dt><dd>Pay $7.02 to SpeedMart #01 for 2 items</dd>
             <dt>Confirmation</dt><dd>Passkey (Face ID)</dd>
           </dl>
           <p class="small text-3 mt-3">SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
@@ -445,7 +445,7 @@
   "payment_id": "pay_91Kd",
   "instruction_id": "instr_7f3c",
   "provider": "stripe_test",
-  "amount_usd": 8.64,
+  "amount_usd": 3.78,
   "currency": "USD",
   "status": "AUTHORIZED",
   "auth_code": "A1B2C3",
@@ -461,7 +461,7 @@
             <dt>Merchant</dt><dd>SpeedMart #01</dd>
             <dt>Max amount</dt><dd>$20.00 · single use</dd>
             <dt>Expires</dt><dd>02:29</dd>
-            <dt>Intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+            <dt>Intent</dt><dd>Pay $7.02 to SpeedMart #01 for 2 items</dd>
           </dl>
           <p class="small text-3">Sandbox mock, modeled on Visa Intelligent Commerce concepts.</p>
         </details>
@@ -518,7 +518,7 @@
             <path class="checkmark-check" d="M19 33.5l8.5 8.5L45 24"/>
           </svg>
           <p class="title">Paid</p>
-          <p class="amount">$8.64</p>
+          <p class="amount">$3.78</p>
           <p class="meta">Demo card · Visa test •••• 4242 · not your card · auth A1B2C3 · 02:14</p>
           <span class="points">+8 points · 23 total</span>
         </section>
@@ -552,11 +552,11 @@
       <div class="example" data-title="Footer + action bar">
         <footer class="site-footer">Sandbox demo · no real payments</footer>
         <div class="action-bar">
-          <button class="primary">Approve $12.96 with Face ID</button>
+          <button class="primary">Approve $7.02 with Face ID</button>
           <p class="action-note">Sandbox charge · nothing real is billed</p>
         </div>
         <div class="action-bar">
-          <div class="row"><button class="ghost">Keep shopping</button><button class="primary">Approve $12.96</button></div>
+          <div class="row"><button class="ghost">Keep shopping</button><button class="primary">Approve $7.02</button></div>
         </div>
       </div>
     </section>
@@ -641,23 +641,23 @@
               <h1>SpeedMart</h1>
               <div class="session-tag"><span class="mono">#3xY9</span><span class="dot live" title="Live" aria-label="Live"></span></div>
             </header>
-            <section class="card agent-card" aria-live="polite">Electrolytes added. A recovery drink is $4 and keeps you under $20.</section>
-            <section class="strip warn" aria-live="polite"><p>Protein bar is in the wrong bay. Please return it to its lit slot.</p></section>
+            <section class="card agent-card" aria-live="polite">Chips added. An energy drink has caffeine and is $3, keeping you under $20.</section>
+            <section class="strip warn" aria-live="polite"><p>Chips is in the wrong bay. Please return it to bay 3.</p></section>
             <section class="card">
               <h2>Your cart</h2>
               <ul class="cart-list">
-                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
-                <li class="cart-row"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+                <li class="cart-row"><span class="name">Hydration drink</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
+                <li class="cart-row"><span class="name">Energy drink</span><span class="qty">× 1</span><span class="line">$3.00</span></li>
               </ul>
             </section>
             <section class="card">
               <div class="totals">
-                <span class="muted">Subtotal</span><span>$12.00</span>
-                <span class="muted">Tax</span><span>$0.96</span>
-                <span class="grand">Total</span><span class="grand">$12.96</span>
+                <span class="muted">Subtotal</span><span>$6.50</span>
+                <span class="muted">Tax</span><span>$0.52</span>
+                <span class="grand">Total</span><span class="grand">$7.02</span>
               </div>
               <div class="budget">
-                <div class="budget-label"><span>Budget</span><span>$12.96 of $20.00</span></div>
+                <div class="budget-label"><span>Budget</span><span>$7.02 of $20.00</span></div>
                 <div class="bar" role="progressbar" aria-label="Budget used" aria-valuenow="65"><span style="width:64.8%"></span></div>
               </div>
             </section>
@@ -677,16 +677,17 @@
             <section class="card">
               <h2>Your receipt</h2>
               <ul class="cart-list receipt-list">
-                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 2</span><span class="line">$16.00</span></li>
-                <li class="cart-row"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+                <li class="cart-row"><span class="name">Hydration drink</span><span class="qty">× 2</span><span class="line">$7.00</span></li>
+                <li class="cart-row"><span class="name">Energy drink</span><span class="qty">× 2</span><span class="line">$6.00</span></li>
+                <li class="cart-row"><span class="name">Vegan snack</span><span class="qty">× 2</span><span class="line">$8.00</span></li>
               </ul>
               <div class="totals mt-3">
-                <span class="muted">Subtotal</span><span>$20.00</span>
-                <span class="muted">Tax</span><span>$1.60</span>
-                <span class="grand">Total</span><span class="grand">$21.60</span>
+                <span class="muted">Subtotal</span><span>$21.00</span>
+                <span class="muted">Tax</span><span>$1.68</span>
+                <span class="grand">Total</span><span class="grand">$22.68</span>
               </div>
               <div class="budget">
-                <div class="budget-label"><span>Budget</span><span>$21.60 of $20.00</span></div>
+                <div class="budget-label"><span>Budget</span><span>$22.68 of $20.00</span></div>
                 <div class="bar red" role="progressbar" aria-valuenow="108"><span style="width:100%"></span></div>
               </div>
             </section>
@@ -698,7 +699,7 @@
                 <dt>Merchant</dt><dd>SpeedMart #01</dd>
                 <dt>Max amount</dt><dd>$20.00 · single use</dd>
                 <dt>Expires</dt><dd>02:29</dd>
-                <dt>Intent</dt><dd>Pay $21.60 to SpeedMart #01 for 3 items</dd>
+                <dt>Intent</dt><dd>Pay $22.68 to SpeedMart #01 for 6 items</dd>
               </dl>
               <p class="small text-3">SANDBOX: modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
             </details>
@@ -706,7 +707,7 @@
           <footer class="site-footer">Sandbox demo · no real payments</footer>
         </div>
         <div class="action-bar">
-          <button class="primary" disabled>Approve $21.60 with Face ID</button>
+          <button class="primary" disabled>Approve $22.68 with Face ID</button>
           <button class="ghost">Keep shopping</button>
         </div>
       </div>
@@ -724,19 +725,19 @@
                 <path class="checkmark-check" d="M19 33.5l8.5 8.5L45 24"/>
               </svg>
               <p class="title">Paid</p>
-              <p class="amount">$8.64</p>
+              <p class="amount">$3.78</p>
               <p class="meta">Demo card · Visa test •••• 4242 · not your card · auth A1B2C3 · 02:14</p>
               <span class="points">+8 points · 23 total</span>
             </section>
             <section class="card">
               <h2>Items</h2>
               <ul class="cart-list receipt-list">
-                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+                <li class="cart-row"><span class="name">Hydration drink</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
               </ul>
               <div class="totals mt-3">
-                <span class="muted">Subtotal</span><span>$8.00</span>
-                <span class="muted">Tax</span><span>$0.64</span>
-                <span class="grand">Total</span><span class="grand">$8.64</span>
+                <span class="muted">Subtotal</span><span>$3.50</span>
+                <span class="muted">Tax</span><span>$0.28</span>
+                <span class="grand">Total</span><span class="grand">$3.78</span>
               </div>
             </section>
             <details class="card disclosure">
@@ -746,7 +747,7 @@
   "provider": "stripe_test",
   "status": "AUTHORIZED",
   "auth_code": "A1B2C3",
-  "amount_usd": 8.64,
+  "amount_usd": 3.78,
   "points_earned": 8
 }</pre>
             </details>
@@ -776,12 +777,12 @@
             <div class="bay nodata empty"><div class="bay-head"><span class="bay-id">Bay 2</span><span class="pill">no data</span></div><div class="bay-count">0<small>tags</small></div><div class="bay-tags">empty</div></div>
           </div>
           <div class="override-row">
-            <div class="meta"><span class="name">Electrolyte tabs</span><span class="ov active">override +1</span></div>
+            <div class="meta"><span class="name">Hydration drink</span><span class="ov active">override +1</span></div>
             <div class="stepper"><button type="button">−</button><span class="count">2</span><button type="button">+</button></div>
           </div>
           <div class="row"><button class="toggle on" aria-pressed="true">Force decline: ON</button><button class="danger">Force exit</button><button class="danger solid">Reset</button></div>
           <div class="log">
-            <div><span class="t">07:05:47.04</span><span class="ty cart">cart_changed</span><span class="d">{"source":"vision","state":"IN_STORE","total_usd":12.96}</span></div>
+            <div><span class="t">07:05:47.04</span><span class="ty cart">cart_changed</span><span class="d">{"source":"vision","state":"IN_STORE","total_usd":7.02}</span></div>
             <div><span class="t">07:05:46.72</span><span class="ty gate">dev_start</span><span class="d">{"member_id":"mem_edW…","session_id":"ses_PyY…"}</span></div>
             <div><span class="t">07:05:10.30</span><span class="ty admin">admin_login</span><span class="d">{}</span></div>
             <div><span class="t">07:04:58.11</span><span class="ty bad">admin_login_failed</span><span class="d">{}</span></div>
@@ -804,7 +805,7 @@
     <dl class="kv rows">
       <dt>Agent</dt><dd>SpeedMart Store Agent · speedmart-shelf-agent-01</dd>
       <dt>Token scope</dt><dd>SpeedMart #01 · max $20.00 · single use · expires 02:29</dd>
-      <dt>Your intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+      <dt>Your intent</dt><dd>Pay $7.02 to SpeedMart #01 for 2 items</dd>
       <dt>Confirmation</dt><dd>Passkey (Face ID)</dd>
     </dl>
     <p class="small text-3 mt-3">SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
@@ -929,9 +930,9 @@
 
       // Demo actions (delegated so cloned frames work).
       const AGENT_LINES = [
-        "Electrolytes added. A recovery drink is $4 and keeps you under $20.",
-        "Recovery drink added. You're at $12.96 of your $20 budget.",
-        "Protein bar added. $3.50 more and you'd still be under budget.",
+        "Chips added. An energy drink has caffeine and is $3, keeping you under $20.",
+        "Energy drink added. You're at $7.02 of your $20 budget.",
+        "Water added. A hydration drink is $3.50 and keeps you under budget.",
       ];
       document.addEventListener("click", (ev) => {
         const btn = ev.target.closest("[data-action]");
@@ -953,7 +954,7 @@
           if (action === "add-row" && !existing) {
             const li = document.createElement("li");
             li.className = "cart-row"; li.dataset.sku = "bar";
-            li.innerHTML = '<span class="name">Protein bar</span><span class="qty">× 1</span><span class="line">$3.50</span>';
+            li.innerHTML = '<span class="name">Chips</span><span class="qty">× 1</span><span class="line">$2.50</span>';
             list.append(li);
           } else if (action === "remove-row" && existing) {
             existing.classList.add("leaving");

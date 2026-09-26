@@ -10,7 +10,7 @@ frame ids are dropped. One call of REVIEW_TIMEOUT_S with one retry; after that t
 summary "AI review unavailable".
 
 The policy is code, not the model: a review that supports the customer at AUTO_APPROVE_MIN_PCT or more for a
-disputed amount under AUTO_APPROVE_MAX_CENTS is approved at once through the existing refund path (reason
+disputed amount under config.json disputes.auto_refund_max_usd (default $2.00) is approved at once through the existing refund path (reason
 "ai_auto_small"). Everything else waits for a person on the admin page, who approves the refund or keeps the
 charge with a short note. The AI can never deny a dispute: there is no code path from a review to "keep the
 charge". Every decision is logged with the AI verdict and whether the person agreed with it.
@@ -45,7 +45,6 @@ log = logging.getLogger("backend.review")
 
 REVIEW_TIMEOUT_S = 20.0
 RETRIES = 1
-AUTO_APPROVE_MAX_CENTS = 500  # under $5.00
 AUTO_APPROVE_MIN_PCT = 80
 UNCLEAR_LOW, UNCLEAR_HIGH = 35, 65  # inclusive band that is always "unclear"
 MAX_SUMMARY_WORDS = 40
@@ -420,10 +419,15 @@ def review_dispute(row: dict[str, Any], inputs: dict[str, Any] | None = None) ->
 
 # --- policy (code, not the model) ---
 
+def auto_refund_max_cents() -> int:
+    """The auto refund line in cents (config.json disputes.auto_refund_max_usd); a dispute must be strictly under it."""
+    return cart_mod.to_cents(settings.disputes["auto_refund_max_usd"])
+
+
 def policy(review: dict[str, Any], cents: int) -> str:
     """"auto_approve" only for a clear, small case; "human" for everything else. Never "deny"."""
     if review.get("verdict") == SUPPORTS_CUSTOMER and int(review.get("supports_customer_pct", 0)) >= AUTO_APPROVE_MIN_PCT \
-            and cents < AUTO_APPROVE_MAX_CENTS:
+            and cents < auto_refund_max_cents():
         return "auto_approve"
     return "human"
 
