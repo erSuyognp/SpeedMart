@@ -7,10 +7,78 @@
   const token = new URLSearchParams(location.search).get("g") || "";
   let cfg = { features: {} };
   let quote = null; // {cart, instruction, plan_check}
+  const edge = Glow.screen(); // screen edge glow while Face ID is up and while the approval is in flight
+  const fresh = Glow.combine(500); // cart changes within 500 ms flash the card once
+  let phase = "off"; // glow: off | reviewing | verifying | processing | approved
 
   const passkeysOn = () => !!cfg.features.passkeys;
 
+  // Checkout glow (app.css section 13), classes only. Reviewing: a slow, dim glow on the total card and the approve
+  // button. Verifying (passkey prompt open): the screen edge breathes. Processing (approve in flight): a faster,
+  // brighter sweep.
+  function setPhase(next) {
+    phase = next;
+    const on = next === "reviewing" || next === "verifying" || next === "processing";
+    [$("items-card"), $("approve-btn")].forEach((el) => {
+      el.classList.toggle("glow", on);
+      el.classList.toggle("glow--slow", on && next !== "processing");
+      el.classList.toggle("glow--fast", next === "processing");
+      el.classList.toggle("glow--dim", next === "reviewing");
+      el.classList.toggle("glow--bright", next === "processing");
+    });
+    edge.set(next === "verifying" || next === "processing" ? next : "off");
+  }
+
+  // Approved: the edge glow draws in and the colours collapse into a green burst behind a check; resolves when
+  // the page may move on to the receipt (which opens with a matching glow on the paid amount).
+  function showApproved() {
+    setPhase("approved");
+    edge.collapse();
+    return Glow.burst();
+  }
+
+  // Declined (or the approval failed): a red edge flash and a small shake of the card, then back to reviewing.
+  function showDeclined() {
+    setPhase("reviewing");
+    edge.flash("error");
+    Glow.shake($("items-card"));
+    Glow.flash($("items-card"), "error");
+  }
+
+  // The frozen cart changed (a dispute took something off): the affected row pulses red, a row that left the
+  // cart pulses where it was and slides out, and the card flashes amber once.
+  function showCartChange(prev, cart, rows) {
+    if (!prev || prev.session_id !== cart.session_id) return;
+    const change = Glow.diff(prev.items, cart.items);
+    if (!change.added.length && !change.removed.length) return;
+    change.added.forEach((sku) => { if (rows.get(sku)) Glow.pulse(rows.get(sku), "add"); });
+    change.removed.forEach((sku) => {
+      if (rows.get(sku)) { Glow.pulse(rows.get(sku), "remove"); return; }
+      const at = prev.items.findIndex((i) => i.sku === sku);
+      const ghost = itemRow(prev.items[at]);
+      ghost.style.animation = "none"; // no slide in: it is already on its way out
+      ghost.setAttribute("aria-hidden", "true");
+      const next = prev.items.slice(at + 1).map((i) => rows.get(i.sku)).find(Boolean);
+      $("items").insertBefore(ghost, next || null);
+      void ghost.offsetWidth;
+      ghost.classList.add("leaving", "pulse-remove");
+      setTimeout(() => ghost.remove(), 750);
+    });
+    if (fresh()) Glow.flash($("items-card"), "warn");
+  }
+
+  function itemRow(item) {
+    const li = document.createElement("li");
+    li.className = "cart-row";
+    li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
+    li.querySelector(".name").textContent = item.name;
+    li.querySelector(".qty").textContent = "× " + item.qty;
+    li.querySelector(".line").textContent = api.money(item.line_total_usd);
+    return li;
+  }
+
   function notice(o) {
+    setPhase("off");
     $("review").hidden = true;
     $("notice").hidden = false;
     $("notice-icon").className = "big-icon " + (o.icon || "brand");
@@ -41,6 +109,7 @@
   }
 
   function render(res) {
+    const prev = quote && quote.cart;
     quote = res;
     const cart = res.cart;
     if (cart.state === "CLOSED") {
@@ -59,13 +128,12 @@
     list.innerHTML = "";
     const disputes = Dispute.enabled(cfg); // F20: tap an item to dispute it
     $("dispute-hint").hidden = !disputes || cart.items.length === 0;
+    const rows = new Map();
+    const again = !!prev && prev.session_id === cart.session_id; // the same frozen cart, fetched again
     cart.items.forEach((item) => {
-      const li = document.createElement("li");
-      li.className = "cart-row";
-      li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
-      li.querySelector(".name").textContent = item.name;
-      li.querySelector(".qty").textContent = "× " + item.qty;
-      li.querySelector(".line").textContent = api.money(item.line_total_usd);
+      const li = itemRow(item);
+      if (again) li.style.animation = "none"; // no second slide-in: only the row that changed pulses
+      rows.set(item.sku, li);
       if (disputes) {
         li.classList.add("tappable");
         li.setAttribute("role", "button");
@@ -96,6 +164,8 @@
     $("approve-btn").hidden = !instr || overScope;
     $("cancel-btn").className = (overScope ? "primary" : "ghost") + " block";
     if (instr && !overScope && passkeysOn()) passkey.prefetch("login", "exit");
+    if (phase === "off" || phase === "reviewing") setPhase("reviewing");
+    showCartChange(prev, cart, rows);
   }
 
   async function loadCard() {
@@ -129,17 +199,24 @@
     btn.disabled = true;
     $("declined").hidden = true;
     try {
-      if (passkeysOn()) await passkey.signIn("exit"); // Face ID straight from the tap
+      if (passkeysOn()) {
+        setPhase("verifying");
+        await passkey.signIn("exit"); // Face ID straight from the tap
+      }
+      setPhase("processing");
       const res = await api.post("/api/gate/exit/approve");
       const p = res.payment;
       if (p.status === "AUTHORIZED") {
+        await showApproved(); // already paid: about a second of burst, then the receipt
         location.href = "/receipt.html?s=" + encodeURIComponent(quote.cart.session_id);
         return;
       }
       $("declined").textContent = "Declined: " + (res.message || "the card was declined") + ". You can try again.";
       $("declined").hidden = false;
       btn.textContent = passkeysOn() ? "Try again with Face ID" : "Try again";
+      showDeclined();
     } catch (e) {
+      showDeclined();
       if (e instanceof api.ApiError && e.code === "over_scope") {
         $("over-scope").textContent = e.message;
         $("over-scope").hidden = false;

@@ -46,14 +46,15 @@
       <!-- F18: filled from the exit quote's plan_check.summary; stays hidden when there is no plan. -->
       <section id="plan-check" class="card agent-card" aria-live="polite" hidden></section>
 
-      <section class="card">
+      <!-- #items-card glows while the shopper reviews, verifies and approves (js/glow.js). -->
+      <section id="items-card" class="card">
         <h2>Your items</h2>
         <p id="dispute-hint" class="muted small dispute-hint" hidden>Something wrong? Tap an item to dispute it</p>
         <ul id="items" class="cart-list receipt-list"></ul>
         <div class="totals mt-3">
           <span class="muted">Subtotal</span><span id="subtotal">$0.00</span>
           <span class="muted">Tax</span><span id="tax">$0.00</span>
-          <span class="grand">Total</span><span id="total" class="grand">$0.00</span>
+          <span class="grand">Total</span><span class="grand"><span id="total" class="total-value">$0.00</span></span>
         </div>
         <p id="card-line" class="muted small mt-3"></p>
         <!-- Demo bank (8.15): the available demo balance this charge must fit. -->
@@ -92,6 +93,7 @@
   <script src="/js/passkey.js"></script>
   <script src="/js/guardrails.js"></script>
   <script src="/js/dispute.js"></script>
+  <script src="/js/glow.js"></script>
   <script src="/js/pages/exit.js"></script>
 </body>
 </html>

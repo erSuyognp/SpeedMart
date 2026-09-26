@@ -31,6 +31,7 @@
                  font-size: 1.15rem; }
     #voice-btn svg { width: 26px; height: 26px; flex: none; }
     #voice-btn.live { background: var(--bad); border-color: var(--bad); color: #fff; }
+    #voice-btn { --glow-r: 14px; --glow-out: 3px; --glow-blur: 8px; }  /* the glow ring while talking */
     #voice-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .voice-state { display: flex; align-items: center; gap: 8px; font-weight: 600; }
     .voice-state .vdot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
@@ -99,7 +100,7 @@
     <section id="error" class="strip bad" role="alert" hidden></section>
 
     <div id="plan" class="stack" hidden>
-      <section class="card">
+      <section id="plan-card" class="card">
         <h2 id="plan-title">Your plan</h2>
         <ul id="plan-items" class="plan-items"></ul>
         <p id="plan-empty" class="muted" hidden>Nothing on our shelf matches that yet. Try one of the examples.</p>
@@ -134,6 +135,7 @@
   <script src="/js/ws.js"></script>
   <script src="/js/shelfmap.js"></script>
   <script src="/js/pages/intent.js"></script>
+  <script src="/js/glow.js"></script>
   <script type="module" src="/js/pages/voice.js"></script>
 </body>
 </html>

@@ -17,6 +17,11 @@
 //     /api/kiosk/voice-session, mode "kiosk"). Its client tools act on the current shopper through the kiosk
 //     token routes; cart lines become contextual updates so the agent mentions them without talking over itself.
 //     It ends at the exit scan, when the visit ends, after 2 minutes of silence, and after 5 minutes at most.
+//   - The glow (js/glow.js, app.css section 13), classes only: a large soft screen edge glow, faint while the
+//     agent connects, breathing while it listens, brighter while the kiosk speaks (following the agent's audio
+//     in a conversation), fading out when it goes quiet; a sweep around the shelf map (make_plan) or the shopper
+//     panel (get_cart) while a tool runs; the shopper panel glows once when the cart changes; and step 3
+//     "Grab items" gets its check the first time something leaves the shelf.
 //
 // Every kiosk-only request carries the token as ?k=. Texts come from the backend; this file never builds a price.
 
@@ -71,6 +76,10 @@
   let pendingContext = [];  // cart lines that arrived while the agent was connecting
   let sdkPromise = null;
   let convGen = 0;          // bumps on every start and end, so a start that was overtaken gives up
+  let edge = null;          // the screen edge glow (agent mode only)
+  let lastCart = null;      // {total, items} of the shopper panel last drawn, to spot a cart change
+  let grabbed = false;      // step 3 "Grab items" has its check for this visit
+  const freshCart = Glow.combine(500); // cart changes within 500 ms glow the panel once
 
   // --- token-carrying requests ---
 
@@ -95,6 +104,7 @@
       const n = Number(li.dataset.step);
       li.classList.toggle("is-done", n <= doneUpTo);
       li.classList.toggle("is-current", n === current);
+      li.classList.toggle("is-grabbed", n === 3 && grabbed && !!visit);
       if (n === current) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
     });
   }
@@ -134,6 +144,21 @@
   function setMode(mode, label) {
     $("agent").dataset.mode = mode;
     $("agent-state").textContent = label;
+    glowVoice();
+  }
+
+  // The edge glow follows the voice: speaking (the kiosk's lines and the agent), listening, connecting, or off.
+  function glowVoice() {
+    if (!edge) return;
+    const mode = $("agent").dataset.mode;
+    edge.set(mode === "speaking" ? "speaking" : mode === "listening" ? "listening"
+      : convState === "connecting" ? "connecting" : "off");
+  }
+
+  // The agent's audio level while it speaks in a conversation (SDK output volume, 0..1); the kiosk's own lines
+  // have none, and the glow keeps a steady pulse for them.
+  function agentLevel() {
+    return conv && convState === "live" && typeof conv.getOutputVolume === "function" ? conv.getOutputVolume() : null;
   }
 
   // --- speech queue ---
@@ -298,9 +323,16 @@
     bar.classList.toggle("is-warn", !over && left <= 0.2);
     bar.firstElementChild.style.width = (over ? 100 : Math.round(left * 100)) + "%";
     document.body.classList.add("k-has-shopper");
+    // A cart change since the last panel: the panel glows once. The first item taken checks step 3.
+    const changed = !!lastCart && (lastCart.total !== v.cart_total_usd || lastCart.items !== v.item_count);
+    lastCart = { total: v.cart_total_usd, items: v.item_count };
+    if (changed && freshCart()) Glow.once($("shopper"));
+    if (v.item_count > 0 && !grabbed) { grabbed = true; showSteps(); }
   }
 
   function clearShopper() {
+    lastCart = null;
+    grabbed = false;
     document.body.classList.remove("k-has-shopper");
     ["shopper-name", "shopper-remaining", "shopper-total", "shopper-items"].forEach((id) => { $(id).textContent = ""; });
     $("shopper-bar").firstElementChild.style.width = "0";
@@ -358,9 +390,11 @@
       try { return JSON.stringify((await kget("/api/kiosk/catalog")).products); } catch (e) { return toolError(e); }
     },
     async get_cart() {
+      Glow.once($("shopper")); // a tool is running: a quick sweep around the cart panel
       try { return JSON.stringify(await kget("/api/kiosk/cart")); } catch (e) { return toolError(e); }
     },
     async make_plan({ goal_text } = {}) {
+      Glow.once($("shelf-map")); // ...and around the shelf map for a plan
       try {
         const plan = await kpost("/api/kiosk/plan", { goal_text: String(goal_text || "").slice(0, 300) });
         const bays = plan.items.length > 0 ? plan.bays : []; // plan_bays on /ws lights the shelf map below
@@ -401,6 +435,7 @@
     if (gen !== convGen) return false;    // ended (or restarted) while we waited
     if (!visit) { convState = "off"; pump(); return false; }
     convState = "connecting";
+    glowVoice();
     let c;
     try {
       c = await sdk.Conversation.startSession({
@@ -422,7 +457,7 @@
       });
     } catch (e) {
       console.warn("kiosk: conversation failed to start", e);
-      if (gen === convGen) { convState = "off"; pump(); }
+      if (gen === convGen) { convState = "off"; glowVoice(); pump(); }
       return false;
     }
     if (gen !== convGen) { c.endSession().catch(() => {}); return false; } // the visit ended meanwhile
@@ -559,6 +594,8 @@
       }
     }
     document.body.classList.add("kiosk-agent");
+    edge = Glow.screen({ variant: "kiosk" });
+    edge.follow(agentLevel);
     let gates = true;
     try { gates = !!(await api.config()).features.gates; } catch (e) { /* assume the gates are on */ }
     if (gates && opts.addExitCard) {                   // step 4's code, shown while someone is shopping

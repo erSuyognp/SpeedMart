@@ -2,18 +2,24 @@
 // Bays and products come from GET /api/catalog (config.json bays + catalog.json SKUs), so a new bay or SKU
 // needs no change here. Recommended bays glow and pulse (a steady glow under prefers-reduced-motion).
 //
-//   const map = ShelfMap.create(el, { size: "compact" | "regular" | "large" });
+//   const map = ShelfMap.create(el, { size: "compact" | "regular" | "large", flash: true });
 //   map.setGlow([1, 3]);      // bay ids, as in Plan.bays and the plan_bays message
+//   map.setGlow([1, 3], { sweep: true });  // bays that just lit up get one sweep of the glow gradient first
 //   map.refresh();            // re-read the counts (throttled)
 //   map.cardForSku("bar")     // 3: the card of the bay that product belongs in
 //   ShelfMap.lookFor([1, 3])  // "Look for bay 2 and bay 4, they're glowing on your screen."
 //
 // Bay id 0 is card "1": the backend sends that as bays[].card, and cardOf() uses the same rule before the
 // catalog has loaded.
+//
+// flash (the kiosk): a bay whose unit count changed since the last read flashes, green when a unit was taken
+// (is-taken), blue when one came back (is-returned); app.css section 13 draws it. The map is re-drawn on every
+// read, so a running effect is re-applied with a negative --fx-delay and carries on where it was.
 
 (function () {
   const REFRESH_MIN_MS = 1500;
   const MAX_PIPS = 6;
+  const FX_MS = { "is-taken": 1700, "is-returned": 1700, "glow--once": 1500 }; // how long each bay effect runs
 
   function cardOf(bay) { return Number(bay) + 1; }
 
@@ -41,16 +47,20 @@
 
   function create(root, opts) {
     const size = (opts && opts.size) || "regular";
+    const flash = !!(opts && opts.flash);
     let bays = [];            // from /api/catalog
     let glow = new Set();
     let lastFetch = 0;
     let pending = null;
+    let counts = null;        // flash: bay id -> units on the shelf at the previous read
+    const effects = new Map(); // bay id -> {cls, at}: a flash or sweep still running
 
     root.classList.add("shelf-map", "shelf-map--" + size);
     root.setAttribute("role", "list");
     root.setAttribute("aria-label", "Shelf map");
 
     function render() {
+      const now = Date.now();
       root.textContent = "";
       root.style.setProperty("--sm-cols", String(Math.max(1, bays.length)));
       bays.forEach((b) => {
@@ -87,6 +97,11 @@
         card.setAttribute("aria-hidden", "true");
 
         bay.append(slot, name, count, card);
+        const fx = effects.get(b.bay);
+        if (fx && now - fx.at < FX_MS[fx.cls]) {
+          bay.classList.add(fx.cls);
+          bay.style.setProperty("--fx-delay", (fx.at - now) + "ms");
+        }
         root.appendChild(bay);
       });
     }
@@ -96,6 +111,7 @@
       try {
         const cat = await api.get("/api/catalog");
         bays = cat.bays || [];
+        noteCounts(bays);
         render();
       } catch (e) {
         // Offline: keep the last drawing; the next refresh tries again.
@@ -109,8 +125,27 @@
       return undefined;
     }
 
-    function setGlow(ids) {
-      glow = new Set((ids || []).map(Number));
+    // Flash mode: which bays hold fewer (taken) or more (returned) units than at the previous read.
+    function noteCounts(next) {
+      if (!flash) return;
+      const now = Date.now();
+      if (counts) {
+        next.forEach((b) => {
+          const was = counts.get(b.bay);
+          if (typeof was !== "number" || typeof b.on_shelf !== "number" || was === b.on_shelf) return;
+          effects.set(b.bay, { cls: b.on_shelf < was ? "is-taken" : "is-returned", at: now });
+        });
+      }
+      counts = new Map(next.map((b) => [b.bay, b.on_shelf]));
+    }
+
+    function setGlow(ids, o) {
+      const next = new Set((ids || []).map(Number));
+      if (o && o.sweep) {
+        const now = Date.now();
+        next.forEach((id) => { if (!glow.has(id)) effects.set(id, { cls: "glow--once", at: now }); });
+      }
+      glow = next;
       render();
     }
 

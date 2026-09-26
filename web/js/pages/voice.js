@@ -17,6 +17,7 @@ let conversation = null;
 let active = false; // true from the tap until the session ends, fails or is cancelled
 let stopTimer = null;
 let kioskActive = false; // the kiosk by the shelf is talking with this shopper
+let edge = null; // screen edge glow while a conversation is live (js/glow.js)
 
 function loadSdk() {
   if (!sdkPromise) sdkPromise = import(SDK_URL).catch((e) => { sdkPromise = null; throw e; });
@@ -39,6 +40,21 @@ function setState(state) {
   $("voice-btn").classList.toggle("live", live);
   $("voice-btn").disabled = state === "kiosk";
   $("voice-btn-label").textContent = state === "kiosk" ? "Talk to the kiosk" : live ? "End conversation" : "Talk to SpeedMart";
+  // The edge glow wraps the screen while the conversation is live (faint while connecting, breathing while
+  // listening, brighter while the agent speaks) and fades out when it ends; the button wears a matching ring.
+  $("voice-btn").classList.toggle("glow", live);
+  if (edge) edge.set(live ? state : "off");
+}
+
+// A client tool is running: a quick sweep around the plan (or the voice card while there is no plan yet).
+function toolGlow() {
+  Glow.once($("plan").hidden ? $("voice") : $("plan-card"));
+}
+
+// While the agent speaks the glow follows its audio: the SDK's output volume (0..1, BaseConversation in
+// @elevenlabs/client 1.25.0). Null until the session exists, and then the glow keeps a steady pulse.
+function agentLevel() {
+  return conversation && typeof conversation.getOutputVolume === "function" ? conversation.getOutputVolume() : null;
 }
 
 // kiosk_voice from the backend: the kiosk started or ended its conversation with this shopper.
@@ -109,6 +125,7 @@ const clientTools = {
   },
 
   async get_cart() {
+    toolGlow();
     try {
       const data = await api.get("/api/store/current");
       if (!data || !data.session) {
@@ -128,9 +145,11 @@ const clientTools = {
   },
 
   async make_plan({ goal_text } = {}) {
+    toolGlow();
     try {
       const plan = await api.post("/api/intent", { text: String(goal_text || "").slice(0, 300) });
       page().renderPlan(plan); // same cards and shelf map as the text flow
+      Glow.once($("shelf")); // then the shelf map it lit up
       const bays = plan.items.length > 0 ? plan.bays : [];
       return JSON.stringify({
         goal_summary: plan.goal_summary,
@@ -235,6 +254,8 @@ async function init() {
     return;
   }
   $("voice").hidden = false;
+  edge = Glow.screen();
+  edge.follow(agentLevel);
   setState("idle");
   $("voice-btn").addEventListener("click", () => {
     if (kioskActive) return;

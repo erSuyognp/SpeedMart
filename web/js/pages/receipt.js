@@ -11,6 +11,7 @@
   let timer = null;
   let finishing = false; // confirm sent: the socket's session messages are expected, not news
   let cardLabel = ""; // the paid visit's card label: always the demo card, never the shopper's own
+  let glowed = false; // the paid amount glows once when the receipt opens (it follows the exit page's burst)
   const TEST_REFUND = "Test refund. No real money moves.";
 
   const passkeysOn = () => !!cfg.features.passkeys;
@@ -211,6 +212,7 @@
       $("meta").textContent = "Auth code " + p.auth_code + " · " + time(p.created_at) + " · " + provider;
       $("points").hidden = !loyalty;
       $("points").textContent = "+" + r.points_earned + " points · " + r.points_total + " total";
+      if (!glowed) { glowed = true; Glow.once($("title"), 1600); }
     }
     renderBankAfter(r);
     renderResults(r);

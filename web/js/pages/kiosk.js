@@ -99,8 +99,9 @@
 
   // --- shelf map ---
 
+  // Bays that just lit up for a plan pick up the glow gradient for a moment first (js/shelfmap.js).
   function setGlow(bays) {
-    shelf.setGlow(bays);
+    shelf.setGlow(bays, { sweep: true });
     var hint = document.getElementById("shelf-hint");
     var on = bays.length > 0;
     hint.classList.toggle("is-glow", on);
@@ -131,7 +132,8 @@
     }
 
     buildCards();
-    shelf = ShelfMap.create(document.getElementById("shelf-map"), { size: "large" });
+    // flash: a bay whose count changed flashes, green when an item was taken, blue when one came back.
+    shelf = ShelfMap.create(document.getElementById("shelf-map"), { size: "large", flash: true });
     setInterval(function () { shelf.refresh(); }, SHELF_POLL_MS);
     setStatus("offline");
     tickClock();
@@ -172,6 +174,8 @@
         } else if (msg && msg.type === "plan_bays" && msg.data) {
           setGlow(msg.data.bays || []);
           shelf.refresh();
+        } else if (msg && msg.type === "kiosk_cart") {
+          shelf.refresh(); // the agent's cart change is a shelf change: re-read the counts now, not at the next poll
         }
         if (agent) KioskAgent.onMessage(msg);
       }

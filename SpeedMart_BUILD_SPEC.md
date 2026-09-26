@@ -1557,6 +1557,22 @@ Large fonts, one-handed layout, loading states, clear error toasts, `scripts/res
 
 Global rules: mobile first (design for 390 px wide), no framework, one stylesheet, CSS variables for colors, minimum 48 px touch targets, 17 px base font. Every page reads `/api/config/public` and hides UI for disabled features. Do not use the Visa logo image; text like "Visa (sandbox)" is fine. Every page shows a small "Sandbox demo" footer.
 
+Glow (`web/css/app.css` section 13, `web/js/glow.js`): a flowing four colour light (blue, red, yellow, green, blended;
+no logos or wording) marks three moments. Checkout (exit, receipt): a slow dim glow on the total card and the approve
+button while reviewing, a breathing screen edge while Face ID is up, a faster brighter sweep while the approval is in
+flight, a green burst behind a drawn check before the receipt (which opens with a short glow on the paid amount), a
+red edge flash and a small shake when declined. The voice agent (phone `intent.html`, kiosk): an edge glow, faint while
+connecting, breathing while listening, brighter while the agent speaks (following the SDK's output volume), a quick
+sweep while a client tool runs, a 400 ms fade when it ends; the phone's voice button wears a matching ring and the kiosk's
+edge is larger and softer. Shelf changes, found by comparing each cart snapshot with the previous one on the client:
+the phone's row sweeps and settles green (taken) or pulses red and slides out (put back), the total counts to the new
+value, the budget bar shines and the screen edge flashes green or amber; the kiosk's bay flashes green (taken) or blue
+(returned), its shopper panel glows, bays lit by a new plan get one sweep, and step 3 gets its check at the first pick;
+the exit page pulses the row a dispute changed and flashes the card amber. Changes within 500 ms play as one. Pages
+only toggle classes from state changes and socket messages they already handle; only transform, opacity and the
+registered `--glow-angle` animate; `prefers-reduced-motion` gets static gradients and plain fades. `design.html` has a
+button for every state.
+
 ### 11.1 `index.html` (QR 1 · JOIN)
 - Title "SpeedMart Market", subtitle "Grab and go, with a yes you control."
 - Form: first name, budget slider ($10 to $50, default $20), dietary select (none / vegetarian / vegan / gluten free).

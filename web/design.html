@@ -79,6 +79,18 @@
     .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
     .icon-grid div { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
     .example .row.demo-controls { margin-top: 4px; }
+    /* Glow demos: the fixed edge glow and burst are drawn inside each phone instead of over the whole page. */
+    .phone { isolation: isolate; }
+    .phone > .screen-glow, .phone > .burst-success { position: absolute; }
+    .phone > .screen-glow { --sg-cx: 185px; --sg-cy: 400px; }
+    .glow-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+    .glow-controls button { min-height: 40px; padding: 0 12px; font-size: var(--text-sm); border-radius: var(--radius-sm); }
+    .glow-controls button[aria-pressed="true"] { background: var(--brand-soft); border-color: var(--brand-ink); color: var(--brand-ink); }
+    .glow-demo-panel { display: grid; gap: 6px; }
+    .glow-demo-panel .k { font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+    .glow-demo-panel .v { font-size: var(--text-2xl); font-weight: 800; font-variant-numeric: tabular-nums; }
+    /* The shelf map follows the OS scheme on pages; the dark frames here force it. */
+    [data-theme="dark"] .shelf-map { --sm-frame: #5b4630; --sm-back: #262a31; --sm-unit: #56627a; --sm-unit-edge: #7a88a3; --sm-glow: #fbbf24; --sm-glow-soft: rgba(251, 191, 36, 0.4); }
     .guide-footer { color: var(--text-3); font-size: var(--text-sm); text-align: center; padding-bottom: var(--space-8); }
   </style>
 </head>
@@ -103,7 +115,7 @@
         <a href="#cards">Cards</a><a href="#cart">Cart rows</a><a href="#totals">Totals + budget</a><a href="#agent">Agent bubble</a>
         <a href="#strips">Strips</a><a href="#toast">Toast</a><a href="#sheet">Bottom sheet</a><a href="#disclosure">Disclosure</a>
         <a href="#states">States</a><a href="#success">Success</a><a href="#skeleton">Skeletons</a><a href="#footer">Footer</a>
-        <a href="#icons">Icons</a><a href="#bank">Demo bank</a><a href="#screens">Screens</a><a href="#admin">Admin</a>
+        <a href="#icons">Icons</a><a href="#bank">Demo bank</a><a href="#screens">Screens</a><a href="#glow">Glow</a><a href="#admin">Admin</a>
       </nav>
     </section>
 
@@ -804,6 +816,150 @@
       </div>
     </section>
 
+    <!-- ============================ GLOW ============================ -->
+    <section class="demo" id="glow">
+      <h2>Glow <code>.glow · .glow--once · .screen-glow · .burst-success · .flash-error · .pulse-add · .pulse-remove</code></h2>
+      <p class="desc">A flowing four colour light for checkout, the voice agent and shelf changes (<code>app.css</code> section 13).
+        Pages never animate anything themselves: <code>js/glow.js</code> toggles these classes from state changes and socket
+        messages the pages already handle. The buttons below make the same calls the pages make. The edge glow is drawn
+        inside each phone here; on a page it wraps the screen. Only <code>transform</code>, <code>opacity</code> and the
+        registered <code>--glow-angle</code> animate; with reduced motion the borders stay as a static gradient and flashes
+        become plain fades. On the kiosk, step 3 “Grab items” also gets its check (kiosk skin, <code>kiosk.html</code>).</p>
+
+      <div class="example" data-title="exit.html + receipt.html · checkout" data-kind="phone" data-action-bar="true">
+        <div class="screen">
+          <div class="page">
+            <header class="app-header">
+              <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+              <span class="pill warn"><span class="dot warn"></span>Exit gate</span>
+            </header>
+            <section class="card" data-glow="card">
+              <h2>Your items</h2>
+              <ul class="cart-list receipt-list" data-glow="items">
+                <li class="cart-row" data-sku="elx"><span class="name">Hydration drink</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
+                <li class="cart-row" data-sku="rec"><span class="name">Energy drink</span><span class="qty">× 1</span><span class="line">$3.00</span></li>
+                <li class="cart-row" data-sku="bar"><span class="name">Chips</span><span class="qty">× 1</span><span class="line">$2.50</span></li>
+              </ul>
+              <div class="totals mt-3">
+                <span class="muted">Total</span><span class="grand"><span class="total-value" data-glow="total">$9.72</span></span>
+              </div>
+            </section>
+            <section class="card notice" data-glow="receipt" hidden>
+              <div class="big-icon ok" aria-hidden="true">✓</div>
+              <h1 class="paid-title" data-glow="paid">Paid $9.72</h1>
+              <p class="muted small">The receipt opens with a short glow on the paid amount.</p>
+            </section>
+            <section class="card stack">
+              <p class="eyebrow mb-0">Checkout states</p>
+              <div class="glow-controls">
+                <button type="button" data-glow-action="reviewing">Reviewing</button>
+                <button type="button" data-glow-action="verifying">Verifying</button>
+                <button type="button" data-glow-action="processing">Processing</button>
+                <button type="button" data-glow-action="approved">Approved</button>
+                <button type="button" data-glow-action="declined">Declined</button>
+                <button type="button" data-glow-action="exit-changed">Cart changed</button>
+              </div>
+            </section>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+        <div class="action-bar">
+          <button class="primary" data-glow="approve">Approve $9.72 with Face ID</button>
+          <button class="ghost">Keep shopping</button>
+        </div>
+      </div>
+
+      <div class="example" data-title="intent.html + kiosk · voice agent" data-kind="phone">
+        <div class="screen">
+          <div class="page">
+            <header class="topbar"><h1>SpeedMart</h1><span class="muted small">Tell the store what you need</span></header>
+            <section class="card stack" data-glow="voice">
+              <button type="button" class="primary block" data-glow="voice-btn" style="--glow-r:14px;--glow-out:3px;--glow-blur:8px">Talk to SpeedMart</button>
+              <p class="muted small mb-0" data-glow="voice-state">Tap to talk. Up to 2 minutes.</p>
+            </section>
+            <section class="card" data-glow="plan">
+              <h2>Your plan: rehydrate after a run</h2>
+              <ul class="cart-list">
+                <li class="cart-row"><span class="name">Hydration drink</span><span class="qty">× 1</span><span class="line">$3.50</span></li>
+                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+              </ul>
+            </section>
+            <section class="card stack">
+              <h2>Where to find it</h2>
+              <div class="shelf-map shelf-map--compact" style="--sm-cols:4" data-glow="voice-shelf">
+                <div class="sm-bay"><div class="sm-slot"><span class="sm-unit"></span><span class="sm-unit"></span></div><div class="sm-name">Hydration drink</div><div class="sm-count">2 on shelf</div><div class="sm-card">1</div></div>
+                <div class="sm-bay"><div class="sm-slot"><span class="sm-unit"></span></div><div class="sm-name">Energy drink</div><div class="sm-count">1 on shelf</div><div class="sm-card">2</div></div>
+                <div class="sm-bay"><div class="sm-slot"><span class="sm-unit"></span><span class="sm-unit"></span><span class="sm-unit"></span></div><div class="sm-name">Chips</div><div class="sm-count">3 on shelf</div><div class="sm-card">3</div></div>
+                <div class="sm-bay"><div class="sm-slot"><span class="sm-unit"></span></div><div class="sm-name">Electrolyte tabs</div><div class="sm-count">1 on shelf</div><div class="sm-card">4</div></div>
+              </div>
+            </section>
+            <section class="card stack">
+              <p class="eyebrow mb-0">Voice states</p>
+              <div class="glow-controls">
+                <button type="button" data-glow-action="connecting">Connecting</button>
+                <button type="button" data-glow-action="listening">Listening</button>
+                <button type="button" data-glow-action="speaking">Speaking</button>
+                <button type="button" data-glow-action="speaking-level">Speaking, audio level</button>
+                <button type="button" data-glow-action="tool-plan">Tool: make_plan</button>
+                <button type="button" data-glow-action="tool-cart">Tool: get_cart</button>
+                <button type="button" data-glow-action="ended">Ended or error</button>
+                <button type="button" data-glow-action="kiosk-size" aria-pressed="false">Kiosk edge</button>
+              </div>
+            </section>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+      </div>
+
+      <div class="example" data-title="store.html + kiosk · shelf changes" data-kind="phone">
+        <div class="screen">
+          <div class="page">
+            <header class="topbar"><h1>SpeedMart</h1><div class="session-tag"><span class="mono">#3xY9</span><span class="dot live"></span></div></header>
+            <section class="card">
+              <h2>Your cart</h2>
+              <ul class="cart-list" data-glow="cart"></ul>
+            </section>
+            <section class="card">
+              <div class="totals">
+                <span class="grand">Total</span><span class="grand"><span class="total-value" data-glow="store-total">$7.02</span></span>
+              </div>
+              <div class="budget">
+                <div class="budget-label"><span>Budget</span><span data-glow="budget-text">$7.02 of $20.00</span></div>
+                <div class="bar" data-glow="budget-bar"><span style="width:35.1%"></span></div>
+              </div>
+            </section>
+            <section class="card stack">
+              <p class="eyebrow mb-0">Phone: items taken or put back</p>
+              <div class="glow-controls">
+                <button type="button" data-glow-action="take">Take chips</button>
+                <button type="button" data-glow-action="put-back">Put chips back</button>
+                <button type="button" data-glow-action="take-two">Two changes in 500 ms</button>
+              </div>
+            </section>
+            <section class="card stack">
+              <p class="eyebrow mb-0">Kiosk: shelf map and shopper panel</p>
+              <div class="shelf-map shelf-map--compact" style="--sm-cols:4" data-glow="kiosk-shelf">
+                <div class="sm-bay" data-bay="0"><div class="sm-slot"><span class="sm-unit"></span><span class="sm-unit"></span></div><div class="sm-name">Hydration drink</div><div class="sm-count">2 on shelf</div><div class="sm-card">1</div></div>
+                <div class="sm-bay" data-bay="1"><div class="sm-slot"><span class="sm-unit"></span></div><div class="sm-name">Energy drink</div><div class="sm-count">1 on shelf</div><div class="sm-card">2</div></div>
+                <div class="sm-bay" data-bay="2"><div class="sm-slot"><span class="sm-unit"></span><span class="sm-unit"></span><span class="sm-unit"></span></div><div class="sm-name">Chips</div><div class="sm-count">3 on shelf</div><div class="sm-card">3</div></div>
+                <div class="sm-bay" data-bay="3"><div class="sm-slot"><span class="sm-unit"></span></div><div class="sm-name">Electrolyte tabs</div><div class="sm-count">1 on shelf</div><div class="sm-card">4</div></div>
+              </div>
+              <div class="card inset glow-demo-panel" data-glow="shopper">
+                <span class="k">Cart total</span><span class="v">$7.02</span>
+              </div>
+              <div class="glow-controls">
+                <button type="button" data-glow-action="bay-taken">Bay: item taken</button>
+                <button type="button" data-glow-action="bay-returned">Bay: item returned</button>
+                <button type="button" data-glow-action="plan-bays">Plan lights bays</button>
+                <button type="button" data-glow-action="panel">Cart panel</button>
+              </div>
+            </section>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+      </div>
+    </section>
+
     <!-- ============================ ADMIN ============================ -->
     <section class="demo" id="admin">
       <h2>Admin dashboard pieces <code>body.admin · .stat · .bay · .log · .override-row · .toggle</code></h2>
@@ -859,6 +1015,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/glow.js"></script>
   <script>
     (function () {
       const money = (n) => "$" + Number(n).toFixed(2);
@@ -1033,6 +1190,210 @@
           });
         }
       });
+
+      // --- Glow demos: the same Glow calls exit.js, receipt.js, voice.js, kiosk_agent.js and store.js make ---
+      const glowDemos = new WeakMap();
+      const g = (root, name) => root.querySelector('[data-glow="' + name + '"]');
+      const DEMO_ITEMS = { elx: ["Hydration drink", 3.5], rec: ["Energy drink", 3.0], bar: ["Chips", 2.5] };
+
+      function glowDemo(root) {
+        let d = glowDemos.get(root);
+        if (d) return d;
+        const store = !!g(root, "cart");
+        d = { edge: Glow.screen({ root, variant: store ? "thin" : undefined }), fresh: Glow.combine(500),
+              recent: new Set(), items: [{ sku: "elx", qty: 1 }, { sku: "rec", qty: 1 }], levelOn: false, planOn: false };
+        // A made-up voice level for "Speaking, audio level" (the pages read the SDK's output volume).
+        d.edge.follow(() => {
+          if (!d.levelOn) return null;
+          const t = performance.now();
+          return 0.04 + 0.3 * Math.abs(Math.sin(t / 150)) * Math.abs(Math.sin(t / 610));
+        });
+        glowDemos.set(root, d);
+        if (store) storeRender(root, d, null);
+        return d;
+      }
+
+      // store.html: rows, total and budget from the demo cart (figures are made up here; the page renders snapshots).
+      function storeItems(d) {
+        return d.items.map((i) => ({ sku: i.sku, name: DEMO_ITEMS[i.sku][0], qty: i.qty, line_total_usd: i.qty * DEMO_ITEMS[i.sku][1] }));
+      }
+      function storeRender(root, d, prevItems) {
+        const items = storeItems(d);
+        const change = prevItems ? Glow.diff(prevItems, items) : null;
+        const changed = !!change && change.added.length + change.removed.length > 0;
+        const list = g(root, "cart");
+        const existing = new Map();
+        const rows = new Map();
+        const keep = new Set(items.map((item) => item.sku));
+        let placed = null;
+        list.querySelectorAll(".cart-row:not(.leaving)").forEach((li) => existing.set(li.dataset.sku, li));
+        items.forEach((item) => {
+          let li = existing.get(item.sku);
+          if (!li) {
+            li = document.createElement("li");
+            li.className = "cart-row";
+            li.dataset.sku = item.sku;
+            li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
+          }
+          li.querySelector(".name").textContent = item.name;
+          li.querySelector(".qty").textContent = "× " + item.qty;
+          li.querySelector(".line").textContent = money(item.line_total_usd);
+          let at = placed ? placed.nextElementSibling : list.firstElementChild; // only out of place rows move
+          while (at && (at.classList.contains("leaving") || !keep.has(at.dataset.sku))) at = at.nextElementSibling;
+          if (li !== at) list.insertBefore(li, at);
+          placed = li;
+          rows.set(item.sku, li);
+          existing.delete(item.sku);
+        });
+        existing.forEach((li) => {
+          li.classList.add("leaving");
+          if (changed) li.classList.add("pulse-remove");
+          setTimeout(() => li.remove(), changed ? 750 : 400);
+        });
+        const total = Math.round(items.reduce((a, i) => a + i.line_total_usd, 0) * 108) / 100;
+        Glow.countTo(g(root, "store-total"), total, money, changed);
+        g(root, "budget-text").textContent = money(total) + " of $20.00";
+        g(root, "budget-bar").firstElementChild.style.width = Math.min(100, total / 20 * 100) + "%";
+        if (!changed) return;
+        if (d.fresh()) {
+          d.recent.clear();
+          d.edge.flash(change.added.length ? "add" : "remove");
+          Glow.once(g(root, "store-total"), 1500);
+          Glow.play(g(root, "budget-bar"), "glow-sheen", 1000);
+        }
+        change.added.forEach((sku) => {
+          const li = rows.get(sku);
+          if (!li || d.recent.has(sku)) return;
+          d.recent.add(sku);
+          Glow.once(li, 1500);
+          Glow.pulse(li, "add");
+        });
+        change.removed.forEach((sku) => { if (rows.get(sku)) Glow.pulse(rows.get(sku), "remove"); });
+      }
+      function storeChange(root, d, sku, delta) {
+        const prev = storeItems(d);
+        const item = d.items.find((i) => i.sku === sku);
+        if (item) item.qty += delta; else if (delta > 0) d.items.push({ sku, qty: delta });
+        d.items = d.items.filter((i) => i.qty > 0);
+        storeRender(root, d, prev);
+      }
+
+      // exit.js: reviewing, verifying, processing (the same class toggles as setPhase).
+      function checkoutPhase(root, d, phase) {
+        const on = phase === "reviewing" || phase === "verifying" || phase === "processing";
+        [g(root, "card"), g(root, "approve")].forEach((el) => {
+          el.classList.toggle("glow", on);
+          el.classList.toggle("glow--slow", on && phase !== "processing");
+          el.classList.toggle("glow--fast", phase === "processing");
+          el.classList.toggle("glow--dim", phase === "reviewing");
+          el.classList.toggle("glow--bright", phase === "processing");
+        });
+        d.edge.set(phase === "verifying" || phase === "processing" ? phase : "off");
+      }
+
+      // voice.js / kiosk_agent.js: the edge follows the conversation, the button wears the ring.
+      const VOICE_TEXT = { connecting: "Connecting…", listening: "Listening. Say what you need.",
+        speaking: "SpeedMart is speaking…", off: "Conversation ended. Tap to talk again." };
+      function voiceState(root, d, state) {
+        const live = state !== "off";
+        const btn = g(root, "voice-btn");
+        btn.classList.toggle("glow", live);
+        btn.classList.toggle("danger", live);
+        btn.classList.toggle("solid", live);
+        btn.textContent = live ? "End conversation" : "Talk to SpeedMart";
+        g(root, "voice-state").textContent = VOICE_TEXT[state];
+        d.edge.set(state);
+      }
+
+      // Kiosk shelf map: one bay's count changes (shelfmap.js adds is-taken / is-returned on the re-draw).
+      function bayChange(root, bayIndex, delta) {
+        const bay = g(root, "kiosk-shelf").querySelector('[data-bay="' + bayIndex + '"]');
+        const slot = bay.querySelector(".sm-slot");
+        const n = Math.max(0, slot.children.length + delta);
+        slot.replaceChildren(...Array.from({ length: n }, () => Object.assign(document.createElement("span"), { className: "sm-unit" })));
+        bay.querySelector(".sm-count").textContent = n === 0 ? "none left" : n + " on shelf";
+        Glow.play(bay, delta < 0 ? "is-taken" : "is-returned", 1700);
+      }
+
+      document.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-glow-action]");
+        if (!btn) return;
+        const root = btn.closest(".phone");
+        if (!root) return;
+        const d = glowDemo(root);
+        const act = btn.dataset.glowAction;
+        if (act === "reviewing" || act === "verifying" || act === "processing") {
+          g(root, "receipt").hidden = true;
+          checkoutPhase(root, d, act);
+        } else if (act === "approved") {
+          checkoutPhase(root, d, "approved");
+          d.edge.collapse();
+          Glow.burst({ root }).then(() => {
+            Glow.endBurst(root);
+            g(root, "receipt").hidden = false; // the receipt opens with its glow on the paid amount
+            Glow.once(g(root, "paid"), 1600);
+          });
+        } else if (act === "declined") {
+          checkoutPhase(root, d, "reviewing");
+          d.edge.flash("error");
+          Glow.shake(g(root, "card"));
+          Glow.flash(g(root, "card"), "error");
+        } else if (act === "exit-changed") {
+          const list = g(root, "items");
+          const chips = list.querySelector('.cart-row[data-sku="bar"]:not(.leaving)');
+          if (chips) {
+            chips.classList.add("leaving", "pulse-remove");
+            setTimeout(() => chips.remove(), 750);
+            g(root, "total").textContent = "$7.02";
+          } else {
+            const li = document.createElement("li");
+            li.className = "cart-row";
+            li.dataset.sku = "bar";
+            li.innerHTML = '<span class="name">Chips</span><span class="qty">× 1</span><span class="line">$2.50</span>';
+            list.appendChild(li);
+            Glow.pulse(li, "add");
+            g(root, "total").textContent = "$9.72";
+          }
+          if (d.fresh()) Glow.flash(g(root, "card"), "warn");
+        } else if (act === "connecting" || act === "listening") {
+          voiceState(root, d, act);
+        } else if (act === "speaking" || act === "speaking-level") {
+          d.levelOn = act === "speaking-level";
+          voiceState(root, d, "speaking");
+        } else if (act === "ended") {
+          voiceState(root, d, "off");
+        } else if (act === "tool-plan") {
+          Glow.once(g(root, "plan"));
+          setTimeout(() => Glow.once(g(root, "voice-shelf")), 700);
+        } else if (act === "tool-cart") {
+          Glow.once(g(root, "voice"));
+        } else if (act === "kiosk-size") {
+          const on = btn.getAttribute("aria-pressed") !== "true";
+          btn.setAttribute("aria-pressed", String(on));
+          d.edge.el.classList.toggle("screen-glow--kiosk", on);
+        } else if (act === "take") {
+          storeChange(root, d, "bar", 1);
+        } else if (act === "put-back") {
+          storeChange(root, d, "bar", -1);
+        } else if (act === "take-two") {
+          storeChange(root, d, "bar", 1);
+          setTimeout(() => storeChange(root, d, "rec", 1), 180);
+        } else if (act === "bay-taken") {
+          bayChange(root, 2, -1);
+        } else if (act === "bay-returned") {
+          bayChange(root, 2, 1);
+        } else if (act === "plan-bays") {
+          d.planOn = !d.planOn;
+          [0, 3].forEach((i) => {
+            const bay = g(root, "kiosk-shelf").querySelector('[data-bay="' + i + '"]');
+            bay.classList.toggle("is-glow", d.planOn);
+            if (d.planOn) Glow.once(bay, 1500);
+          });
+        } else if (act === "panel") {
+          Glow.once(g(root, "shopper"));
+        }
+      });
+      document.querySelectorAll(".phone").forEach((root) => { if (g(root, "cart")) glowDemo(root); });
     })();
   </script>
 </body>

@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1a56db">
   <title>SpeedMart · Entrance</title>
-  <!-- Shared tokens (--brand, --ok, --warn…) and the site reset. web/css/app.css does not exist in this
-       repo; styles.css is the one stylesheet from Section 11. -->
+  <!-- Shared tokens (--brand, --ok, --warn…) and the site reset from styles.css; app.css for the glow system
+       (section 13: edge glow, bay flashes, sweeps). The kiosk skin below comes last and keeps its own look. -->
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
   <style>
     /* Kiosk skin: Dell Venue 10" landscape (1280x800), readable from 2 metres, no scrolling, no touch UI.
        Deliberately self-contained so nothing here can shift the phone pages. */
@@ -32,6 +33,8 @@
 
     body.kiosk {
       display: block;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;  /* styles.css base, not app.css's */
+      line-height: 1.4;
       cursor: none;                       /* nothing on this screen is meant to be tapped */
       -webkit-user-select: none;
       user-select: none;
@@ -190,6 +193,8 @@
       font-weight: 800;
       letter-spacing: 0.04em;
     }
+
+    .kiosk-step .label { font: inherit; color: inherit; }  /* not app.css's form label */
 
     .kiosk-step .num {
       width: clamp(28px, 3.6vh, 46px);
@@ -373,6 +378,19 @@
       0%, 100% { box-shadow: 0 0 0 0 rgba(79, 131, 241, 0.65); }
       50%      { box-shadow: 0 0 0 12px rgba(79, 131, 241, 0); }
     }
+    /* Step 3 gets its check the first time something leaves the shelf (it stays the current step). */
+    .k-step.is-grabbed .k-num { background: var(--k-ok); animation: none; }
+    .k-step.is-grabbed .k-digit { display: none; }
+    .k-step.is-grabbed .k-check { display: block; animation: k-check-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    @keyframes k-check-pop {
+      0%   { transform: scale(0.3); opacity: 0; }
+      60%  { transform: scale(1.25); opacity: 1; }
+      100% { transform: scale(1); }
+    }
+
+    /* Glow (app.css section 13), sized for a screen read from 2 metres: softer, wider halos. */
+    body.kiosk :is(.glow, .glow--once) { --glow-blur: 18px; }
+    .k-shopper { --glow-r: 20px; }
 
     /* Guide panel: the caption of every spoken line, the speaking orb, the tour button. */
     body.kiosk-agent .k-agent {
@@ -505,6 +523,7 @@
       .kiosk-code,
       .kiosk-nfc .wave,
       .k-step.is-current .k-num,
+      .k-step.is-grabbed .k-check,
       .k-agent[data-mode="speaking"] .k-orb,
       .k-attract.is-offer { animation: none; }
     }
@@ -594,6 +613,7 @@
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
   <script src="/js/shelfmap.js"></script>
+  <script src="/js/glow.js"></script>
   <script src="/js/kiosk_agent.js"></script>
   <script src="/js/pages/kiosk.js"></script>
 </body>

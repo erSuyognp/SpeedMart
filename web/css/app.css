@@ -21,6 +21,7 @@
     10  Admin dashboard (body.admin)
     11  Utilities
     12  Motion and reduced motion
+    13  Glow: checkout, voice agent and shelf changes (web/js/glow.js)
    ========================================================================== */
 
 
@@ -1695,3 +1696,456 @@ body:has(.action-bar .demo-note:not([hidden])):has(.action-bar .verify-note:not(
 .dispute-status .name { font-weight: 600; }
 .dispute-status p { margin: 6px 0 0; }
 .staff-note { padding: var(--space-2) var(--space-3); border-left: 3px solid var(--line-strong); color: var(--text-2); }
+
+/* ==========================================================================
+   13. GLOW: the flowing four colour light for checkout, the voice agent and shelf changes
+   --------------------------------------------------------------------------
+   Pages never animate anything themselves: web/js/glow.js adds and removes these classes from state changes
+   and socket messages the pages already have.
+
+     .glow                  flowing halo + crisp 2 px gradient border around an element (3.2 s per turn)
+     .glow--slow / --fast   8 s / 1.5 s per turn (on an element or on .screen-glow)
+     .glow--dim / --bright  lower / higher intensity
+     .glow--once            one sweep, then fade (1.4 s). Adding it again replays it
+     .screen-glow           inset glow around the viewport edges, safe area aware; shows with .is-on
+     .screen-glow--breathe  gentle breathing; also --faint, --speaking (with .has-level: follows the agent's
+                            audio through --glow-level), --bright, --kiosk (large, soft), --thin (edge flashes)
+     .burst-success         green radial burst behind a drawn checkmark (the exit approval)
+     .flash-error           red flash: on .screen-glow the screen edge, on anything else a ring around it
+     .flash-warn            amber ring flash (the frozen exit cart changed)
+     .pulse-add / -remove   soft green / red tint pulse on a row; on .screen-glow a green / amber edge flash
+     .shake                 small horizontal shake (declined)
+     .glow-sheen            one light sweep across a .bar fill (the budget bar moved)
+
+   Smooth on a mid range phone:
+     - Only transform, opacity and the registered --glow-angle animate. --glow-angle repaints a gradient, so it
+       only ever drives small pseudo elements and the screen glow's thin edge bands, never a full screen layer.
+     - blur() is used on element halos only (a card at most). The screen glow's soft edge is a mask.
+     - A glow's light sits outside its element (a mask cuts the element's own box out of the halo), so text
+       contrast never changes, in light or dark mode.
+     - glow.js sets display:none on an idle screen glow, so nothing runs while it is off.
+   Without @property (Safari before 16.4, Firefox before 128) the angle cannot animate: the halo turns with a
+   transform instead (a small sway, so a wide card's halo stays around the card) and borders keep a static
+   gradient. The switch is --glow-spin / --glow-sweep: registered, they hold the @property animation's name;
+   unregistered, var() falls back to the transform animation.
+   ========================================================================== */
+
+@property --glow-angle { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+@property --glow-spin { syntax: "<custom-ident>"; inherits: true; initial-value: glow-turn; }
+@property --glow-sweep { syntax: "<custom-ident>"; inherits: true; initial-value: glow-sweep; }
+
+:root {
+  --glow-blue: #4285f4;
+  --glow-red: #ea4335;
+  --glow-yellow: #fbbc05;
+  --glow-green: #34a853;
+  --glow-amber: #f59e0b;
+  /* Blended around a circle; the last stop repeats the first so there is no seam. */
+  --glow-stops: #4285f4 0deg, #ea4335 90deg, #fbbc05 180deg, #34a853 270deg, #4285f4 360deg;
+  --glow-halo: 0.55;   /* halo opacity; dark surfaces take a little more to read the same */
+  --glow-ring: 0.9;    /* 2 px border opacity */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --glow-halo: 0.7; }
+}
+[data-theme="dark"] { --glow-halo: 0.7; }
+[data-theme="light"] { --glow-halo: 0.55; }
+
+/* --- Element glow: halo (::before) + border (::after) ------------------------------------------------------
+   Geometry per element: --glow-r (its corner radius), --glow-out (how far outside its box the border sits),
+   --glow-blur (halo softness). :where() keeps these defaults at zero specificity so any rule can override. */
+
+:where(.glow, .glow--once, .flash-warn, .flash-error:not(.screen-glow)) {
+  --glow-r: var(--radius);
+  --glow-out: 0px;
+  --glow-blur: 10px;
+  --glow-dur: 3.2s;
+  position: relative;
+}
+
+/* The halo lands above the parent's background and under the element's siblings. */
+:has(> :is(.glow, .glow--once, .flash-warn, .flash-error, .pulse-add, .pulse-remove):not(.screen-glow)) {
+  isolation: isolate;
+}
+
+/* :where() keeps the shared parts at zero specificity, so the state rules below always win. */
+:where(.glow, .glow--once, .flash-warn, .flash-error:not(.screen-glow))::before,
+:where(.glow, .glow--once, .flash-warn, .flash-error:not(.screen-glow))::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  background: conic-gradient(from var(--glow-angle, 0deg), var(--glow-stops));
+  /* Only the transparent border area shows: the element's own box is cut out. */
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  will-change: opacity;
+}
+
+/* Halo: the gradient fills the element's box (the padding box here), blur() spreads it outward, the mask keeps
+   only what lands outside. The border is 2.5 blur radii wide so the blur has faded out before the mask ends. */
+:where(.glow, .glow--once, .flash-warn, .flash-error:not(.screen-glow))::before {
+  --glow-pad: calc(var(--glow-blur) * 2.5);
+  inset: calc(-1 * (var(--glow-out) + var(--glow-pad)));
+  z-index: -1;
+  border: var(--glow-pad) solid transparent;
+  border-radius: calc(var(--glow-r) + var(--glow-out) + var(--glow-pad));
+  background-clip: padding-box;
+  filter: blur(var(--glow-blur));
+  --glow-peak: var(--glow-halo);
+}
+
+/* Border: 2 px of the same gradient, crisp. */
+:where(.glow, .glow--once, .flash-warn, .flash-error:not(.screen-glow))::after {
+  inset: calc(-1 * var(--glow-out));
+  border: 2px solid transparent;
+  border-radius: calc(var(--glow-r) + var(--glow-out));
+  background-origin: border-box;
+  background-clip: border-box;
+  --glow-peak: var(--glow-ring);
+}
+
+.glow::before { opacity: var(--glow-halo); animation: var(--glow-spin, glow-sway) var(--glow-dur) linear infinite; }
+.glow::after { opacity: var(--glow-ring); animation: var(--glow-spin, none) var(--glow-dur) linear infinite; }
+
+.glow--slow { --glow-dur: 8s; }
+.glow--fast { --glow-dur: 1.5s; }
+.glow--dim { --glow-halo: 0.3; --glow-ring: 0.5; }
+.glow--bright { --glow-halo: 0.9; --glow-ring: 1; }
+
+/* One sweep, then fade. --fx-delay (negative) lets a re-drawn element pick the sweep up where it was. */
+.glow--once::before {
+  animation: var(--glow-sweep, glow-sweep-sway) 1.4s cubic-bezier(0.3, 0.6, 0.3, 1) var(--fx-delay, 0s) both;
+}
+.glow--once::after {
+  animation: var(--glow-sweep, glow-fade) 1.4s cubic-bezier(0.3, 0.6, 0.3, 1) var(--fx-delay, 0s) both;
+}
+
+/* Solid colour ring flashes on an element (declined, cart changed). */
+.flash-error:not(.screen-glow) { --flash: var(--glow-red); }
+.flash-warn { --flash: var(--glow-amber); }
+:is(.flash-warn, .flash-error:not(.screen-glow))::before,
+:is(.flash-warn, .flash-error:not(.screen-glow))::after {
+  background-image: none;
+  background-color: var(--flash);
+  animation: glow-fade 0.8s ease-out var(--fx-delay, 0s) both;
+}
+
+.shake { animation: glow-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+
+/* --- Tint pulses (rows): ::before is a soft fill behind the text, not a halo --------------------------------- */
+
+:where(.pulse-add, .pulse-remove):not(.screen-glow) { position: relative; }
+:is(.pulse-add, .pulse-remove):not(.screen-glow)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  filter: none;
+  -webkit-mask: none;
+  mask: none;
+  background: var(--ok-bg);
+  opacity: 0;
+  will-change: opacity;
+  animation: glow-tint 2.4s ease-out var(--fx-delay, 0s) both;
+}
+.pulse-remove:not(.screen-glow)::before { background: var(--bad-bg); animation: glow-tint-quick 0.7s ease-out both; }
+
+/* Cart rows sit edge to edge in their card: the light stays inside the row (no halo) and reaches into the card's
+   padding. A leaving row pulses red for 0.3 s, then collapses (store.js removes it after 0.75 s). */
+.cart-row:is(.glow--once, .pulse-add, .pulse-remove):not(.leaving) { overflow: visible; }
+.cart-row.glow--once { --glow-r: 12px; }
+.cart-row.glow--once::before { display: none; }
+.cart-row:is(.pulse-add, .pulse-remove)::before { display: block; inset: 3px -10px; border-radius: 12px; }
+.cart-row.glow--once::after { inset: 3px -10px; }
+.cart-row.leaving.pulse-remove { transition-delay: 0.3s; }
+
+/* Budget bar: the width already eases; a light sweeps across the fill as it moves. */
+.bar > span { position: relative; overflow: hidden; }
+.bar.glow-sheen > span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  transform: translateX(-100%);
+  animation: glow-sheen 0.9s ease-out both;
+}
+
+/* --- Screen edge glow -----------------------------------------------------------------------------------------
+   A fixed, click-through overlay. ::before is the flowing gradient, painted only in four thin edge bands (each
+   band's conic gradient is centred on the middle of the screen, so the colours meet at the corners); ::after is
+   the single colour used by the edge flashes. A static mask fades each band inward: softness without blur().
+   The bands grow by the safe area insets, so the light clears a notch or home indicator. */
+
+.screen-glow {
+  --sg-edge: 26px;         /* band width inside the safe area */
+  --sg-line: 0.55;         /* strength of the brighter line right at the edge */
+  --sg-opacity: 0.85;
+  --sg-cx: 50vw;           /* the screen's centre, for the bands' gradients */
+  --sg-cy: 50vh;
+  --sg-t: calc(var(--sg-edge) + var(--safe-t));
+  --sg-r: calc(var(--sg-edge) + var(--safe-r));
+  --sg-b: calc(var(--sg-edge) + var(--safe-b));
+  --sg-l: calc(var(--sg-edge) + var(--safe-l));
+  --glow-dur: 5s;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+@supports (height: 1dvh) {
+  .screen-glow { --sg-cy: 50dvh; }
+}
+
+.screen-glow::before,
+.screen-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  will-change: opacity;
+  -webkit-mask:
+    linear-gradient(to bottom, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) top / 100% var(--sg-t) no-repeat,
+    linear-gradient(to top, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) bottom / 100% var(--sg-b) no-repeat,
+    linear-gradient(to right, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) left / var(--sg-l) 100% no-repeat,
+    linear-gradient(to left, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) right / var(--sg-r) 100% no-repeat;
+  mask:
+    linear-gradient(to bottom, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) top / 100% var(--sg-t) no-repeat,
+    linear-gradient(to top, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) bottom / 100% var(--sg-b) no-repeat,
+    linear-gradient(to right, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) left / var(--sg-l) 100% no-repeat,
+    linear-gradient(to left, #000, rgb(0 0 0 / var(--sg-line)) 3px, rgb(0 0 0 / calc(var(--sg-line) * 0.3)) 50%, transparent) right / var(--sg-r) 100% no-repeat;
+}
+
+.screen-glow::before {
+  background:
+    conic-gradient(from var(--glow-angle, 0deg) at 50% var(--sg-cy), var(--glow-stops)) top / 100% var(--sg-t) no-repeat,
+    conic-gradient(from var(--glow-angle, 0deg) at 50% calc(var(--sg-b) - var(--sg-cy)), var(--glow-stops)) bottom / 100% var(--sg-b) no-repeat,
+    conic-gradient(from var(--glow-angle, 0deg) at var(--sg-cx) 50%, var(--glow-stops)) left / var(--sg-l) 100% no-repeat,
+    conic-gradient(from var(--glow-angle, 0deg) at calc(var(--sg-r) - var(--sg-cx)) 50%, var(--glow-stops)) right / var(--sg-r) 100% no-repeat;
+  transition: opacity 0.4s ease;   /* ended or error: fade out over 400 ms */
+  animation: var(--glow-spin, none) var(--glow-dur) linear infinite;
+}
+.screen-glow.is-on::before { opacity: var(--sg-opacity); }
+
+.screen-glow--faint { --sg-opacity: 0.4; }
+.screen-glow--bright { --sg-opacity: 1; --sg-line: 0.8; }
+.screen-glow--breathe.is-on::before {
+  animation: var(--glow-spin, none) var(--glow-dur) linear infinite, sg-breathe 3.2s ease-in-out infinite;
+}
+/* Agent speaking: faster and brighter. Without an audio level, a steady medium pulse; with one (.has-level,
+   glow.js sets --glow-level 0..1 every frame from the SDK's output volume) the intensity follows the voice. */
+.screen-glow--speaking { --glow-dur: 2.2s; --sg-opacity: 1; --sg-line: 0.75; }
+.screen-glow--speaking.is-on::before {
+  animation: var(--glow-spin, none) var(--glow-dur) linear infinite, sg-pulse 1.1s ease-in-out infinite;
+}
+.screen-glow--speaking.has-level.is-on::before {
+  animation: var(--glow-spin, none) var(--glow-dur) linear infinite;
+  opacity: calc(0.4 + 0.6 * var(--glow-level, 0.5));
+  transition-duration: 0.09s;
+}
+.screen-glow--kiosk { --sg-edge: clamp(56px, 10vh, 110px); --sg-line: 0.4; }   /* readable from 2 m */
+.screen-glow--thin { --sg-edge: 16px; }
+
+/* Edge flashes: added (green), removed (amber), error (red). */
+.screen-glow::after { background: var(--sg-flash, var(--glow-green)); }
+.screen-glow.pulse-add::after { --sg-flash: var(--glow-green); animation: sg-flash 0.8s ease-out both; }
+.screen-glow.pulse-remove::after { --sg-flash: var(--glow-amber); animation: sg-flash 0.8s ease-out both; }
+.screen-glow.flash-error::after { --sg-flash: var(--glow-red); animation: sg-flash 0.7s ease-out both; }
+
+/* Approved: the edge glow draws in and fades while the burst takes over. */
+.screen-glow.is-collapsing { transform: scale(0.9); opacity: 0; transition: transform 0.45s var(--ease), opacity 0.45s ease; }
+
+/* --- Approval burst ------------------------------------------------------------------------------------------
+   <div class="burst-success"><svg class="checkmark">…</svg></div>, made by Glow.burst(). The four colours
+   collapse into a ring around the check (::after), a green radial burst spreads behind it (::before), the check
+   draws, and the page moves on to the receipt. */
+
+.burst-success {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  animation: glow-fade-in 0.25s ease-out both;
+}
+.burst-success::before,
+.burst-success::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 260px;
+  height: 260px;
+  margin: -130px 0 0 -130px;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.burst-success::before {
+  background: radial-gradient(closest-side, rgba(52, 168, 83, 0.55), rgba(52, 168, 83, 0.22) 55%, rgba(52, 168, 83, 0));
+  animation: burst-out 1s var(--ease-out) 0.3s both;
+}
+/* The ring starts about screen wide and closes in around the check (112 px). */
+.burst-success::after {
+  width: 160px;
+  height: 160px;
+  margin: -80px 0 0 -80px;
+  background: conic-gradient(from var(--glow-angle, 0deg), var(--glow-stops));
+  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 88%, #000 92%, transparent 100%);
+  mask: radial-gradient(closest-side, transparent 80%, #000 88%, #000 92%, transparent 100%);
+  animation: burst-collapse 0.55s cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+.burst-success .checkmark { position: relative; width: 112px; height: 112px; margin: 0; animation: pop 0.45s var(--ease-out) 0.75s both; }
+.burst-success .checkmark-circle {
+  fill: var(--glow-green);
+  stroke: var(--glow-green);
+  animation: draw 0.42s var(--ease-out) 0.2s forwards, fill-in 0.25s ease 0.48s forwards;
+}
+.burst-success .checkmark-check { animation: draw 0.3s var(--ease-out) 0.52s forwards; }
+
+/* --- Shelf map bays (the kiosk): a bay whose count changed flashes, green when an item was taken, blue when one
+   came back, and its count pops. Bays of a new plan get one gradient sweep (.glow--once) before their steady
+   glow. shelfmap.js re-draws often; --fx-delay keeps a running flash in step across re-draws. */
+
+.sm-bay { isolation: isolate; }
+.sm-bay.glow--once { --glow-r: 8px; }
+.sm-bay:is(.is-taken, .is-returned) { --flash: var(--glow-green); }
+.sm-bay.is-returned { --flash: var(--glow-blue); }
+.sm-bay:is(.is-taken, .is-returned)::before,
+.sm-bay:is(.is-taken, .is-returned)::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  background: none;
+  filter: none;
+  -webkit-mask: none;
+  mask: none;
+  opacity: 0;
+  will-change: opacity;
+}
+.sm-bay:is(.is-taken, .is-returned)::before {
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--flash);
+  animation: bay-tint 1.6s ease-out var(--fx-delay, 0s) both;
+}
+.sm-bay:is(.is-taken, .is-returned)::after {
+  inset: -3px -3px 0;
+  border: 3px solid var(--flash);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 0 22px 2px var(--flash);
+  animation: glow-fade 1.6s ease-out var(--fx-delay, 0s) both;
+  --glow-peak: 1;
+}
+.sm-bay:is(.is-taken, .is-returned) .sm-count { animation: sm-count-pop 0.6s var(--ease-out) var(--fx-delay, 0s) both; }
+
+/* --- Where the pages use it ----------------------------------------------------------------------------------- */
+
+.total-value { display: inline-block; --glow-r: 10px; --glow-out: 6px; }     /* store and exit totals */
+.paid-title { display: inline-block; --glow-r: 14px; --glow-out: 10px; }   /* receipt "Paid $X" */
+.shelf-map.glow--once { --glow-r: 12px; }
+
+/* --- Keyframes --------------------------------------------------------------------------------------------- */
+
+@keyframes glow-turn { from { --glow-angle: 0deg; } to { --glow-angle: 360deg; } }
+@keyframes glow-sweep {
+  0% { --glow-angle: 0deg; opacity: 0; }
+  18%, 62% { opacity: var(--glow-peak); }
+  100% { --glow-angle: 360deg; opacity: 0; }
+}
+@keyframes glow-fade {
+  0% { opacity: 0; }
+  18%, 62% { opacity: var(--glow-peak); }
+  100% { opacity: 0; }
+}
+/* No @property: the halo sways instead of the colours flowing. */
+@keyframes glow-sway {
+  0%, 50%, 100% { animation-timing-function: ease-in-out; }
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes glow-sweep-sway {
+  0% { transform: rotate(-12deg); opacity: 0; }
+  18%, 62% { opacity: var(--glow-peak); }
+  100% { transform: rotate(12deg); opacity: 0; }
+}
+@keyframes glow-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-6px); }
+  40%, 60% { transform: translateX(6px); }
+}
+@keyframes glow-tint {
+  0% { opacity: 0; }
+  25%, 80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes glow-tint-quick {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes glow-sheen { to { transform: translateX(100%); } }
+@keyframes glow-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sg-breathe {
+  0%, 100% { opacity: calc(var(--sg-opacity) * 0.55); }
+  50% { opacity: var(--sg-opacity); }
+}
+@keyframes sg-pulse {
+  0%, 100% { opacity: calc(var(--sg-opacity) * 0.65); }
+  50% { opacity: var(--sg-opacity); }
+}
+@keyframes sg-flash {
+  0% { opacity: 0; }
+  22% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes burst-collapse {
+  0% { --glow-angle: 0deg; transform: scale(3); opacity: 0; }
+  20% { opacity: 1; }
+  100% { --glow-angle: 300deg; transform: scale(0.8); opacity: 0; }
+}
+@keyframes burst-out {
+  0% { transform: scale(0.2); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+@keyframes bay-tint {
+  0% { opacity: 0; }
+  15% { opacity: 0.45; }
+  100% { opacity: 0; }
+}
+@keyframes sm-count-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* Reduced motion: static gradient borders and plain fades, nothing turns, sweeps, shakes, pulses or bursts.
+   The global rule in section 12 cuts every animation and transition to 0.01 ms; these rules (more specific,
+   also !important) put back the fades that carry meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .glow::before, .glow::after,
+  .screen-glow::before, .screen-glow.is-on::before { animation: none !important; }
+  .glow--once::before, .glow--once::after { animation: glow-fade 1.4s ease both !important; }
+  :is(.flash-warn, .flash-error:not(.screen-glow))::before,
+  :is(.flash-warn, .flash-error:not(.screen-glow))::after { animation: glow-fade 0.8s ease both !important; }
+  :is(.pulse-add, .pulse-remove):not(.screen-glow)::before { animation: glow-tint 2.4s ease both !important; }
+  .screen-glow::before { transition-duration: 0.4s !important; }
+  .screen-glow.pulse-add::after, .screen-glow.pulse-remove::after,
+  .screen-glow.flash-error::after { animation: sg-flash 0.8s ease both !important; }
+  .screen-glow.is-collapsing { transform: none; transition-duration: 0.3s !important; }
+  .shake, .bar.glow-sheen > span::after, .sm-bay .sm-count { animation: none !important; }
+  .burst-success { animation: glow-fade-in 0.3s ease both !important; }
+  .burst-success::before { transform: scale(1.2); animation: glow-fade-in 0.3s ease both !important; }
+  .burst-success::after { display: none; }
+  .sm-bay:is(.is-taken, .is-returned)::before { animation: bay-tint 1.6s ease both !important; }
+  .sm-bay:is(.is-taken, .is-returned)::after { animation: glow-fade 1.6s ease both !important; }
+}
