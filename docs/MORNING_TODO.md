@@ -78,47 +78,76 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
 
 There are **no bay LEDs and no status RGB LED** (no soldering, no breadboard). The only board is the LilyGO
 T-Display-S3 at the gate: USB powered, **nothing wired to it**. Shoppers find their bays by the printed number
-cards and the glowing shelf map on their phone and the kiosk. Nothing here was run on hardware overnight.
+cards and the glowing shelf map on their phone and the kiosk. The screen firmware was rebuilt overnight as an
+animated payment-terminal UI (full-frame canvas in PSRAM, u8g2 fonts, brand palette from app.css); it compiled
+clean but **nothing here was run on hardware**.
 
 - [ ] **Print the bay number cards:**
       ```powershell
       .venv\Scripts\python.exe scripts\gen_bay_cards.py
       ```
-      Open `tags\bay_cards.pdf`, print at 100% ("fit to page" off). Cut out cards **1 to 5** (big number, product
+      Open `tagsay_cards.pdf`, print at 100% ("fit to page" off). Cut out cards **1 to 5** (big number, product
       name underneath) and **tape them to the shelf front**, left to right, each under its product: card 1 under
       bay id 0 (Electrolyte tabs) … card 5 under bay id 4 (Vegan trail mix). The same numbers show on every
       shelf map, so a mismatch sends shoppers to the wrong bay. Keep the cards out of the camera's bay ROIs.
 - [ ] Find the port: `.venv\Scripts\python.exe -m backend.serial_bridge --list-ports`.
-- [ ] Flash (`pio` is not on PATH on this machine):
+- [ ] Flash (`pio` is not on PATH on this machine; the first build downloads the U8g2 font library, ~2 min):
       ```powershell
       cd firmware\shelf_esp32
       & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -t upload --upload-port COM4
       cd ..\..
       ```
+      If the upload cannot open the port, hold **BOOT** (GPIO 0), tap **RST**, release BOOT, and run it again.
 - [ ] Close anything holding COM4 (the backend!), then open the monitor:
       ```powershell
       & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor -p COM4 -b 115200
       ```
-- [ ] `READY` appears and the **LCD lights up in landscape** with "SpeedMart" and animated dots. Check:
-      - [ ] the picture is **not shifted or wrapped** (column offset 35),
+- [ ] `READY` appears and the **LCD lights up in landscape** with the idle screen: the SpeedMart logo (blue
+      rounded square with the bag and bolt) next to "SpeedMart", a slow **breathing blue glow** behind them, and
+      "Tap or scan to enter" with a small NFC wave (three arcs lighting up outward) at the bottom. Check:
+      - [ ] the picture is **not shifted or wrapped** (column offset 35), and the 3 px blue line sits at the very top,
       - [ ] the text is **not mirrored** — if it is upside down, change rotation `1` to `3` in `src/main.cpp`,
-      - [ ] "Mart" is **orange, not blue** — if red and blue are swapped the panel needs BGR,
-      - [ ] the backlight is on (GPIO 38). If serial works but the screen is black, confirm GPIO 15 goes HIGH.
+      - [ ] "Mart" and the logo are **blue, not orange** — if red and blue are swapped the panel needs BGR,
+      - [ ] the backlight is on (GPIO 38). If serial works but the screen is black, confirm GPIO 15 goes HIGH,
+      - [ ] the animation is smooth with **no flicker or tearing** (every frame is drawn off screen and flushed at once).
 - [ ] Type `PING` → `PONG`.
-- [ ] Type each screen and check the look. Sending the same line twice must **not** flicker:
-      `DISP,WELCOME,Maya` · `DISP,TOTAL,$12.96,3` · `DISP,TOTAL,$8.64,1` (reads "1 item") ·
-      `DISP,PAID,$12.96,A1B2C3` · `DISP,DECLINED` · `DISP,OCCUPIED,Maya` ·
-      `DISP,WELCOME,Bartholomew Jones` (shrinks to fit) · `DISP,IDLE`.
-- [ ] **Find screen (new):** type `DISP,TOTAL,$8.64,1` then `DISP,FIND,2 and 4` → "Find bay" and a big orange
-      **"2 and 4"**, "Look for the number cards" underneath. After **6 s** it returns to "$8.64 / 1 item" on its
-      own. `DISP,FIND,1 2 3 4 and 5` shrinks to fit. From `DISP,IDLE`, a FIND returns to the idle screen.
-- [ ] While the screen animates, confirm the **button** still works (hold GPIO 14 for 1 s → prints `BTN,0`).
+- [ ] **Demo mode, the quickest visual check:** type `DISP,DEMO`. The screen cycles every 4 s through
+      idle → "Welcome, Maya" → $12.96 / 3 items → Find bay 2 and 4 → $18.45 / 4 items (the number **counts up**
+      from 12.96 and pulses) → APPROVED → DECLINED → "Maya is shopping" → idle, forever. Every change should
+      **slide and fade** (about a quarter of a second), never a hard cut. Any other `DISP,...` line ends the demo.
+      This is the mode to film the demo video with.
+- [ ] Type each screen and check the look. Sending the same line twice must **not** restart its animation:
+      - `DISP,WELCOME,Maya` → small "Welcome," then **Maya** large in light blue, sliding up into place; a thin
+        blue progress line runs along the bottom edge for 3 s (the backend sends TOTAL when it reaches the end).
+      - `DISP,TOTAL,$12.96,3` → "TOTAL" label top left, a pulsing green live dot top right, the amount big
+        in the tall numeric font, "3 items" below. `DISP,TOTAL,$8.64,1` → the amount **counts down** to 8.64 over
+        0.4 s and pulses, "1 item".
+      - `DISP,FIND,2 and 4` → "Find bay" and two big rounded blue **badges "2" and "4"** that pop in with a
+        little bounce and glow. After **6 s** it returns to the total on its own. `DISP,FIND,1 2 3 4 and 5` → five
+        smaller badges. From `DISP,IDLE`, a FIND returns to the idle screen.
+      - `DISP,PAID,$12.96,A1B2C3` → a **green sweep** from the left, a green disc in which a **checkmark draws
+        itself**, "APPROVED", the total, "Auth A1B2C3". After **5 s** the screen goes idle by itself (the
+        backend's own IDLE, 3 s after the session closes, arrives earlier in a real flow).
+      - `DISP,DECLINED` → red tint, a **short horizontal shake**, a red disc with an **X drawing itself**,
+        "DECLINED", "Try again on your phone". After **4 s** it returns to the last total (or idle).
+      - `DISP,OCCUPIED,Maya` → amber tint, "**Maya** is shopping" (name in amber), "Please wait a moment", a
+        highlight gliding back and forth on a thin bar. After **3 s** it returns to the screen it covered.
+      - `DISP,WELCOME,Bartholomew Jones` → the name shrinks to fit; `DISP,WELCOME,Maximilian Featherstonehaugh`
+        → shrinks, then ends in "..." (DISP arguments are cut to 20 characters by the backend anyway).
+      - `DISP,IDLE` → back to the logo.
+- [ ] **Backlight dimming:** leave the idle screen alone for 60 s → the backlight fades to about 30 % over a
+      second. Type any command (even `PING`) → it is back to full **instantly**.
+- [ ] While the screen animates, confirm the **button** still works (hold the lower side button, GPIO 14, for
+      1 s → prints `BTN,0`) and `PING` still answers at once mid-transition.
 - [ ] End to end: close the monitor, start the backend, admin demo-login, start a session. The LCD shows
-      "Welcome, Demo", then "$0.00 / 0 items" after 3 s. Pick an item → the total updates in about 1 s.
-      Admin reset → "SpeedMart" idle after 3 s.
+      "Welcome, Demo", then "$0.00 / 0 items" after 3 s. Pick an item → the total counts up in about 1 s.
+      Admin reset → the logo idle screen after 3 s.
 - [ ] With a session running, make a plan on the phone (`intent.html`, "Post run recovery under $15") → the LCD
-      shows "Find bay 1 and 2" for 6 s, then the total again.
+      shows the "Find bay" badges for 6 s, then the total again.
 - [ ] **Unplug and replug USB**: the screen comes back to the current state (resync on `READY`).
+- [ ] If the display stays black but `READY` and `PONG` work, the panel did not answer at boot (GPIO 15 power
+      enable, or a bad flash): reflash once. The firmware keeps serial and the button alive when the LCD fails,
+      and falls back to internal RAM if PSRAM is missing, so a black screen is never a PSRAM problem.
 
 ---
 
