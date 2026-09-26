@@ -32,7 +32,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SpeedMart", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, same_site="lax", https_only=False)
+# Secure cookies only behind the HTTPS tunnel (S3.1). uvicorn runs with --proxy-headers so the tunnel's
+# X-Forwarded-Proto makes requests https. An http PUBLIC_ORIGIN (LAN mode) keeps plain cookies working.
+def session_https_only(s=settings) -> bool:
+    return s.features.https_tunnel and s.env.public_origin.startswith("https://")
+
+
+SESSION_HTTPS_ONLY = session_https_only()
+app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, same_site="lax",
+                   https_only=SESSION_HTTPS_ONLY)
 app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
 app.include_router(admin.public)
