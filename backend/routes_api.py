@@ -155,7 +155,7 @@ def gate_enter(body: GateBody, request: Request):
 def quote_for(member_id: str) -> dict[str, Any]:
     """Freeze the cart for checkout (IN_STORE -> CHECKOUT_PENDING) and issue the instruction (8.6).
     Re-quoting a pending checkout returns it again. An empty cart closes the session instead: nothing to pay."""
-    from backend import members
+    from backend import intent, members
 
     session = own_active_session(member_id)
     if session["state"] == store.IN_STORE:
@@ -163,12 +163,16 @@ def quote_for(member_id: str) -> dict[str, Any]:
         if not live["items"]:
             closed = store.close(session["id"], reason="empty_cart")
             eventlog.log("exit_empty", member_id=member_id, session_id=session["id"])
-            return {"cart": store.cart_for(closed), "instruction": None}
+            return {"cart": store.cart_for(closed), "instruction": None, "plan_check": None}
         cart = store.freeze_cart()
     else:
         cart = store.cart_for(session)
     member = payments.ensure_card(members.get_member(member_id))  # Stripe backfill (e.g. the demo member)
-    return {"cart": cart, "instruction": payments.instruction_for(session["id"], cart, member)}
+    # F18: when the shopper made a plan this visit, the exit screen shows how the cart compares (null otherwise).
+    plan = intent.current_plan(member_id)
+    plan_check = intent.compare_cart_to_plan(cart, plan) if plan else None
+    return {"cart": cart, "instruction": payments.instruction_for(session["id"], cart, member),
+            "plan_check": plan_check}
 
 
 @router.post("/api/gate/exit/quote")

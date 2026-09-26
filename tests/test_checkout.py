@@ -271,3 +271,53 @@ def test_instruction_renewed_when_expired(member_id, monkeypatch):
             payments._pending[q["cart"]["session_id"]]["agent_token"]["scope"]["expires_at"] = "2000-01-01T00:00:00Z"
         again = client.post("/api/gate/exit/quote", json=EXIT).json()["instruction"]
         assert again["instruction_id"] != old["instruction_id"]
+
+
+# --- F18: the exit quote carries plan_check (intent.compare_cart_to_plan) -------------------------
+
+def _plan(**over):
+    plan = {"plan_id": "pln_x", "goal_summary": "post run recovery", "budget_usd": 15.0,
+            "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1}],
+            "est_total_usd": 8.64, "fits_budget": True, "bays": [0], "source": "rules"}
+    plan.update(over)
+    return plan
+
+
+def test_quote_has_no_plan_check_without_a_plan(member_id):
+    with TestClient(app) as client:
+        assert shop(client, member_id)["plan_check"] is None
+
+
+def test_quote_plan_check_matches_the_cart(monkeypatch, member_id):
+    from backend import intent
+
+    monkeypatch.setattr(intent, "current_plan", lambda mid: _plan() if mid == member_id else None)
+    with TestClient(app) as client:
+        check = shop(client, member_id)["plan_check"]
+    assert check["matches"] is True
+    assert check["missing"] == [] and check["extra"] == []
+    assert "post run recovery" in check["summary"] and "$8.64" in check["summary"]
+
+
+def test_quote_plan_check_reports_a_missing_item(monkeypatch, member_id):
+    from backend import intent
+
+    plan = _plan(items=[{"sku": "elx", "name": "Electrolyte tabs", "qty": 1},
+                        {"sku": "rec", "name": "Recovery drink", "qty": 1}])
+    monkeypatch.setattr(intent, "current_plan", lambda mid: plan if mid == member_id else None)
+    with TestClient(app) as client:
+        check = shop(client, member_id)["plan_check"]  # only the electrolytes were picked up
+    assert check["matches"] is False
+    assert check["missing"] == [{"sku": "rec", "name": "Recovery drink", "qty": 1}]
+    assert check["extra"] == []
+
+
+def test_empty_cart_quote_has_a_plan_check_key(member_id):
+    """The "nothing to pay" branch returns early; the key must still be there for exit.js."""
+    with TestClient(app) as client:
+        client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
+        face_id(client, member_id)
+        assert client.post("/api/gate/enter", json=ENTRY).status_code == 200
+        q = client.post("/api/gate/exit/quote", json=EXIT).json()
+        assert q["cart"]["state"] == "CLOSED"
+        assert q["instruction"] is None and q["plan_check"] is None

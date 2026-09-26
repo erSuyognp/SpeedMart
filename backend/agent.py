@@ -33,6 +33,7 @@ SYSTEM_PROMPT = (
     "You are the SpeedMart store agent inside a small smart shelf store.\n"
     "Write exactly one sentence of at most 20 words for the shopper's phone.\n"
     "Follow the DECISION exactly. Use only prices and product names given. No emojis, no hashtags, no quotes.\n"
+    "If a GOAL is given, tie the sentence to it in the shopper's own words. Never invent a new goal.\n"
     "Friendly, brief, practical. Use the shopper's first name at most once."
 )
 
@@ -129,8 +130,33 @@ def llm_available() -> bool:
     return bool(env.anthropic_api_key)
 
 
-def _user_message(decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any]) -> str:
-    return json.dumps({
+def active_plan(member: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The F18 plan this shopper asked for, or None. Never raises: no plan just means no goal in the prompt."""
+    member_id = (member or {}).get("id")
+    if not member_id:
+        return None
+    try:
+        from backend import intent
+
+        return intent.current_plan(member_id)
+    except Exception:
+        return None
+
+
+def _goal_for_prompt(plan: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Only the words, never the plan's money: a price the LLM was not given is rejected by validate()."""
+    if not plan:
+        return None
+    summary = (plan.get("goal_summary") or "").strip()
+    items = [i["name"] for i in plan.get("items") or [] if i.get("name")]
+    if not summary and not items:
+        return None
+    return {"summary": summary, "items": items}
+
+
+def _user_message(decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any],
+                  plan: dict[str, Any] | None = None) -> str:
+    payload = {
         "first_name": _first_name(member),
         "dietary": member.get("dietary"),
         "budget_usd": cart.get("budget_usd"),
@@ -138,13 +164,18 @@ def _user_message(decision: dict[str, Any], cart: dict[str, Any], member: dict[s
                  for i in cart.get("items") or []],
         "total_usd": cart.get("total_usd"),
         "decision": decision,
-    })
+    }
+    goal = _goal_for_prompt(plan)
+    if goal:  # the key is absent entirely when there is no plan
+        payload["goal"] = goal
+    return json.dumps(payload)
 
 
-def llm_phrase(decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any]) -> str:
+def llm_phrase(decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any],
+               plan: dict[str, Any] | None = None) -> str:
     """One raw LLM reply. Raises on any HTTP, timeout or shape problem; the caller falls back."""
     env = settings.env
-    user = _user_message(decision, cart, member)
+    user = _user_message(decision, cart, member, plan)
     if env.llm_provider.lower() == "openai":
         r = httpx.post(
             f"{env.openai_base_url.rstrip('/')}/chat/completions",
@@ -190,7 +221,8 @@ def _allowed_amounts(decision: dict[str, Any], cart: dict[str, Any]) -> set[int]
     return cents
 
 
-def validate(line: Any, decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any]) -> str | None:
+def validate(line: Any, decision: dict[str, Any], cart: dict[str, Any], member: dict[str, Any],
+             plan: dict[str, Any] | None = None) -> str | None:
     """The cleaned line if it may be shown, else None (caller keeps the template).
 
     Rules (9.6): one line, at most 25 words, no emoji, names only from the catalog. Also: every $ amount must be
@@ -212,6 +244,8 @@ def validate(line: Any, decision: dict[str, Any], cart: dict[str, Any], member: 
     first = _first_name(member).lower()
     if first:
         allowed.add(first)
+    if plan:  # the shopper's own goal words ("Post run recovery") are theirs to echo back
+        allowed |= {w.lower() for w in re.findall(r"[A-Za-z']+", plan.get("goal_summary") or "")}
     for m in _CAP_WORD.finditer(text):
         before = text[:m.start()].rstrip()
         sentence_start = not before or before[-1] in ".!?:"
@@ -235,12 +269,13 @@ def generate(cart: dict[str, Any], member: dict[str, Any] | None = None) -> tupl
     line = template(decision)
     source = "template"
     if llm_available():
+        plan = active_plan(member)  # F18: let the line reference the shopper's goal when there is one
         try:
-            raw = llm_phrase(decision, cart, member)
+            raw = llm_phrase(decision, cart, member, plan)
         except Exception as e:  # timeout, HTTP error, bad JSON: the template stands
             eventlog.log("agent_llm_error", error=repr(e)[:300], kind=decision["kind"])
         else:
-            ok = validate(raw, decision, cart, member)
+            ok = validate(raw, decision, cart, member, plan)
             if ok is not None:
                 line, source = ok, "llm"
             else:

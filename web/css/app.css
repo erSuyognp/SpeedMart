@@ -404,6 +404,10 @@ body:has(> .action-bar) { padding-bottom: var(--action-bar-space); }
 }
 .action-bar .row { display: flex; gap: var(--space-2); }
 .action-bar .row > button, .action-bar .row > .button { flex: 1; width: auto; }
+
+/* Pages toggle the controls inside a bar per state (store.html hides Checkout when the gates are on).
+   A bar whose every child is [hidden] collapses, so no empty blurred strip is left at the bottom. */
+.action-bar:not(:has(> :not([hidden]))) { display: none; }
 .action-note { margin: 0; text-align: center; font-size: var(--text-xs); color: var(--text-3); font-weight: 600; }
 
 

@@ -3,22 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a56db">
+  <meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SpeedMart">
   <title>SpeedMart · Exit</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
 </head>
-<body>
+<body class="has-action-bar">
   <main>
-    <header class="hero">
-      <h1>Exit gate</h1>
-      <p class="muted">Review and approve</p>
+    <header class="app-header">
+      <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="pill warn"><span class="dot warn"></span>Exit gate</span>
     </header>
 
+    <section class="hero">
+      <h1 class="page-title">Exit gate</h1>
+      <p class="subtitle">Review and approve</p>
+    </section>
+
+    <!-- exit.js rewrites #notice-icon's class ("big-icon ok" / "brand" / "bad"), so it stays a .big-icon. -->
     <section id="notice" class="card notice">
       <div id="notice-icon" class="big-icon brand" aria-hidden="true">…</div>
       <h2 id="notice-title">Loading your receipt…</h2>
       <p id="notice-text" class="muted"></p>
-      <div class="stack">
+      <div class="stack mt-4">
         <a id="notice-link" class="button primary block" href="/store.html" hidden>Go to your cart</a>
       </div>
     </section>
@@ -27,18 +42,21 @@
       <section id="declined" class="strip bad" role="alert" hidden></section>
       <section id="over-scope" class="strip warn" role="alert" hidden></section>
 
+      <!-- F18: filled from the exit quote's plan_check.summary; stays hidden when there is no plan. -->
+      <section id="plan-check" class="card agent-card" aria-live="polite" hidden></section>
+
       <section class="card">
         <h2>Your items</h2>
-        <ul id="items" class="cart-list"></ul>
-        <div class="totals" style="margin-top:12px">
+        <ul id="items" class="cart-list receipt-list"></ul>
+        <div class="totals mt-3">
           <span class="muted">Subtotal</span><span id="subtotal">$0.00</span>
           <span class="muted">Tax</span><span id="tax">$0.00</span>
           <span class="grand">Total</span><span id="total" class="grand">$0.00</span>
         </div>
-        <p id="card-line" class="muted small" style="margin:12px 0 0"></p>
+        <p id="card-line" class="muted small mt-3"></p>
       </section>
 
-      <details id="network" class="card panel" hidden>
+      <details id="network" class="card panel disclosure" hidden>
         <summary>What the payment network sees</summary>
         <dl class="kv">
           <dt>Agent</dt><dd id="n-agent"></dd>
@@ -52,8 +70,10 @@
         <pre id="n-json" class="json"></pre>
       </details>
 
-      <button id="approve-btn" class="primary block" type="button" hidden>Approve</button>
-      <button id="cancel-btn" class="block" type="button">Keep shopping</button>
+      <div class="action-bar">
+        <button id="approve-btn" class="primary" type="button" hidden>Approve</button>
+        <button id="cancel-btn" class="ghost" type="button">Keep shopping</button>
+      </div>
     </div>
   </main>
 

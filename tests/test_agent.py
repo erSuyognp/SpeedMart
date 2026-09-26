@@ -386,3 +386,70 @@ def test_store_pick_shows_suggestion(monkeypatch, store_env, published):
     assert store.current_cart()["agent_line"] == expected
     lines = [json.loads(x) for x in eventlog.EVENTS_PATH.read_text(encoding="utf-8").splitlines()]
     assert any(e["type"] == "agent_line" and e["decision"]["kind"] == "suggest" for e in lines)
+
+
+# --- F18: the active intent plan reaches the agent line -------------------------------------------
+
+PLAN = {
+    "plan_id": "pln_test",
+    "goal_summary": "post run recovery",
+    "items": [{"sku": "elx", "name": "Electrolyte tabs", "qty": 1},
+              {"sku": "rec", "name": "Recovery drink", "qty": 1}],
+    "est_total_usd": 12.96,
+    "budget_usd": 15.0,
+}
+
+
+@pytest.fixture
+def with_plan(monkeypatch):
+    """intent.current_plan() answers with PLAN for the test member and nothing for anyone else."""
+    from backend import intent
+
+    monkeypatch.setattr(intent, "current_plan", lambda member_id: PLAN if member_id == MEMBER["id"] else None)
+    return PLAN
+
+
+def test_goal_is_sent_to_the_llm_when_a_plan_exists(monkeypatch, with_plan):
+    use_settings(monkeypatch)
+    calls = fake_llm(monkeypatch, anthropic_reply(GOOD))
+    agent.generate(make_cart({"elx": 1}), MEMBER)
+    user = json.loads(calls[0]["json"]["messages"][0]["content"])
+    assert user["goal"] == {"summary": "post run recovery",
+                            "items": ["Electrolyte tabs", "Recovery drink"]}
+    # The plan's own money never goes in the prompt: validate() would reject any amount it did not supply.
+    assert "12.96" not in calls[0]["json"]["messages"][0]["content"]
+
+
+def test_no_goal_key_without_a_plan(monkeypatch):
+    use_settings(monkeypatch)
+    calls = fake_llm(monkeypatch, anthropic_reply(GOOD))
+    agent.generate(make_cart({"elx": 1}), MEMBER)
+    user = json.loads(calls[0]["json"]["messages"][0]["content"])
+    assert "goal" not in user
+
+
+def test_line_may_echo_the_shoppers_goal_words(monkeypatch, with_plan):
+    use_settings(monkeypatch)
+    # "Recovery" is a catalog word, but a goal word like this would otherwise be an unknown proper noun.
+    line = "Electrolyte tabs added, right on track for Post run recovery under budget."
+    fake_llm(monkeypatch, anthropic_reply(line))
+    got, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
+    assert (got, source) == (line, "llm")
+
+
+def test_plan_lookup_never_breaks_the_line(monkeypatch):
+    from backend import intent
+
+    def boom(member_id):
+        raise RuntimeError("intent is unavailable")
+
+    monkeypatch.setattr(intent, "current_plan", boom)
+    use_settings(monkeypatch)
+    fake_llm(monkeypatch, anthropic_reply(GOOD))
+    line, source, _ = agent.generate(make_cart({"elx": 1}), MEMBER)
+    assert (line, source) == (GOOD, "llm")
+
+
+def test_active_plan_without_a_member_id_is_none():
+    assert agent.active_plan(None) is None
+    assert agent.active_plan({}) is None

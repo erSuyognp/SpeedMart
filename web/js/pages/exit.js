@@ -6,7 +6,7 @@
   const $ = (id) => document.getElementById(id);
   const token = new URLSearchParams(location.search).get("g") || "";
   let cfg = { features: {} };
-  let quote = null; // {cart, instruction}
+  let quote = null; // {cart, instruction, plan_check}
 
   const passkeysOn = () => !!cfg.features.passkeys;
 
@@ -50,6 +50,11 @@
     $("notice").hidden = true;
     $("review").hidden = false;
 
+    // F18: how this cart compares with the plan the shopper asked for (null when there is no plan).
+    const planCheck = res.plan_check;
+    $("plan-check").hidden = !planCheck || !planCheck.summary;
+    $("plan-check").textContent = planCheck && planCheck.summary ? planCheck.summary : "";
+
     const list = $("items");
     list.innerHTML = "";
     cart.items.forEach((item) => {
@@ -76,7 +81,7 @@
     const verb = passkeysOn() ? "Approve " + api.money(cart.total_usd) + " with Face ID" : "Confirm " + api.money(cart.total_usd);
     $("approve-btn").textContent = verb;
     $("approve-btn").hidden = !instr || overScope;
-    $("cancel-btn").className = "block" + (overScope ? " primary" : "");
+    $("cancel-btn").className = (overScope ? "primary" : "ghost") + " block";
     if (instr && !overScope && passkeysOn()) passkey.prefetch("login", "exit");
   }
 

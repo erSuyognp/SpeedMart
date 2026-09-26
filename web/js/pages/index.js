@@ -127,7 +127,11 @@
   }
 
   async function init() {
-    $("budget").addEventListener("input", () => { $("budget-out").textContent = "$" + $("budget").value; });
+    $("budget").addEventListener("input", () => {
+      const el = $("budget");
+      $("budget-out").textContent = "$" + el.value;
+      el.style.setProperty("--range-pct", ((el.value - el.min) / (el.max - el.min) * 100) + "%");  // filled track
+    });
     $("join-form").addEventListener("submit", onJoin);
     $("signin-btn").addEventListener("click", onSignIn);
     $("setup-btn").addEventListener("click", onSetup);

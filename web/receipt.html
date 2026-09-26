@@ -3,37 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a56db">
+  <meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SpeedMart">
   <title>SpeedMart · Receipt</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
 </head>
-<body>
+<body class="has-action-bar">
   <main>
+    <header class="app-header">
+      <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="pill live"><span class="dot live"></span>Receipt</span>
+    </header>
+
+    <!-- receipt.js rewrites #icon's class ("big-icon ok" / "big-icon bad"), so it stays a .big-icon. -->
     <section class="card notice">
       <div id="icon" class="big-icon" aria-hidden="true">…</div>
       <h1 id="title">Loading…</h1>
       <p id="card" class="lead"></p>
       <p id="meta" class="muted"></p>
-      <p id="points" class="lead" hidden></p>
+      <p id="points" class="points" hidden></p>
     </section>
 
     <section id="items-card" class="card" hidden>
       <h2 id="store-name">Items</h2>
-      <ul id="items" class="cart-list"></ul>
-      <div class="totals" style="margin-top:12px">
+      <ul id="items" class="cart-list receipt-list"></ul>
+      <div class="totals mt-3">
         <span class="muted">Subtotal</span><span id="subtotal"></span>
         <span class="muted">Tax</span><span id="tax"></span>
         <span class="grand">Total</span><span id="total" class="grand"></span>
       </div>
     </section>
 
-    <details id="record" class="card panel" hidden>
+    <details id="record" class="card panel disclosure" hidden>
       <summary>Show payment record</summary>
       <pre id="record-json" class="json"></pre>
     </details>
-
-    <a id="done" class="button primary block" href="/">Done</a>
   </main>
+
+  <div class="action-bar">
+    <a id="done" class="button primary block" href="/">Done</a>
+  </div>
 
   <footer class="site-footer">Sandbox demo · no real payments</footer>
 

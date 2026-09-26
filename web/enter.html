@@ -3,17 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a56db">
+  <meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SpeedMart">
   <title>SpeedMart · Entry gate</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
-    <header class="hero">
-      <h1>Entry gate</h1>
-      <p class="muted">SpeedMart</p>
+    <header class="app-header">
+      <a class="brand" href="/"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+      <span class="pill">Entry gate</span>
     </header>
 
+    <section class="hero">
+      <h1 class="page-title">Entry gate</h1>
+      <p class="subtitle">Confirm it's you and the door opens. One shopper at a time.</p>
+    </section>
+
+    <!-- enter.js rewrites #icon's class ("big-icon ok" / "brand" / "bad"), so it stays a .big-icon. -->
     <section class="card notice">
       <div id="icon" class="big-icon brand" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -22,9 +37,9 @@
       </div>
       <h2 id="title">Loading…</h2>
       <p id="text" class="muted"></p>
-      <div id="spinner" class="spinner" hidden></div>
-      <div class="stack">
-        <button id="enter-btn" class="primary block" type="button" hidden>Enter with Face ID</button>
+      <div id="spinner" class="spinner lg" hidden></div>
+      <div class="stack mt-4">
+        <button id="enter-btn" class="primary block lg" type="button" hidden>Enter with Face ID</button>
         <a id="cart-link" class="button primary block" href="/store.html" hidden>Go to your cart</a>
         <a id="join-link" class="button block" href="/" hidden>New here? Join first</a>
       </div>

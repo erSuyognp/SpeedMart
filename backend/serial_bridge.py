@@ -321,9 +321,11 @@ def clear_highlights() -> bool:
     return True
 
 
-# --- event log -> gate display. Payment event names are a guess until payments.py lands; see the docs. ---
+# --- event log -> gate display. Event names below are the real ones emitted by the backend:
+# backend/payments.py logs "payment" (status AUTHORIZED / DECLINED / ERROR, amount_usd, auth_code),
+# backend/store.py logs "cart_changed", "store_occupied" and "session_state". ---
 
-PAYMENT_EVENTS = ("payment", "payment_result", "payment_authorized", "payment_declined")
+PAYMENT_EVENTS = ("payment",)
 
 
 def _query_one(sql: str, arg: Any) -> Any:
@@ -472,13 +474,10 @@ class DisplayDirector:
             self._later(OCCUPIED_HOLD_S, lambda: self._show(*back))
 
     def _on_payment(self, e: dict[str, Any]) -> None:
+        # "payment" carries status, amount_usd and auth_code (payments.py record_payment).
         status = str(e.get("status") or "").upper()
-        if not status:
-            status = {"payment_authorized": "AUTHORIZED", "payment_declined": "DECLINED"}.get(e["type"], "")
         if status == "AUTHORIZED":
-            cents = e.get("amount_cents")
-            total = (_money(e.get("amount_usd")) or _money(e.get("total_usd"))
-                     or (_money(int(cents) / 100) if isinstance(cents, int) else None) or self._total)
+            total = _money(e.get("amount_usd")) or self._total
             self._show("PAID", total, e.get("auth_code") or "")
         elif status == "DECLINED":
             self._show("DECLINED")

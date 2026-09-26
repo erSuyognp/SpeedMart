@@ -3,13 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a56db">
+  <meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SpeedMart">
   <title>SpeedMart · Cart</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
 </head>
-<body>
+<body class="has-action-bar">
   <main>
-    <header class="topbar">
+    <header class="topbar app-header">
       <h1>SpeedMart</h1>
       <div class="session-tag">
         <span id="session-id" class="mono"></span>
@@ -17,15 +26,18 @@
       </div>
     </header>
 
-    <section id="loading" class="card notice muted">Loading…</section>
+    <section id="loading" class="card">
+      <div class="skeleton title"></div>
+      <div class="skeleton-rows"><div class="skeleton row"></div><div class="skeleton row"></div></div>
+    </section>
 
     <section id="outside" class="card notice" hidden>
       <h2 id="outside-title">You're not in the store</h2>
       <p id="outside-text" class="muted"></p>
-      <div id="start-wrap" class="stack" style="margin-top:16px" hidden>
+      <div id="start-wrap" class="stack mt-4" hidden>
         <button id="start-btn" class="primary block">Start shopping</button>
       </div>
-      <a id="receipt-link" class="button primary block" style="margin-top:16px" href="/receipt.html" hidden>View receipt</a>
+      <a id="receipt-link" class="button primary block mt-4" href="/receipt.html" hidden>View receipt</a>
     </section>
 
     <div id="shopping" class="stack" hidden>
@@ -34,6 +46,9 @@
       <section id="warnings" class="strip warn" aria-live="polite" hidden></section>
 
       <section id="checkout-state" class="strip warn" hidden></section>
+
+      <!-- F18 entry point: the shopper describes a goal and the store plans it (web/intent.html). -->
+      <a class="button secondary block" href="/intent.html">Tell us what you need</a>
 
       <section class="card">
         <h2>Your cart</h2>
@@ -54,7 +69,11 @@
       </section>
 
       <p id="exit-hint" class="hint" hidden>When you're done, scan the EXIT code.</p>
-      <button id="checkout-btn" class="primary block" hidden>Checkout</button>
+
+      <!-- Gates on: store.js hides #checkout-btn and the bar collapses (see .action-bar in app.css). -->
+      <div class="action-bar">
+        <button id="checkout-btn" class="primary" hidden>Checkout</button>
+      </div>
     </div>
   </main>
 

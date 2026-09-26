@@ -169,15 +169,16 @@ def test_payment_authorized_then_closed(shown, fast_timers):
 def test_payment_declined_then_back_to_total(shown, fast_timers):
     d = serial_bridge.director
     d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"rec": 1}, "total_usd": 4.32})
-    d.handle({"type": "payment_declined", "amount_cents": 432})
+    d.handle({"type": "payment", "status": "DECLINED", "amount_usd": 4.32, "auth_code": None})
     assert shown[-1] == ("DECLINED",)
     assert wait_for(lambda: shown[-1] == ("TOTAL", "$4.32", "1"))
 
 
 def test_payment_alternatives_and_fallbacks(shown):
     d = serial_bridge.director
+    # A mock-provider approval: the real "payment" event, amount_usd and a MOCK auth code.
     d.handle({"type": "cart_changed", "state": "IN_STORE", "items": {"elx": 1}, "total_usd": 8.64})
-    d.handle({"type": "payment_authorized", "amount_cents": 864, "auth_code": "MOCK1234"})
+    d.handle({"type": "payment", "status": "AUTHORIZED", "amount_usd": 8.64, "auth_code": "MOCK1234"})
     assert shown[-1] == ("PAID", "$8.64", "MOCK1234")
     d.reset()
     d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 8.64})
@@ -186,7 +187,17 @@ def test_payment_alternatives_and_fallbacks(shown):
     n = len(shown)
     d.handle({"type": "payment", "status": "ERROR"})
     d.handle({"type": "serial_out", "cmd": "DISP,IDLE"})
+    # Names that are not the real payment event are ignored outright.
+    d.handle({"type": "payment_authorized", "amount_usd": 8.64, "auth_code": "NOPE12"})
+    d.handle({"type": "payment_declined", "amount_usd": 8.64})
     assert len(shown) == n
+
+
+def test_payment_without_amount_falls_back_to_last_cart_total(shown):
+    d = serial_bridge.director
+    d.handle({"type": "cart_changed", "state": "CHECKOUT_PENDING", "items": {"elx": 1}, "total_usd": 8.64})
+    d.handle({"type": "payment", "status": "AUTHORIZED", "auth_code": "A1B2C3"})
+    assert shown[-1] == ("PAID", "$8.64", "A1B2C3")
 
 
 def test_cancelled_exit_returns_to_total_and_new_screen_cancels_idle_timer(shown, fast_timers):

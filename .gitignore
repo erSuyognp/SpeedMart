@@ -4,3 +4,4 @@ models/*.pt
 __pycache__/
 .venv/
 qr/
+.run/
