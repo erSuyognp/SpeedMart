@@ -1,4 +1,4 @@
-# AISLE — Build Spec for Claude Code
+# SpeedMart — Build Spec for Claude Code
 
 **Event:** HackGT 13 (Fri Sep 25, 8:00 PM → Sun Sep 27, 8:00 AM, Atlanta)
 **Track:** The Shipyard (Hardware) + Visa challenge (Reimagine Shopping with Generative AI)
@@ -25,7 +25,7 @@ You are implementing this project step by step from this file. Rules:
 
 ## 1. THE DEMO JOURNEY (what the judge experiences)
 
-1. **Signup.** Judge scans **QR A (signup)** on the table → opens `https://<domain>/` on their phone → enters first name → phone prompts Face ID / fingerprint to create a passkey → a sandbox Visa test card is linked automatically → "You're a member of Aisle Market."
+1. **Signup.** Judge scans **QR A (signup)** on the table → opens `https://<domain>/` on their phone → enters first name → phone prompts Face ID / fingerprint to create a passkey → a sandbox Visa test card is linked automatically → "You're a member of SpeedMart Market."
 2. **Entry.** Judge scans **QR B (entry gate)** → app asks for Face ID → verified → store door "opens" (gate LED turns green, phone shows "Welcome in, Maya") → store session starts. Only one shopper can be inside at a time.
 3. **Shopping.** Judge picks an item off the shelf. The overhead camera sees the item leave its bay. Within ~1 second the item appears in the phone cart. The bay LED turns off. A one-sentence AI store agent line appears ("Electrolytes added. A recovery drink is $4 and keeps you under your $20 budget.").
 4. **Put back.** Judge puts an item back. It disappears from the cart. (Proves it's live, not scripted.)
@@ -74,7 +74,7 @@ If F7 (passkeys) is cut: signup, entry, and exit use a big "Confirm" button inst
 | Layer | Choice | Notes |
 |---|---|---|
 | Backend | Python 3.11, FastAPI, uvicorn | One process, `backend/main.py` |
-| DB | SQLite via stdlib `sqlite3` | File at `data/aisle.db`. No ORM. |
+| DB | SQLite via stdlib `sqlite3` | File at `data/SpeedMart.db`. No ORM. |
 | Sessions | Starlette `SessionMiddleware` (signed cookie) | Needs `itsdangerous` |
 | Realtime | FastAPI WebSocket `/ws` | Broadcast cart snapshots |
 | Vision | OpenCV (`opencv-contrib-python`), NumPy | Separate process, `vision/worker.py` |
@@ -111,9 +111,9 @@ Optional (only if F13 on): `ultralytics>=8.3`.
 ## 4. FILE STRUCTURE
 
 ```
-aisle/
+SpeedMart/
 ├── README.md                    # how to run, team roles, demo steps
-├── AISLE_BUILD_SPEC.md          # this file
+├── SpeedMart_BUILD_SPEC.md          # this file
 ├── .env.example                 # every env var with a comment
 ├── .gitignore                   # .env, data/, models/*.pt, __pycache__, .venv
 ├── requirements.txt
@@ -179,7 +179,7 @@ aisle/
 │   └── reset_demo.sh            # calls admin reset
 │
 ├── models/                      # YOLO weights (gitignored)
-├── data/                        # aisle.db, events.log.jsonl, payments.log.jsonl (gitignored)
+├── data/                        # SpeedMart.db, events.log.jsonl, payments.log.jsonl (gitignored)
 └── docs/
     ├── DEMO.md                  # 90-second script + judge Q&A
     └── DEVPOST.md               # write-up draft
@@ -196,10 +196,10 @@ aisle/
 SESSION_SECRET=change-me-long-random-string
 
 # Public HTTPS origin (must match the tunnel domain exactly, no trailing slash)
-PUBLIC_ORIGIN=https://aisle-demo.ngrok-free.app
+PUBLIC_ORIGIN=https://SpeedMart-demo.ngrok-free.app
 # WebAuthn relying party id = the domain only
-RP_ID=aisle-demo.ngrok-free.app
-RP_NAME=Aisle Market
+RP_ID=SpeedMart-demo.ngrok-free.app
+RP_NAME=SpeedMart Market
 
 # Shared secret the vision worker sends on /internal/* routes
 INTERNAL_TOKEN=change-me-too
@@ -241,7 +241,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
     "load_cells": false
   },
   "store": {
-    "name": "Aisle Market #01",
+    "name": "SpeedMart Market #01",
     "currency": "USD",
     "tax_rate": 0.08,
     "default_budget_usd": 20,
@@ -263,7 +263,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
     "stable_ms": 400,
     "motion_threshold": 0.02,
     "motion_settle_ms": 300,
-    "yolo_model": "models/aisle_yolo.pt",
+    "yolo_model": "models/SpeedMart_yolo.pt",
     "yolo_conf": 0.55,
     "yolo_every_n_frames": 3
   },
@@ -544,18 +544,18 @@ are glowing gets it among its first messages.
 {
   "instruction_id": "instr_7f3c",
   "label": "SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call.",
-  "agent": {"id": "aisle-shelf-agent-01", "name": "Aisle Store Agent"},
+  "agent": {"id": "SpeedMart-shelf-agent-01", "name": "SpeedMart Store Agent"},
   "agent_token": {
-    "token_ref": "tok_aisle_ses_Ab3xY9",
+    "token_ref": "tok_SpeedMart_ses_Ab3xY9",
     "scope": {
-      "merchant": "Aisle Market #01",
+      "merchant": "SpeedMart Market #01",
       "max_amount_usd": 20.00,
       "currency": "USD",
       "single_use": true,
       "expires_at": "2026-09-26T02:29:03Z"
     }
   },
-  "user_intent": "Pay $8.64 to Aisle Market #01 for 1 item",
+  "user_intent": "Pay $8.64 to SpeedMart Market #01 for 1 item",
   "items": [{"sku": "elx", "qty": 1, "unit_price_usd": 8.00}],
   "amount_usd": 8.64,
   "cardholder_confirmation": {"method": "passkey", "verified_at": "2026-09-26T02:14:01Z"},
@@ -693,7 +693,7 @@ Rationale: tags can never overcount; YOLO fills in when a tag is covered or glar
 
 ### 9.5 Overlay (`vision/overlay.py`)
 
-Draw on a copy of the frame: bay rectangles (green = stable, yellow = motion/unstable), bay id + SKU name, detected tag outlines with ids, YOLO boxes with class + conf, FPS, and "snapshot OK / backend unreachable". Show in a window titled `AISLE shelf cam`. Keep this window visible on the laptop facing judges.
+Draw on a copy of the frame: bay rectangles (green = stable, yellow = motion/unstable), bay id + SKU name, detected tag outlines with ids, YOLO boxes with class + conf, FPS, and "snapshot OK / backend unreachable". Show in a window titled `SpeedMart shelf cam`. Keep this window visible on the laptop facing judges.
 
 ### 9.6 Agent line generation (`backend/agent.py`)
 
@@ -710,7 +710,7 @@ broadcast {"type":"agent"} and store on snapshot
 LLM system prompt:
 
 ```
-You are the Aisle store agent inside a small smart shelf store.
+You are the SpeedMart store agent inside a small smart shelf store.
 Write exactly one sentence of at most 20 words for the shopper's phone.
 Follow the DECISION exactly. Use only prices and product names given. No emojis, no hashtags, no quotes.
 Friendly, brief, practical. Use the shopper's first name at most once.
@@ -776,7 +776,7 @@ Frontend (`web/js/passkey.js`): load `@simplewebauthn/browser@13` UMD bundle fro
 
 - Refuse to start if `STRIPE_SECRET_KEY` does not start with `sk_test_`.
 - On signup: `stripe.Customer.create(name=..., metadata={"member_id":...})`, then `pm = stripe.PaymentMethod.attach("pm_card_visa", customer=customer.id)`; save `customer.id`, `pm.id`, label `Visa •••• 4242 (test)`. No card entry UI needed.
-- On approve: `stripe.PaymentIntent.create(amount=cents, currency="usd", customer=..., payment_method=..., payment_method_types=["card"], off_session=True, confirm=True, description="Aisle Market #01", metadata={"session_id":..., "instruction_id":...}, idempotency_key=f"aisle-{session_id}-{attempt}")`.
+- On approve: `stripe.PaymentIntent.create(amount=cents, currency="usd", customer=..., payment_method=..., payment_method_types=["card"], off_session=True, confirm=True, description="SpeedMart Market #01", metadata={"session_id":..., "instruction_id":...}, idempotency_key=f"SpeedMart-{session_id}-{attempt}")`.
 - `status == "succeeded"` → AUTHORIZED, `auth_code` = last 6 chars of the PaymentIntent id uppercased. `stripe.CardError` (older SDKs: `stripe.error.CardError`) → DECLINED with message. Any other exception → fall back to mock provider and mark `provider:"mock"` so the demo continues.
 - If `force_decline` is on (admin), return DECLINED without calling Stripe.
 
@@ -795,7 +795,7 @@ Mock provider (F10 off or fallback): AUTHORIZED with `auth_code` `MOCK` + 4 rand
 Paste this, changing the step ID:
 
 ```
-Read AISLE_BUILD_SPEC.md sections 0 to 9. Implement step S1.1 only.
+Read SpeedMart_BUILD_SPEC.md sections 0 to 9. Implement step S1.1 only.
 Follow its Files, Instructions and Acceptance exactly. Respect feature flags.
 When finished, run every acceptance check you can, report pass/fail for each,
 and list anything a human must verify physically.
@@ -810,7 +810,7 @@ and list anything a human must verify physically.
 Check HackGT rules: project code should be written during the hacking window. Accounts, printing, and packing are fine beforehand.
 
 #### S0.1 Accounts and keys (human)
-1. ngrok account → claim the free static domain → note it (e.g. `aisle-demo.ngrok-free.app`). Install ngrok and run `ngrok config add-authtoken <token>`.
+1. ngrok account → claim the free static domain → note it (e.g. `SpeedMart-demo.ngrok-free.app`). Install ngrok and run `ngrok config add-authtoken <token>`.
 2. Stripe account → Test mode → copy `sk_test_...` secret key.
 3. LLM API key (Anthropic or OpenAI-compatible) with a little credit.
 4. Roboflow and Google accounts ready if F13 is planned.
@@ -839,7 +839,7 @@ Goal: an admin button changes the shelf, and a phone on the same network sees th
 **Acceptance:**
 - `uvicorn backend.main:app --host 0.0.0.0 --port 8000` starts with no errors.
 - `curl localhost:8000/api/health` returns `ok: true`.
-- `data/aisle.db` exists with 4 tables; demo member seeded.
+- `data/SpeedMart.db` exists with 4 tables; demo member seeded.
 - Breaking `catalog.json` (unknown SKU in a unit) makes startup fail with a readable error.
 
 #### S1.2 Shelf state, store sessions, cart engine (+ tests)
@@ -988,7 +988,7 @@ Goal: an admin button changes the shelf, and a phone on the same network sees th
 
 #### S5.1 YOLO data + training
 **Feature:** F13 · **Owner:** VA · **Time:** 2.5 h (mostly waiting) · **Depends:** S2.3
-Follow Section 14. **Acceptance:** `best.pt` validation mAP50 ≥ 0.9 on all classes; saved as `models/aisle_yolo.pt`.
+Follow Section 14. **Acceptance:** `best.pt` validation mAP50 ≥ 0.9 on all classes; saved as `models/SpeedMart_yolo.pt`.
 
 #### S5.2 YOLO inference + fusion
 **Feature:** F13 · **Owner:** VA · **Time:** 1.5 h · **Depends:** S5.1
@@ -1021,7 +1021,7 @@ Large fonts, one-handed layout, loading states, clear error toasts, `scripts/res
 Global rules: mobile first (design for 390 px wide), no framework, one stylesheet, CSS variables for colors, minimum 48 px touch targets, 17 px base font. Every page reads `/api/config/public` and hides UI for disabled features. Do not use the Visa logo image; text like "Visa (sandbox)" is fine. Every page shows a small "Sandbox demo" footer.
 
 ### 11.1 `index.html` (QR 1 · JOIN)
-- Title "Aisle Market", subtitle "Grab and go, with a yes you control."
+- Title "SpeedMart Market", subtitle "Grab and go, with a yes you control."
 - Form: first name, budget slider ($10 to $50, default $20), dietary select (none / vegetarian / vegan / gluten free).
 - Button "Join with Face ID" (or "Join" if passkeys off).
 - Success: "You're a member. Card linked: Visa •••• 4242 (test). Walk to the entry gate."
@@ -1033,7 +1033,7 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - States: not a member (link to join), verifying, welcome ("Welcome in, Maya"), occupied, error.
 
 ### 11.3 `store.html` (live cart)
-- Header: "Aisle Market" + session last 4 chars + live dot (green = socket connected).
+- Header: "SpeedMart Market" + session last 4 chars + live dot (green = socket connected).
 - Agent card at top: the one-sentence agent line, subtle fade on change.
 - Cart rows: name, qty, line total; new rows slide in; removed rows fade out.
 - Totals block: subtotal, tax, total; budget bar (green under 80%, amber 80 to 100%, red over).
@@ -1200,7 +1200,7 @@ The MCU is a dumb display and sensor hat. No cart logic on the ESP32. Timed effe
    !pip install ultralytics
    !yolo detect train model=yolo11n.pt data=/content/dataset/data.yaml epochs=80 imgsz=640 batch=16 patience=20
    ```
-4. **Check** `runs/detect/train/results.png` and val mAP50 (target ≥ 0.9). Download `runs/detect/train/weights/best.pt` → `models/aisle_yolo.pt`.
+4. **Check** `runs/detect/train/results.png` and val mAP50 (target ≥ 0.9). Download `runs/detect/train/weights/best.pt` → `models/SpeedMart_yolo.pt`.
 5. **Inference** (`vision/yolo_detect.py`): `model = YOLO(path)`; `results = model.predict(frame, imgsz=640, conf=cfg.yolo_conf, verbose=False, device=...)`; map class names → SKU via catalog; assign each box to a bay by its center.
 
 ---
@@ -1209,7 +1209,7 @@ The MCU is a dumb display and sensor hat. No cart logic on the ESP32. Timed effe
 
 Before each judge: admin reset, shelf full, LEDs on, overlay visible, phone for "Demo Shopper" ready in case the judge's phone fails.
 
-1. **Hook (10 s):** "Stores already watch shelves with cameras. Aisle lets that camera build your cart, but only you can say yes to the charge."
+1. **Hook (10 s):** "Stores already watch shelves with cameras. SpeedMart lets that camera build your cart, but only you can say yes to the charge."
 2. **Join (20 s):** judge scans QR 1, types a name, Face ID. "That's a passkey. Your face never leaves your phone; your phone vouches for you."
 3. **Enter (10 s):** scan QR 2, Face ID, gate LED turns green. "You're in. One shopper at a time, no one else is tracked."
 4. **Pick (15 s):** judge grabs electrolytes. Point at the overlay, then the phone: row appears, bay LED goes dark, agent line suggests the recovery drink.
@@ -1272,7 +1272,7 @@ If vision misbehaves: a teammate uses the admin override, and if a judge asks, s
 
 ## 18. DEVPOST DRAFT (`docs/DEVPOST.md`)
 
-**Name:** Aisle
+**Name:** SpeedMart
 **Tagline:** The shelf builds your cart. You approve the charge.
 
 **Inspiration:** Agentic commerce is arriving in chat apps, and stores already have cameras. Nobody connected "I picked this up" to "I approve this charge" in a way shoppers can trust. Silent walk-out checkout is a liability; confirmation is the product.
