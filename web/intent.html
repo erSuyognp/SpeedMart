@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · What do you need?</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    /* F18 page-only styles; everything else comes from styles.css */
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chips button { font-weight: 500; border-radius: 999px; padding: 0 16px; }
+    .ask-row { display: flex; gap: 8px; }
+    .ask-row input { flex: 1; }
+    .plan-items { list-style: none; margin: 0; padding: 0; }
+    .plan-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0;
+                 border-bottom: 1px solid var(--line); }
+    .plan-item:last-child { border-bottom: 0; }
+    .plan-item .name { font-weight: 600; }
+    .plan-item .price { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .plan-item .reason { grid-column: 1 / -1; color: var(--muted); font-size: 0.9rem; }
+    .blink-note { background: var(--ok-bg); color: var(--ok); }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 3px solid var(--line);
+               border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite;
+               vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #mic-btn.listening { background: var(--bad); border-color: var(--bad); color: #fff; }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <h1>SpeedMart</h1>
+      <span class="muted small">Tell the store what you need</span>
+    </header>
+
+    <section id="signin" class="card notice" hidden>
+      <h2>Please sign in first</h2>
+      <p class="muted">Join or sign in, then tell the store what you need.</p>
+      <p><a class="button" href="/index.html">Go to sign in</a></p>
+    </section>
+
+    <section id="ask" class="card stack" hidden>
+      <h2>What do you need today?</h2>
+      <form id="ask-form" class="stack" autocomplete="off">
+        <label for="goal" class="muted small">Type it or say it, like "recovering from a run, under $15".</label>
+        <div class="ask-row">
+          <input id="goal" type="text" maxlength="300" placeholder="e.g. vegan snacks for two" enterkeyhint="go">
+          <button id="mic-btn" type="button" aria-label="Speak your request" title="Speak" hidden>🎤</button>
+        </div>
+        <div class="chips" aria-label="Examples">
+          <button type="button" class="chip">Post run recovery under $15</button>
+          <button type="button" class="chip">Quick protein snack</button>
+          <button type="button" class="chip">Something to drink</button>
+        </div>
+        <button id="plan-btn" type="submit" class="primary block">Make my plan</button>
+      </form>
+    </section>
+
+    <section id="loading" class="card notice" hidden>
+      <p><span class="spinner" aria-hidden="true"></span>Putting your plan together…</p>
+    </section>
+
+    <section id="error" class="strip bad" role="alert" hidden></section>
+
+    <div id="plan" class="stack" hidden>
+      <section class="card">
+        <h2 id="plan-title">Your plan</h2>
+        <ul id="plan-items" class="plan-items"></ul>
+        <p id="plan-empty" class="muted" hidden>Nothing on our shelf matches that yet. Try one of the examples.</p>
+      </section>
+
+      <section class="card">
+        <div class="totals">
+          <span class="muted">Estimated total (with tax)</span><span id="plan-total" class="grand">$0.00</span>
+          <span class="muted">Budget</span><span id="plan-budget">$0.00</span>
+        </div>
+        <p id="plan-source" class="muted small" style="margin:10px 0 0"></p>
+      </section>
+
+      <section id="blink-note" class="strip blink-note">Your items are blinking on the shelf</section>
+
+      <div class="row">
+        <button id="restart-btn" type="button" class="grow">Start over</button>
+        <a id="cart-link" class="button primary grow" href="/store.html"
+           style="display:flex;align-items:center;justify-content:center;text-decoration:none">Go to my cart</a>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/pages/intent.js"></script>
+</body>
+</html>
