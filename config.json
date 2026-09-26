@@ -20,12 +20,13 @@
     "max_session_minutes": 15
   },
   "camera": {
-    "index": 0,
+    "index": 1,
     "width": 1280,
     "height": 720,
     "fps": 30,
     "auto_exposure": false,
-    "exposure": -6,
+    "exposure": null,
+    "gain": null,
     "autofocus": false,
     "focus": 0
   },

@@ -13,17 +13,15 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from vision.camera import CameraError, open_camera
+from vision.camera import CameraError, dump_config, open_camera, write_text_atomic
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
@@ -108,17 +106,8 @@ def save_rois(rois: list[Roi], path: Path = CONFIG_PATH) -> None:
     new_text = _replace_rois_in_text(text, rois)
     if new_text is None or json.loads(new_text) != expected:
         # unexpected layout: fall back to a full rewrite, same data, 2 space indent
-        newline = "\r\n" if "\r\n" in text else "\n"
-        new_text = json.dumps(expected, indent=2, ensure_ascii=False).replace("\n", newline) + newline
-
-    fd, tmp = tempfile.mkstemp(prefix=".config.", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(new_text)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+        new_text = dump_config(expected, text)
+    write_text_atomic(path, new_text)
 
 
 # --- display helpers ----------------------------------------------------------------------------
