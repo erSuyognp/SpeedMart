@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="SpeedMart">
+  <!-- SpeedMart mark: a shopping bag racing right, with a bolt for the instant cart.
+       Original artwork. Geometry mirrored in make_icons.py (Pillow) for the PNG icons. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e6ef5"/>
+      <stop offset="1" stop-color="#1a56db"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- speed lines -->
+  <rect x="52" y="225" width="140" height="34" rx="17" fill="#fff"/>
+  <rect x="92" y="277" width="100" height="34" rx="17" fill="#fff" opacity="0.72"/>
+  <rect x="132" y="329" width="60" height="34" rx="17" fill="#fff" opacity="0.45"/>
+  <!-- bag handle -->
+  <path d="M286 226 V206 A50 50 0 0 1 386 206 V226" fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round"/>
+  <!-- bag body -->
+  <rect x="216" y="206" width="240" height="176" rx="34" fill="#fff"/>
+  <!-- bolt -->
+  <path d="M346 234 L288 301 H331 L317 354 L384 282 H338 Z" fill="#1a56db"/>
+</svg>

@@ -17,6 +17,40 @@ Files this run owns (nothing else in `web/` was touched):
 
 _(filled in as tasks complete; see the bottom of this file for the final list)_
 
+## Head lines every page needs (index, enter, store, exit, receipt)
+
+Paste these into `<head>` in this order. Keep `styles.css` first; `app.css` must come after it.
+
+```html
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="SpeedMart">
+<title>SpeedMart · Cart</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="stylesheet" href="/css/styles.css">
+<link rel="stylesheet" href="/css/app.css">
+```
+
+Notes
+- `store.html` currently has a single `<meta name="theme-color" content="#1a56db">`; replace it with the two `media=` lines above so the status bar matches the page background in both schemes.
+- `viewport-fit=cover` is required for `env(safe-area-inset-*)` to be non-zero on iPhone. Without it the header and action bar still work, just without the notch/home-indicator padding.
+- `apple-mobile-web-app-status-bar-style="default"` keeps a readable status bar. `black-translucent` lets the page extend under the status bar; the sticky header already pads for `--safe-t`, so it is safe to switch to it if the team wants the full-bleed look.
+- Admin (`admin.html`) is always dark: it uses `<html data-theme="dark">` and a single `theme-color` of `#0b0d12`. Already applied.
+- The manifest is served by FastAPI's `StaticFiles` as `application/manifest+json` (Python's `mimetypes` knows `.webmanifest`). Verified with `curl -I http://127.0.0.1:8000/manifest.webmanifest`.
+
+Regenerate the PNG icons after editing `logo.svg` (mirror the geometry in the script):
+
+```powershell
+.venv\Scripts\python.exe web\assets\make_icons.py
+```
+
 ## Decisions
 
 1. **Layering, not replacing.** `app.css` redefines the variables and selectors that `styles.css` already uses (`--bg`, `--brand`, `.card`, `.cart-row`, `.bar`, `button.primary`, `.toast`, …) so every page improves the moment the link is added, before any HTML changes. Same specificity, later in the cascade, so it wins without `!important`.
