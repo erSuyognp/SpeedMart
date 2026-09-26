@@ -50,11 +50,16 @@ Key ideas:
 
 ### Build status
 
-Done: backend core, cart engine, WebSocket live cart, admin panel, shelf controller + serial bridge, camera +
-calibration, ArUco detection + overlay, AI store agent (S4.3).
-Still to build, per the spec: motion freeze (S2.3), HTTPS tunnel, signup, passkeys, gates + QR codes (S3.x),
-checkout + Stripe (S4.1, S4.2), `scripts/run_all.ps1`, `scripts/reset_demo.sh`. Until gates are built the
-store page shows **Start shopping** / **Checkout** buttons (`features.gates` is `false` in `config.json`).
+Done: backend core, cart engine, WebSocket live cart, admin panel, shelf controller + serial bridge and gate
+display, camera + calibration, ArUco detection + overlay, motion freeze and bay stability (S2.3), AI store
+agent (S4.3), HTTPS tunnel (S3.1), signup and members (S3.2), passkeys (S3.3), gates + QR codes (S3.4),
+checkout + receipt + loyalty (S4.1), Stripe test mode (S4.2), the intent planner (F18), the entrance kiosk,
+the phone design system, and `scripts/run_all.ps1` / `scripts/reset_demo.ps1`.
+
+Still to do: YOLO detection (F13) needs a trained model — `features.yolo` is `false` and the shelf runs on
+tags. `features.gates` is `false` on this machine, so the store page shows **Start shopping** / **Checkout**
+buttons instead of the QR gates; turn it on for the gate demo. Everything a human still has to verify with
+real hardware is in [docs/MORNING_TODO.md](docs/MORNING_TODO.md).
 
 ## Setup
 
@@ -83,6 +88,14 @@ Fill in `.env`: `SESSION_SECRET`, `INTERNAL_TOKEN`, `ADMIN_PASSWORD` at least. O
 `LLM_PROVIDER=openai` + `OPENAI_API_KEY` + `OPENAI_MODEL`) for LLM agent lines, and `STRIPE_SECRET_KEY`
 (`sk_test_...` only) for Stripe test mode. `.env` is gitignored. Never commit it.
 
+Then check your work — `python scripts\check_env.py` verifies every `.env` value (and prints no secrets):
+
+```powershell
+python scripts\check_env.py
+```
+
+Run it again after starting uvicorn and ngrok: it also checks the tunnel end to end.
+
 Then set up the hardware side:
 
 1. **Tags:** `python scripts/gen_aruco.py` writes `tags/aruco_tags.pdf`. Print at 100% scale ("fit to page"
@@ -101,10 +114,15 @@ python -m pytest -q
 
 ## Run
 
-`scripts/run_all.sh` starts the backend (uvicorn on `0.0.0.0:8000`) and the vision worker. Output is prefixed
-`[api]` / `[vision]`, and Ctrl+C stops both. Extra arguments go to the worker (e.g. `--no-window`).
+On Windows, `scriptsun_all.ps1` starts the backend (uvicorn on `0.0.0.0:8000`), the ngrok tunnel when
+`features.https_tunnel` is on, and the vision worker. Output is prefixed `[api]` / `[tunnel]` / `[vision]`,
+and Ctrl+C stops all three. Extra arguments go to the worker (e.g. `--no-window`); `-NoTunnel` skips ngrok.
 
-On Windows, run it from **Git Bash**:
+```powershell
+powershell -ExecutionPolicy Bypass -File scriptsun_all.ps1
+```
+
+`scripts/run_all.sh` is the same thing for Git Bash / macOS / Linux:
 
 ```bash
 scripts/run_all.sh
@@ -128,8 +146,15 @@ python scripts/fake_shelf.py loop
 
 Check it's up: `Invoke-RestMethod http://localhost:8000/api/health` (or `curl localhost:8000/api/health`).
 
-Pages: `http://<laptop-ip>:8000/store.html` (shopper cart) and `http://<laptop-ip>:8000/admin.html` (team panel).
-Find the laptop IP with `ipconfig`. The phone must be on the same Wi-Fi or on the laptop hotspot.
+Shopper pages: `http://<laptop-ip>:8000/store.html` on LAN, or the tunnel URL when `https_tunnel` is on
+(passkeys need it). Find the laptop IP with `ipconfig`. The phone must be on the same Wi-Fi or on the laptop
+hotspot.
+
+> **Open the admin page only on the laptop at `http://localhost:8000/admin.html`, or through the tunnel URL.
+> Never over the LAN IP.** It works over the LAN — with `https_tunnel` on, the backend drops the `Secure`
+> flag for plain-http requests so LAN and localhost clients stay signed in — but on the LAN the admin
+> password and the admin session cookie travel unencrypted over Wi-Fi. On `localhost` nothing leaves the
+> machine, and the tunnel is HTTPS end to end.
 
 ## Feature flags
 
@@ -143,7 +168,7 @@ demo tools) have no flag and can't be turned off.
 | `passkeys` | F7: Face ID / fingerprint via WebAuthn | `true` | "Confirm" buttons replace Face ID; HTTPS not required |
 | `gates` | F8: QR entry/exit gates, one-shopper lock | `false` on this machine for now | "Start shopping" / "Checkout" buttons on the store page |
 | `stripe` | F10: Stripe test-mode charge | `true` | Mock payment provider only |
-| `llm` | F11: LLM phrasing of the agent line | `true` | Template lines only (also the case when no API key is set) |
+| `llm` | F11: LLM phrasing of the agent line, and F18: the intent planner | `true` | Template agent lines and a keyword intent planner (also the case when no API key is set) |
 | `hardware_leds` | F12: shelf controller over USB serial | `true` | No serial; overlay + phone only |
 | `yolo` | F13: YOLO detection fused with tags | `false` | Tags only |
 | `https_tunnel` | F14: ngrok static domain | `true` | LAN http only (needs `passkeys` off) |

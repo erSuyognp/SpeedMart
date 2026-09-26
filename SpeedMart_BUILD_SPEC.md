@@ -58,6 +58,7 @@ Each feature has an ID and a flag. The human will decide which to keep. **Core**
 | F15 | Receipt + loyalty points | `loyalty` | Optional | F9 | 0.5 h |
 | F16 | Load cells via HX711 per bay | `load_cells` | Optional, default OFF | F12 | 3 h |
 | F17 | Demo tools: admin panel, override keys, reset, demo account | — | Core | F1 | 1.5 h |
+| F18 | "Tell us what you need": intent planner (LLM proposes a plan, the store validates it against stock and budget) | `llm` | Optional (keyword planner always on) | F4, F6 | 2 h |
 
 **Default config for the weekend:** all flags `true` except `yolo` (turn on Saturday if ahead) and `load_cells` (off).
 
@@ -455,11 +456,14 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | POST | `/api/passkey/login/verify` | `{"credential":{...},"purpose":...}` | `{"ok":true,"member":{...}}` | Logs in + sets fresh verification |
 | POST | `/api/gate/enter` | `{"gate_token":str}` | `{"session":{...},"cart":CartSnapshot}` | 403 bad token, 401 not verified, 409 occupied |
 | GET | `/api/store/current` | — | `{"session":...,"cart":CartSnapshot}` or `{"session":null}` | |
-| POST | `/api/gate/exit/quote` | `{"gate_token":str}` | `{"cart":CartSnapshot,"instruction":Instruction}` | Freezes cart, state → CHECKOUT_PENDING |
+| POST | `/api/gate/exit/quote` | `{"gate_token":str}` | `{"cart":CartSnapshot,"instruction":Instruction,"plan_check":PlanCheck\|null}` | Freezes cart, state → CHECKOUT_PENDING. `plan_check` (8.9) is `null` unless the shopper made an F18 plan this visit. `POST /api/dev/checkout`, the gates-off fallback, returns the same three keys |
 | POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on |
 | POST | `/api/gate/exit/cancel` | — | `{"ok":true}` | Back to IN_STORE |
 | GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points | Only the owner |
 | WS | `/ws` | — | stream of messages (8.4) | Identifies member by cookie |
+| POST | `/api/intent` | `{"text":str}` (≤ 300 chars) | `Plan` (8.8) | F18. Logged-in member. 401 `not_logged_in`, 400 `empty_text` / `text_too_long`, 404 `unknown_member` |
+| GET | `/api/intent/current` | — | `Plan` (8.8) or `null` | F18. 401 if not logged in |
+| DELETE | `/api/intent` | — | `{"ok":true}` | F18. Clears the plan and any bay highlights |
 
 ### 8.2 Internal (vision worker → backend)
 
@@ -573,6 +577,52 @@ Clients reconnect with exponential backoff (0.5 s → 4 s max) and call `GET /ap
 ```
 
 Write every payment (success or failure) to `data/payments.log.jsonl` as well as SQLite.
+
+### 8.8 Plan (F18, `backend/intent.py`)
+
+What the shopper asked for, turned into real SKUs. The LLM proposes; the store validates every plan against
+the catalog, the stock on the shelf and the budget, and falls back to a keyword planner on any failure.
+Plans live in memory, one per member, and are lost on a backend restart.
+
+```json
+{
+  "plan_id": "pln_Ab3xY9",
+  "goal_summary": "run recovery",
+  "items": [
+    {"sku": "elx", "name": "Electrolyte tabs", "qty": 1, "unit_price_usd": 8.00,
+     "reason": "Replaces salts lost on your run"}
+  ],
+  "est_total_usd": 12.96,
+  "budget_usd": 15.00,
+  "fits_budget": true,
+  "bays": [0, 1],
+  "source": "llm",
+  "created_at": "2026-09-26T02:14:03Z"
+}
+```
+
+`est_total_usd` includes tax, like `CartSnapshot.total_usd`, so a plan and a cart compare like for like.
+`budget_usd` is the **lowest** of the member's budget, any dollar amount in the text ("under $15") and the
+LLM's own override — an override may only lower it. `source` is `"llm"` or `"rules"`. `bays` are the bays
+holding the planned SKUs; with F12 on they are highlighted (`HILITE,<bay>,ON`) while the plan is current.
+An empty `items` list is a valid rules plan ("nothing on our shelf matches that yet"); an empty list from
+the LLM is invalid and falls back to rules.
+
+### 8.9 PlanCheck (F18)
+
+Returned by the exit quote so the shopper can see how the cart compares with what they asked for. `qty` is
+the shortfall in `missing` and the surplus in `extra`.
+
+```json
+{
+  "matches": false,
+  "missing": [{"sku": "rec", "name": "Recovery drink", "qty": 1}],
+  "extra": [],
+  "summary": "You asked for run recovery under $15: you still need Recovery drink, $8.64."
+}
+```
+
+Pure function of the frozen `CartSnapshot` and the `Plan`. With no plan the quote returns `"plan_check": null`.
 
 ---
 
