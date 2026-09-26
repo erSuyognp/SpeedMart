@@ -29,8 +29,8 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   commands to start the backend and tunnel by hand. Whoever owns `scripts/` should add `run_all.ps1`.
 - **Added `.gitattributes` (`*.sh text eol=lf`).** Outside my file list, but necessary: with
   `core.autocrlf=true` the main checkout has `scripts/run_all.sh` with CRLF endings, and Git Bash cannot run
-  it (`$'
-': command not found`). After pulling, run `git add --renormalize .` once if the working copy still has CRLF.
+  it (bash reports errors like `command not found` for every line ending in CR). After merging, refresh the
+  old CRLF copies once, PowerShell from the repo root: `Remove-Item scripts\*.sh; git checkout -- scripts`.
 - ngrok was **not** started. `ngrok` is not on the Git Bash PATH on this machine.
 
 ## Morning checklist
