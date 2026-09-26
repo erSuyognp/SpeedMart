@@ -20,9 +20,33 @@ WHITE = (255, 255, 255)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
+GRAY = (160, 160, 160)
+
+
 class BayStatusLike(Protocol):
     stable: bool
     motion: bool
+
+
+def _fmt_content(units, yolo) -> str:
+    text = str(list(units))
+    if yolo:
+        text += " yolo " + ",".join(f"{k}:{v}" for k, v in sorted(yolo.items()))
+    return text
+
+
+def bay_state_text(st) -> str:
+    """MOTION / settling N ms / hold N/M ms / stable, plus the changed fraction when motion freeze is on."""
+    if st.stable:
+        state = "stable"
+    elif st.motion:
+        state = "MOTION"
+    elif getattr(st, "settle_left_ms", 0) > 0:
+        state = f"settling {st.settle_left_ms} ms"
+    else:
+        state = f"hold {getattr(st, 'held_ms', 0)}/{getattr(st, 'need_ms', 0)} ms"
+    frac = getattr(st, "changed_fraction", None)
+    return state if frac is None else f"chg {frac:.3f}  {state}"
 
 
 def _text(img: np.ndarray, text: str, org: tuple[int, int], color: tuple[int, int, int], scale: float = 0.6) -> None:
@@ -44,24 +68,38 @@ def draw_overlay(
     backend_ok: bool | None,
     last_post_age_ms: int | None,
     paused: bool,
+    motion=None,
+    message: str = "",
 ) -> np.ndarray:
-    """Bay boxes (green stable, yellow unstable) with id, SKU name and unit count; tag outlines with ids
-    (loose tags orange); FPS; backend status line with the age of the last successful post."""
+    """Bay boxes (green stable, yellow unstable) with id, SKU name, reported units, changed fraction,
+    MOTION / settling / hold / stable and the pending candidate; the motion area (ROI + margin) in gray;
+    tag outlines with ids (loose tags orange); FPS; motion tuning values; backend status line with the
+    age of the last successful post."""
     view = frame.copy()
     h = view.shape[0]
     loose = set(loose)
 
+    w = view.shape[1]
     for bay in bays:
         bay_id = int(bay["id"])
         x1, y1, x2, y2 = (int(v) for v in bay["roi"])
         st = status.get(bay_id)
         color = GREEN if st is None or st.stable else YELLOW
+        if motion is not None and bay_id in motion.rois:
+            mx1, my1, mx2, my2 = motion.motion_rect(bay_id, w, h)
+            cv2.rectangle(view, (mx1, my1), (mx2 - 1, my2 - 1), GRAY, 1)
         cv2.rectangle(view, (x1, y1), (x2, y2), color, 2)
         name = sku_names.get(bay.get("sku"), bay.get("sku", "?"))
         _text(view, f"bay {bay_id} {name}", (x1 + 4, y1 + 22), color)
-        units = per_bay.get(bay_id, [])
-        state = "" if st is None or st.stable else ("  MOTION" if st.motion else "  settling")
-        _text(view, f"{len(units)} units {units}{state}", (x1 + 4, y2 - 10), color, 0.55)
+        reported = per_bay.get(bay_id, []) if st is None or getattr(st, "units", None) is None else list(st.units)
+        yolo = None if st is None else getattr(st, "yolo_counts", None)
+        _text(view, f"{len(reported)} units {_fmt_content(reported, yolo)}", (x1 + 4, y2 - 58), color, 0.55)
+        if st is not None:
+            _text(view, bay_state_text(st), (x1 + 4, y2 - 34), color, 0.55)
+            pending = getattr(st, "pending_units", None)
+            if pending is not None:
+                _text(view, f"pending {_fmt_content(pending, getattr(st, 'pending_yolo', None))}",
+                      (x1 + 4, y2 - 10), YELLOW, 0.55)
 
     for det in detections:
         color = ORANGE if det.tag_id in loose else CYAN
@@ -72,8 +110,15 @@ def draw_overlay(
 
     fps_text = f"FPS {fps:4.1f}" + ("" if camera_fps is None else f"  (camera {camera_fps:4.1f})")
     _text(view, fps_text, (10, 30), WHITE, 0.8)
+    if motion is not None:
+        tune = f"motion thr {motion.threshold:g}  settle {int(motion.settle_ms)} ms  margin {motion.margin_px}px"
+    else:
+        tune = "motion freeze OFF"
+    _text(view, tune, (10, 62), WHITE, 0.6)
     if loose:
-        _text(view, f"loose {sorted(loose)}", (10, 62), ORANGE, 0.7)
+        _text(view, f"loose {sorted(loose)}", (10, 92), ORANGE, 0.7)
+    if message:
+        _text(view, message, (10, 122), YELLOW, 0.7)
 
     age = "never" if last_post_age_ms is None else f"{last_post_age_ms} ms ago"
     if backend_ok:
@@ -85,5 +130,6 @@ def draw_overlay(
     if paused:
         line, color = f"PAUSED (space to resume)  {line}", YELLOW
     _text(view, line, (10, h - 40), color, 0.7)
-    _text(view, "q quit | space pause posting | c recalibrate hint", (10, h - 12), WHITE, 0.55)
+    _text(view, "q quit | space pause | c recalibrate | [ ] motion thr | - = settle | s save", (10, h - 12),
+          WHITE, 0.55)
     return view

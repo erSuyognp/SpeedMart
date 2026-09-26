@@ -35,8 +35,10 @@
     "clahe": true,
     "snapshot_hz": 5,
     "stable_ms": 400,
+    "stable_remove_ms": 700,
     "motion_threshold": 0.02,
     "motion_settle_ms": 300,
+    "motion_margin_px": 40,
     "yolo_model": "models/speedmart_yolo.pt",
     "yolo_conf": 0.55,
     "yolo_every_n_frames": 3

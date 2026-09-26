@@ -119,14 +119,13 @@ def dump_config(config: dict, original_text: str) -> str:
     return json.dumps(config, indent=2, ensure_ascii=False).replace("\n", newline) + newline
 
 
-_CAMERA_RE = re.compile(r'"camera"\s*:\s*\{[^{}]*\}')
 _SCALAR = r"(?:null|true|false|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
 
 
-def _set_camera_keys_in_text(text: str, values: dict) -> str | None:
-    """Rewrite camera.<key> literals in place, adding missing keys at the end of the camera block.
-    Returns None if the camera block cannot be found."""
-    block = _CAMERA_RE.search(text)
+def _set_section_keys_in_text(text: str, section: str, values: dict) -> str | None:
+    """Rewrite <section>.<key> literals in place, adding missing keys at the end of that block. The block
+    must be a flat object (no nested braces). Returns None if the block cannot be found."""
+    block = re.search(rf'"{re.escape(section)}"\s*:\s*\{{[^{{}}]*\}}', text)
     if not block:
         return None
     body = block.group(0)
@@ -136,7 +135,7 @@ def _set_camera_keys_in_text(text: str, values: dict) -> str | None:
         if key_re.search(body):
             body = key_re.sub(lambda m: m.group(1) + literal, body, count=1)
             continue
-        last = re.search(rf'\n([ \t]*)"[^"]+"\s*:\s*{_SCALAR}(?=\s*\}}$)', body)
+        last = re.search(rf'\n([ \t]*)"[^"]+"\s*:\s*(?:{_SCALAR}|"[^"]*")(?=\s*\}}$)', body)
         if not last:
             return None
         newline = "\r\n" if "\r\n" in text else "\n"
@@ -144,17 +143,27 @@ def _set_camera_keys_in_text(text: str, values: dict) -> str | None:
     return text[: block.start()] + body + text[block.end():]
 
 
-def save_camera_settings(values: dict, path: Path = CONFIG_PATH) -> None:
-    """Write camera.<key> = value for each item (e.g. exposure, gain) into config.json. Every other key and
-    the file's formatting stay unchanged."""
+def _set_camera_keys_in_text(text: str, values: dict) -> str | None:
+    return _set_section_keys_in_text(text, "camera", values)
+
+
+def save_section_settings(section: str, values: dict, path: Path = CONFIG_PATH) -> None:
+    """Write <section>.<key> = value for each item into config.json (section is a flat object such as
+    "camera" or "vision"). Every other key and the file's formatting stay unchanged."""
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
     expected = json.loads(text)
-    expected.setdefault("camera", {}).update(values)
-    new_text = _set_camera_keys_in_text(text, values)
+    expected.setdefault(section, {}).update(values)
+    new_text = _set_section_keys_in_text(text, section, values)
     if new_text is None or json.loads(new_text) != expected:
         new_text = dump_config(expected, text)
     write_text_atomic(path, new_text)
+
+
+def save_camera_settings(values: dict, path: Path = CONFIG_PATH) -> None:
+    """Write camera.<key> = value for each item (e.g. exposure, gain) into config.json. Every other key and
+    the file's formatting stay unchanged."""
+    save_section_settings("camera", values, path)
 
 
 # --- property locking ------------------------------------------------------------------------
