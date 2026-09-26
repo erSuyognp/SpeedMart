@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+  <title>SpeedMart · Design system</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    /* Guide-only chrome. Nothing here is part of the design system. */
+    .guide main.wide { max-width: 1400px; gap: var(--space-8); }
+    .guide .topbar .seg { display: inline-flex; background: var(--surface-2); border-radius: var(--radius-pill); padding: 3px; gap: 2px; }
+    .guide .topbar .seg button { min-height: 36px; min-width: 64px; padding: 0 14px; border: 0; border-radius: var(--radius-pill); background: transparent; font-size: var(--text-sm); color: var(--text-2); }
+    .guide .topbar .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
+    .toc { display: flex; flex-wrap: wrap; gap: 8px; }
+    .toc a { display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--line); font-size: var(--text-sm); color: var(--text-2); }
+    .toc a:hover { text-decoration: none; color: var(--brand-ink); border-color: var(--brand-ink); }
+    .intro { max-width: 72ch; color: var(--text-2); font-size: var(--text-lg); }
+    .demo { display: flex; flex-direction: column; gap: var(--space-3); scroll-margin-top: 80px; }
+    .demo > h2 { font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; }
+    .demo > h2 code { font-family: var(--font-mono); font-size: 0.7em; font-weight: 600; color: var(--brand-ink); background: var(--brand-soft); padding: 2px 8px; border-radius: 8px; margin-left: 6px; vertical-align: middle; }
+    .demo .desc { color: var(--text-2); max-width: 78ch; }
+    .demo .desc code, .markup-note code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); padding: 1px 6px; border-radius: 6px; }
+    .pair { display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
+    @media (min-width: 900px) { .pair { grid-template-columns: 1fr 1fr; } }
+    .theme-frame { position: relative; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-8) var(--space-5) var(--space-5); background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 20px; }
+    .theme-frame::before { content: attr(data-label); position: absolute; top: 10px; right: 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+    body[data-view="light"] [data-theme="dark"].theme-frame, body[data-view="light"] .phone[data-theme="dark"] { display: none; }
+    body[data-view="dark"] [data-theme="light"].theme-frame, body[data-view="dark"] .phone[data-theme="light"] { display: none; }
+    body[data-view="light"] .pair, body[data-view="dark"] .pair { grid-template-columns: 1fr; }
+    /* Fixed-position components are rendered in place inside frames */
+    .theme-frame .action-bar, .theme-frame .toast, .theme-frame .sheet, .theme-frame .sheet-backdrop { position: static; transform: none; opacity: 1; pointer-events: auto; }
+    .theme-frame .toast { display: inline-block; }
+    .theme-frame .sheet { max-height: none; box-shadow: var(--shadow-2); border-radius: var(--radius-xl); border: 1px solid var(--line); }
+    .theme-frame .sheet-backdrop { display: none; }
+    .theme-frame .topbar, .theme-frame .app-header { position: relative; margin: 0; padding: 8px 16px; border-radius: 14px; border: 1px solid var(--line); }
+    .theme-frame .action-bar { border-radius: var(--radius); border: 1px solid var(--line); padding: 12px 16px; }
+    .theme-frame .site-footer { padding: 8px; }
+    .theme-frame .success { padding: var(--space-6) var(--space-4); }
+    details.markup { border-top: 1px dashed var(--line); padding-top: 6px; }
+    details.markup > summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-2); font-weight: 600; min-height: 40px; display: flex; align-items: center; list-style: none; }
+    details.markup > summary::-webkit-details-marker { display: none; }
+    details.markup > summary::before { content: "▸"; margin-right: 8px; transition: transform var(--dur) var(--ease); }
+    details.markup[open] > summary::before { transform: rotate(90deg); }
+    details.markup pre { max-height: 420px; }
+    /* Phone frames */
+    .phones { display: grid; grid-template-columns: repeat(auto-fill, minmax(390px, 1fr)); gap: var(--space-6); justify-items: center; }
+    .phone { position: relative; width: 390px; height: 820px; border-radius: 48px; border: 10px solid #15171c; background: var(--bg); color: var(--text); overflow: hidden; box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.55); }
+    .phone .screen { position: absolute; inset: 0; overflow: auto; display: flex; flex-direction: column; scrollbar-width: none; }
+    .phone .screen::-webkit-scrollbar { display: none; }
+    .phone .page { flex: 1; display: flex; flex-direction: column; gap: var(--gap); padding: var(--page-pt) var(--page-pr) var(--page-pb) var(--page-pl); }
+    .phone.has-action-bar .page { padding-bottom: var(--action-bar-space); }
+    .phone.has-action-bar .site-footer { padding-bottom: var(--space-4); }
+    .phone .action-bar, .phone .sheet, .phone .sheet-backdrop, .phone .toast { position: absolute; }
+    .phone .toast { bottom: calc(var(--action-bar-space) + var(--space-2)); }
+    .phone-label { text-align: center; font-size: var(--text-sm); color: var(--text-2); margin-top: 8px; }
+    /* Token displays */
+    .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+    .swatch { border-radius: 12px; border: 1px solid var(--line); overflow: hidden; background: var(--surface); }
+    .swatch .chip-color { height: 44px; display: block; }
+    .swatch .n { font-size: 12px; font-weight: 700; padding: 6px 8px 0; }
+    .swatch .h { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); padding: 0 8px 8px; }
+    .type-scale > div { display: flex; align-items: baseline; gap: 14px; padding: 4px 0; }
+    .type-scale .m { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); width: 150px; flex: none; }
+    .space-row { display: flex; align-items: center; gap: 12px; }
+    .space-row .m { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); width: 110px; }
+    .space-row .bar-space { height: 14px; background: var(--brand); border-radius: 4px; }
+    .radii { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .radii div { width: 72px; height: 56px; background: var(--surface); border: 1px solid var(--line-strong); display: grid; place-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+    .shadows { display: flex; gap: 20px; flex-wrap: wrap; }
+    .shadows div { width: 120px; height: 72px; border-radius: 16px; background: var(--surface); display: grid; place-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+    .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+    .icon-grid div { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+    .example .row.demo-controls { margin-top: 4px; }
+    .guide-footer { color: var(--text-3); font-size: var(--text-sm); text-align: center; padding-bottom: var(--space-8); }
+  </style>
+</head>
+<body class="guide" data-view="both">
+  <main class="wide">
+    <header class="topbar">
+      <a class="brand" href="/design.html"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart <span class="text-3" style="font-weight:600">· Design system</span></a>
+      <div class="seg" role="group" aria-label="Theme view">
+        <button type="button" data-view="both" aria-pressed="true">Both</button>
+        <button type="button" data-view="light" aria-pressed="false">Light</button>
+        <button type="button" data-view="dark" aria-pressed="false">Dark</button>
+      </div>
+    </header>
+
+    <section class="stack">
+      <h1 class="page-title">Every component, in light and dark.</h1>
+      <p class="intro">This page is the living style guide for the phone app and the admin dashboard. It loads the same
+        <code>styles.css</code> + <code>app.css</code> the real pages use, so what you see here is what ships.
+        Sample data comes from spec Section 8.5 to 8.7. Each example is authored once and rendered twice; open “Markup” under an example to copy it.</p>
+      <nav class="toc" aria-label="Sections">
+        <a href="#tokens">Tokens</a><a href="#header">App header</a><a href="#buttons">Buttons</a><a href="#forms">Forms</a>
+        <a href="#cards">Cards</a><a href="#cart">Cart rows</a><a href="#totals">Totals + budget</a><a href="#agent">Agent bubble</a>
+        <a href="#strips">Strips</a><a href="#toast">Toast</a><a href="#sheet">Bottom sheet</a><a href="#disclosure">Disclosure</a>
+        <a href="#states">States</a><a href="#success">Success</a><a href="#skeleton">Skeletons</a><a href="#footer">Footer</a>
+        <a href="#icons">Icons</a><a href="#screens">Screens</a><a href="#admin">Admin</a>
+      </nav>
+    </section>
+
+    <!-- ============================ TOKENS ============================ -->
+    <section class="demo" id="tokens">
+      <h2>Tokens <code>:root · [data-theme]</code></h2>
+      <p class="desc">CSS variables for colour, spacing, radius, shadow and type. Light is default; dark follows the OS or is forced with <code>data-theme="dark"</code> on any element. The hex under each swatch is read from the rendered frame.</p>
+      <div class="example" data-title="Colour">
+        <div class="swatches">
+          <div class="swatch" data-var="--bg"><span class="chip-color" style="background:var(--bg)"></span><div class="n">bg</div><div class="h"></div></div>
+          <div class="swatch" data-var="--surface"><span class="chip-color" style="background:var(--surface)"></span><div class="n">surface</div><div class="h"></div></div>
+          <div class="swatch" data-var="--surface-2"><span class="chip-color" style="background:var(--surface-2)"></span><div class="n">surface-2</div><div class="h"></div></div>
+          <div class="swatch" data-var="--line"><span class="chip-color" style="background:var(--line)"></span><div class="n">line</div><div class="h"></div></div>
+          <div class="swatch" data-var="--text"><span class="chip-color" style="background:var(--text)"></span><div class="n">text</div><div class="h"></div></div>
+          <div class="swatch" data-var="--text-2"><span class="chip-color" style="background:var(--text-2)"></span><div class="n">text-2</div><div class="h"></div></div>
+          <div class="swatch" data-var="--text-3"><span class="chip-color" style="background:var(--text-3)"></span><div class="n">text-3</div><div class="h"></div></div>
+          <div class="swatch" data-var="--brand"><span class="chip-color" style="background:var(--brand)"></span><div class="n">brand</div><div class="h"></div></div>
+          <div class="swatch" data-var="--brand-ink"><span class="chip-color" style="background:var(--brand-ink)"></span><div class="n">brand-ink</div><div class="h"></div></div>
+          <div class="swatch" data-var="--brand-soft"><span class="chip-color" style="background:var(--brand-soft)"></span><div class="n">brand-soft</div><div class="h"></div></div>
+          <div class="swatch" data-var="--ok"><span class="chip-color" style="background:var(--ok)"></span><div class="n">ok</div><div class="h"></div></div>
+          <div class="swatch" data-var="--ok-bg"><span class="chip-color" style="background:var(--ok-bg)"></span><div class="n">ok-bg</div><div class="h"></div></div>
+          <div class="swatch" data-var="--warn"><span class="chip-color" style="background:var(--warn)"></span><div class="n">warn</div><div class="h"></div></div>
+          <div class="swatch" data-var="--warn-bg"><span class="chip-color" style="background:var(--warn-bg)"></span><div class="n">warn-bg</div><div class="h"></div></div>
+          <div class="swatch" data-var="--bad"><span class="chip-color" style="background:var(--bad)"></span><div class="n">bad</div><div class="h"></div></div>
+          <div class="swatch" data-var="--bad-bg"><span class="chip-color" style="background:var(--bad-bg)"></span><div class="n">bad-bg</div><div class="h"></div></div>
+          <div class="swatch" data-var="--green"><span class="chip-color" style="background:var(--green)"></span><div class="n">green</div><div class="h"></div></div>
+          <div class="swatch" data-var="--amber"><span class="chip-color" style="background:var(--amber)"></span><div class="n">amber</div><div class="h"></div></div>
+          <div class="swatch" data-var="--red"><span class="chip-color" style="background:var(--red)"></span><div class="n">red</div><div class="h"></div></div>
+          <div class="swatch" data-var="--violet"><span class="chip-color" style="background:var(--violet)"></span><div class="n">violet</div><div class="h"></div></div>
+        </div>
+        <div class="card">
+          <h2>Type scale <span class="text-3 small" style="font-weight:600">system stack, 17 px base</span></h2>
+          <div class="type-scale">
+            <div><span class="m">--text-4xl · .display</span><span class="display">$8.64</span></div>
+            <div><span class="m">--text-3xl · .page-title</span><span class="page-title">SpeedMart</span></div>
+            <div><span class="m">--text-2xl · h1</span><h1>Welcome in, Maya</h1></div>
+            <div><span class="m">--text-xl</span><span style="font-size:var(--text-xl);font-weight:800">Total $12.96</span></div>
+            <div><span class="m">--text-lg · h2</span><h2 style="margin:0">Your cart</h2></div>
+            <div><span class="m">--text-base · body</span><span>Electrolytes added. A recovery drink is $4.</span></div>
+            <div><span class="m">--text-sm · .small</span><span class="small">Visa •••• 4242 (test)</span></div>
+            <div><span class="m">--text-xs · .eyebrow</span><span class="eyebrow">Sandbox demo</span></div>
+            <div><span class="m">--font-mono · .mono</span><span class="mono">ses_Ab3xY9 · A1B2C3</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Spacing, radius, shadow</h2>
+          <div class="stack tight">
+            <div class="space-row"><span class="m">--space-1 · 4</span><span class="bar-space" style="width:4px"></span></div>
+            <div class="space-row"><span class="m">--space-2 · 8</span><span class="bar-space" style="width:8px"></span></div>
+            <div class="space-row"><span class="m">--space-3 · 12</span><span class="bar-space" style="width:12px"></span></div>
+            <div class="space-row"><span class="m">--space-4 · 16</span><span class="bar-space" style="width:16px"></span></div>
+            <div class="space-row"><span class="m">--space-5 · 20</span><span class="bar-space" style="width:20px"></span></div>
+            <div class="space-row"><span class="m">--space-6 · 24</span><span class="bar-space" style="width:24px"></span></div>
+            <div class="space-row"><span class="m">--space-8 · 32</span><span class="bar-space" style="width:32px"></span></div>
+            <div class="space-row"><span class="m">--space-10 · 40</span><span class="bar-space" style="width:40px"></span></div>
+          </div>
+          <div class="radii mt-4">
+            <div style="border-radius:var(--radius-sm)">sm 12</div>
+            <div style="border-radius:var(--radius)">18</div>
+            <div style="border-radius:var(--radius-lg)">lg 22</div>
+            <div style="border-radius:var(--radius-xl)">xl 28</div>
+            <div style="border-radius:var(--radius-pill)">pill</div>
+          </div>
+          <div class="shadows mt-4">
+            <div style="box-shadow:var(--shadow-1)">shadow-1</div>
+            <div style="box-shadow:var(--shadow-2)">shadow-2</div>
+            <div style="box-shadow:var(--shadow-3)">shadow-3</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ HEADER ============================ -->
+    <section class="demo" id="header">
+      <h2>App header + status pill <code>.app-header · .topbar · .pill · .dot</code></h2>
+      <p class="desc">Sticky, translucent, pads for the notch. The existing <code>.topbar</code> in <code>store.html</code> gets this look for free. Right slot holds a status pill; <code>.dot.live</code> pulses.</p>
+      <div class="example" data-title="Header">
+        <header class="app-header">
+          <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+          <span class="session-tag"><span class="mono">#3xY9</span><span class="dot live" title="Live"></span></span>
+        </header>
+        <header class="app-header">
+          <h1>Your cart</h1>
+          <span class="pill live"><span class="dot live"></span>Live</span>
+        </header>
+        <header class="app-header">
+          <h1>Entry gate</h1>
+          <span class="pill off"><span class="dot"></span>Reconnecting…</span>
+        </header>
+        <div class="row">
+          <span class="pill"><span class="dot"></span>Idle</span>
+          <span class="pill live"><span class="dot live"></span>Live</span>
+          <span class="pill warn"><span class="dot warn"></span>Checkout pending</span>
+          <span class="pill bad"><span class="dot bad"></span>Declined</span>
+          <span class="pill brand">Sandbox</span>
+          <span class="badge ok">stable</span><span class="badge warn">motion</span><span class="badge bad">offline</span><span class="badge">no data</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ BUTTONS ============================ -->
+    <section class="demo" id="buttons">
+      <h2>Buttons <code>button · .primary · .secondary · .ghost · .danger · .lg · .block · .busy</code></h2>
+      <p class="desc">48 px minimum, 56 px with <code>.lg</code> (the bottom bar makes every button large). Pressing scales to 97%. <code>.busy</code> swaps the label for a spinner. Anchors take <code>.button</code>.</p>
+      <div class="example" data-title="Buttons">
+        <div class="row">
+          <button class="primary">Approve $12.96</button>
+          <button class="secondary">Demo login</button>
+          <button>Keep shopping</button>
+          <button class="ghost">Cancel</button>
+          <button class="danger">Force exit</button>
+          <button class="danger solid">Reset</button>
+          <button class="success">Paid</button>
+          <button disabled>Disabled</button>
+          <button class="sm">Small</button>
+          <button class="icon-btn" aria-label="Back"><svg class="icon"><use href="/assets/icons.svg#arrow-left"/></svg></button>
+        </div>
+        <button class="primary lg block"><svg class="icon"><use href="/assets/icons.svg#face-id"/></svg>Enter with Face ID</button>
+        <div class="row">
+          <button class="primary lg grow" data-action="busy">Tap me: busy state</button>
+          <button class="lg grow" data-action="busy">Busy (plain)</button>
+        </div>
+        <a class="button" href="#buttons">Anchor as .button</a>
+      </div>
+    </section>
+
+    <!-- ============================ FORMS ============================ -->
+    <section class="demo" id="forms">
+      <h2>Forms <code>.field · input · select · input[type=range] · .toggle · .stepper</code></h2>
+      <p class="desc">52 px fields with 17 px text (iOS won't zoom). Range shows a filled track when JS sets <code>--range-pct</code> (this page does). The toggle is a plain button with <code>aria-pressed</code>; the stepper is two 48 px buttons around a count.</p>
+      <div class="example" data-title="Form fields">
+        <form class="card stack" onsubmit="return false">
+          <div class="field">
+            <label>First name</label>
+            <input type="text" placeholder="Maya" autocomplete="given-name">
+          </div>
+          <div class="field">
+            <div class="field-head"><label>Budget</label><span class="value" data-range-value>$20</span></div>
+            <input type="range" min="10" max="50" step="5" value="20" style="--range-pct:25%" data-range-money>
+            <p class="help">Your store agent can never approve more than this.</p>
+          </div>
+          <div class="field">
+            <label>Dietary</label>
+            <select><option>None</option><option>Vegetarian</option><option>Vegan</option><option>Gluten free</option></select>
+          </div>
+          <div class="field">
+            <label>Password (admin)</label>
+            <input type="password" placeholder="Admin password">
+          </div>
+        </form>
+        <div class="row">
+          <button class="toggle" aria-pressed="false" data-action="toggle">Force decline: off</button>
+          <div class="stepper"><button type="button" aria-label="Remove one">−</button><span class="count">1</span><button type="button" aria-label="Add one">+</button></div>
+          <div class="stepper"><button type="button" disabled>−</button><span class="count">0</span><button type="button" disabled>+</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ CARDS ============================ -->
+    <section class="demo" id="cards">
+      <h2>Cards <code>.card · .card.inset · .card.brand · .card-head · .kv · .list</code></h2>
+      <p class="desc">White on grey in light, bordered on near-black in dark. <code>.card &gt; h2</code> is the section title. <code>.kv</code> is a label/value grid; <code>.list</code> is an iOS-style grouped list.</p>
+      <div class="example" data-title="Cards">
+        <section class="card">
+          <div class="card-head"><h2>Your cart</h2><span class="pill">2 items</span></div>
+          <p class="muted">Body text sits at 17 px with 1.45 line height. Cards use <code style="font-family:var(--font-mono)">--radius</code> (18 px).</p>
+        </section>
+        <section class="card inset">
+          <h2>Inset card</h2>
+          <dl class="kv">
+            <dt>Merchant</dt><dd>SpeedMart #01</dd>
+            <dt>Max amount</dt><dd>$20.00</dd>
+            <dt>Single use</dt><dd>Yes</dd>
+            <dt>Expires</dt><dd>02:29</dd>
+          </dl>
+        </section>
+        <section class="card brand">
+          <span class="eyebrow" style="color:rgba(255,255,255,.75)">Member</span>
+          <h2 style="color:#fff;margin:2px 0 4px">Maya</h2>
+          <p class="muted">Visa •••• 4242 (test) · 23 points</p>
+        </section>
+        <section class="card">
+          <ul class="list">
+            <li class="list-item"><span>Card</span><span class="value">Visa •••• 4242 (test)</span></li>
+            <li class="list-item"><span>Auth code</span><span class="value mono">A1B2C3</span></li>
+            <li class="list-item"><span>Time</span><span class="value">02:14</span></li>
+          </ul>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============================ CART ROWS ============================ -->
+    <section class="demo" id="cart">
+      <h2>Cart rows <code>.cart-list · .cart-row · .name · .qty · .line · .rich · .leaving</code></h2>
+      <p class="desc">Exactly the markup <code>store.js</code> renders. New rows slide in with a brief highlight; removed rows get <code>.leaving</code> and collapse. Try the buttons. <code>.rich</code> adds a thumb and a sub line.</p>
+      <div class="example" data-title="Cart">
+        <section class="card">
+          <h2>Your cart</h2>
+          <ul class="cart-list">
+            <li class="cart-row" data-sku="elx"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+            <li class="cart-row" data-sku="rec"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+          </ul>
+          <p class="empty-cart" hidden>Nothing yet. Pick something off the shelf.</p>
+        </section>
+        <div class="row demo-controls">
+          <button class="secondary" data-action="add-row">Add protein bar</button>
+          <button data-action="remove-row">Remove protein bar</button>
+        </div>
+        <section class="card">
+          <h2>Rich rows</h2>
+          <ul class="cart-list">
+            <li class="cart-row rich"><span class="thumb">⚡</span><span class="name">Electrolyte tabs</span><span class="sub">$8.00 each · recovery</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+            <li class="cart-row rich"><span class="thumb">🥤</span><span class="name">Recovery drink</span><span class="sub">$4.00 each · pairs with electrolytes</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+          </ul>
+        </section>
+        <section class="card">
+          <h2>Empty</h2>
+          <ul class="cart-list"></ul>
+          <p class="empty-cart">Nothing yet. Pick something off the shelf.</p>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============================ TOTALS ============================ -->
+    <section class="demo" id="totals">
+      <h2>Totals + budget bar <code>.totals · .grand · .budget · .bar · .amber · .red</code></h2>
+      <p class="desc">Green under 80% of budget, amber from 80 to 100%, red over. Drag the slider to move the live example; the two static cards show the amber and over-budget states from 8.5 data.</p>
+      <div class="example" data-title="Totals">
+        <section class="card">
+          <div class="totals">
+            <span class="muted">Subtotal</span><span data-t="sub">$12.00</span>
+            <span class="muted">Tax</span><span data-t="tax">$0.96</span>
+            <span class="grand">Total</span><span class="grand" data-t="total">$12.96</span>
+          </div>
+          <div class="budget">
+            <div class="budget-label"><span>Budget</span><span data-t="label">$12.96 of $20.00</span></div>
+            <div class="bar" role="progressbar" aria-label="Budget used" aria-valuenow="65"><span style="width:64.8%"></span></div>
+          </div>
+          <div class="field mt-4">
+            <div class="field-head"><label>Demo: move the total</label><span class="small text-3">budget $20</span></div>
+            <input type="range" min="0" max="26" step="0.01" value="12.96" data-budget-demo style="--range-pct:49.8%">
+          </div>
+        </section>
+        <section class="card">
+          <div class="totals">
+            <span class="muted">Subtotal</span><span>$16.00</span>
+            <span class="muted">Tax</span><span>$1.28</span>
+            <span class="grand">Total</span><span class="grand">$17.28</span>
+          </div>
+          <div class="budget">
+            <div class="budget-label"><span>Budget</span><span>$17.28 of $20.00</span></div>
+            <div class="bar amber" role="progressbar" aria-valuenow="86"><span style="width:86.4%"></span></div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="totals">
+            <span class="muted">Subtotal</span><span>$20.00</span>
+            <span class="muted">Tax</span><span>$1.60</span>
+            <span class="grand">Total</span><span class="grand">$21.60</span>
+          </div>
+          <div class="budget">
+            <div class="budget-label"><span>Budget</span><span>$21.60 of $20.00</span></div>
+            <div class="bar red" role="progressbar" aria-valuenow="108"><span style="width:100%"></span></div>
+          </div>
+          <div class="strip bad mt-3">This is over your $20 limit. Put something back to continue.</div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============================ AGENT ============================ -->
+    <section class="demo" id="agent">
+      <h2>Agent message bubble <code>.agent-card · .agent-msg · .fading</code></h2>
+      <p class="desc">One sentence from the store agent. Works on the existing <code>&lt;section class="card agent-card"&gt;</code> (text only) and on <code>.agent-msg</code> with a label. <code>store.js</code> adds <code>.fading</code> for 150 ms when the line changes.</p>
+      <div class="example" data-title="Agent">
+        <section class="card agent-card" aria-live="polite">Electrolytes added. A recovery drink is $4 and keeps you under $20.</section>
+        <div class="agent-msg" aria-live="polite"><span class="who">Store agent</span><p>Recovery drink added. You're at $12.96 of your $20 budget.</p></div>
+        <div class="row demo-controls"><button class="secondary" data-action="agent-fade">Change the line</button></div>
+      </div>
+    </section>
+
+    <!-- ============================ STRIPS ============================ -->
+    <section class="demo" id="strips">
+      <h2>Strips <code>.strip · .warn · .bad · .ok</code></h2>
+      <p class="desc">Inline alerts with an icon drawn by CSS. Text can be a bare node or several <code>&lt;p&gt;</code>. Used for misplaced-item warnings, checkout state, over-scope and declined messages.</p>
+      <div class="example" data-title="Strips">
+        <div class="strip">Checking out. Finish at the exit gate.</div>
+        <div class="strip warn"><p>Recovery drink is in the wrong bay. Please return it to its lit slot.</p><p>Protein bar is in the wrong bay. Please return it to its lit slot.</p></div>
+        <div class="strip bad">This is over your $20 limit. Put something back to continue.</div>
+        <div class="strip ok">Approved. Your card was charged in the Stripe sandbox.</div>
+      </div>
+    </section>
+
+    <!-- ============================ TOAST ============================ -->
+    <section class="demo" id="toast">
+      <h2>Toast <code>#toast.toast · .hide · .ok · .bad</code></h2>
+      <p class="desc"><code>api.toast(text)</code> creates <code>#toast</code> and toggles <code>.hide</code>; it slides up from the bottom, above the action bar when one exists. Rendered statically here; the buttons fire the real one.</p>
+      <div class="example" data-title="Toast">
+        <div class="row">
+          <div class="toast">Can't reach the store. Check the WiFi.</div>
+          <div class="toast ok">This browser is now signed in as Demo Shopper.</div>
+          <div class="toast bad">Face ID was cancelled.</div>
+        </div>
+        <div class="row demo-controls">
+          <button class="secondary" data-action="toast" data-text="Can't reach the store. Check the WiFi.">Show a toast</button>
+          <button data-action="toast" data-text="Your session was ended by staff.">Another</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ SHEET ============================ -->
+    <section class="demo" id="sheet">
+      <h2>Bottom sheet <code>.sheet-backdrop · .sheet · .open · .sheet-handle</code></h2>
+      <p class="desc">Slides up over a dimmed backdrop. Toggle <code>.open</code> on both elements (never <code>hidden</code>, it kills the slide). Good for “What the payment network sees” and confirmations.</p>
+      <div class="example" data-title="Sheet">
+        <div class="sheet open" role="dialog" aria-modal="true" aria-label="What the payment network sees">
+          <div class="sheet-handle"></div>
+          <h2>What the payment network sees</h2>
+          <dl class="kv rows">
+            <dt>Agent</dt><dd>SpeedMart Store Agent · speedmart-shelf-agent-01</dd>
+            <dt>Token scope</dt><dd>SpeedMart #01 · max $20.00 · single use · expires 02:29</dd>
+            <dt>Your intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+            <dt>Confirmation</dt><dd>Passkey (Face ID)</dd>
+          </dl>
+          <p class="small text-3 mt-3">SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
+          <div class="actions"><button class="primary">Got it</button></div>
+        </div>
+        <div class="row demo-controls"><button class="secondary" data-action="open-sheet">Open the live sheet</button></div>
+      </div>
+    </section>
+
+    <!-- ============================ DISCLOSURE ============================ -->
+    <section class="demo" id="disclosure">
+      <h2>Disclosure <code>details.card · details.disclosure · pre.json</code></h2>
+      <p class="desc">Collapsible section with a rotating chevron. Receipt uses it for “Show payment record”; exit uses it for the payment-network view when a sheet is too much.</p>
+      <div class="example" data-title="Disclosure">
+        <details class="card disclosure">
+          <summary>Show payment record</summary>
+<pre class="json">{
+  "payment_id": "pay_91Kd",
+  "instruction_id": "instr_7f3c",
+  "provider": "stripe_test",
+  "amount_usd": 8.64,
+  "currency": "USD",
+  "status": "AUTHORIZED",
+  "auth_code": "A1B2C3",
+  "card_label": "Visa •••• 4242 (test)",
+  "points_earned": 8,
+  "created_at": "2026-09-26T02:14:03Z"
+}</pre>
+        </details>
+        <details class="card disclosure" open>
+          <summary>What the payment network sees</summary>
+          <dl class="kv">
+            <dt>Agent</dt><dd>SpeedMart Store Agent</dd>
+            <dt>Merchant</dt><dd>SpeedMart #01</dd>
+            <dt>Max amount</dt><dd>$20.00 · single use</dd>
+            <dt>Expires</dt><dd>02:29</dd>
+            <dt>Intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+          </dl>
+          <p class="small text-3">Sandbox mock, modeled on Visa Intelligent Commerce concepts.</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- ============================ STATES ============================ -->
+    <section class="demo" id="states">
+      <h2>States and error state <code>.state · .state-icon · .ok · .warn · .bad · .error-state · .spinner</code></h2>
+      <p class="desc">Centered icon, title, one sentence, optional actions. The existing <code>.notice</code> shares the look. Enter page: not a member, verifying, welcome, occupied, error.</p>
+      <div class="example" data-title="States">
+        <section class="card state">
+          <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#door"/></svg></div>
+          <h2>Entry gate</h2>
+          <p>Confirm it's you and the door opens. One shopper at a time.</p>
+        </section>
+        <section class="card state">
+          <div class="state-icon"><span class="spinner lg"></span></div>
+          <h2>Verifying…</h2>
+          <p>Use Face ID when your phone asks.</p>
+        </section>
+        <section class="card state ok">
+          <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#check"/></svg></div>
+          <h2>Welcome in, Maya</h2>
+          <p>The door is open. Your cart is live on this phone.</p>
+        </section>
+        <section class="card state warn">
+          <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#user"/></svg></div>
+          <h2>Someone is inside</h2>
+          <p>The store takes one shopper at a time. Try again in a moment.</p>
+        </section>
+        <section class="card error-state">
+          <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#x-circle"/></svg></div>
+          <h2>Declined</h2>
+          <p>The sandbox card was declined. Nothing was charged.</p>
+          <div class="stack mt-4"><button class="primary">Try again</button><button class="ghost">Keep shopping</button></div>
+        </section>
+        <section class="card state ok">
+          <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#card"/></svg></div>
+          <h2>You're a member.</h2>
+          <p>Card linked: Visa •••• 4242 (test). Walk to the entry gate.</p>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============================ SUCCESS ============================ -->
+    <section class="demo" id="success">
+      <h2>Success screen <code>.success · .checkmark · .amount · .points</code></h2>
+      <p class="desc">Circle draws, fills green, the check draws, then a small pop. Under reduced motion it renders finished. Replay to see it again.</p>
+      <div class="example" data-title="Success">
+        <section class="card success">
+          <svg class="checkmark" viewBox="0 0 64 64" aria-hidden="true">
+            <circle class="checkmark-circle" cx="32" cy="32" r="29"/>
+            <path class="checkmark-check" d="M19 33.5l8.5 8.5L45 24"/>
+          </svg>
+          <p class="title">Paid</p>
+          <p class="amount">$8.64</p>
+          <p class="meta">Visa •••• 4242 (test) · auth A1B2C3 · 02:14</p>
+          <span class="points">+8 points · 23 total</span>
+        </section>
+        <div class="row demo-controls"><button class="secondary" data-action="replay-check">Replay</button></div>
+      </div>
+    </section>
+
+    <!-- ============================ SKELETON ============================ -->
+    <section class="demo" id="skeleton">
+      <h2>Skeleton loaders <code>.skeleton · .title · .text · .row · .circle · .button · .skeleton-rows</code></h2>
+      <p class="desc">Shimmer while the first snapshot loads. Replace the current “Loading…” notice on <code>store.html</code> with the card below.</p>
+      <div class="example" data-title="Skeleton">
+        <section class="card">
+          <div class="skeleton title"></div>
+          <div class="skeleton-rows">
+            <div class="skeleton row"></div>
+            <div class="skeleton row"></div>
+          </div>
+          <div class="skeleton text long mt-3"></div>
+          <div class="skeleton text short"></div>
+        </section>
+        <div class="row"><span class="skeleton circle"></span><span class="skeleton text" style="width:200px"></span><span class="spinner"></span></div>
+        <div class="skeleton button"></div>
+      </div>
+    </section>
+
+    <!-- ============================ FOOTER ============================ -->
+    <section class="demo" id="footer">
+      <h2>Sandbox footer + action bar <code>.site-footer · .action-bar · .action-note · body.has-action-bar</code></h2>
+      <p class="desc">Every page ends with the sandbox footer. Screens with a primary action use the fixed bottom bar (shown in place here). Add <code>has-action-bar</code> to <code>body</code> so content keeps clear of it.</p>
+      <div class="example" data-title="Footer + action bar">
+        <footer class="site-footer">Sandbox demo · no real payments</footer>
+        <div class="action-bar">
+          <button class="primary">Approve $12.96 with Face ID</button>
+          <p class="action-note">Sandbox charge · nothing real is billed</p>
+        </div>
+        <div class="action-bar">
+          <div class="row"><button class="ghost">Keep shopping</button><button class="primary">Approve $12.96</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ ICONS ============================ -->
+    <section class="demo" id="icons">
+      <h2>Icons <code>/assets/icons.svg#name · .icon · .icon.lg · .icon.xl</code></h2>
+      <p class="desc">Original 24 px stroke icons in one sprite. <code>&lt;svg class="icon"&gt;&lt;use href="/assets/icons.svg#door"/&gt;&lt;/svg&gt;</code>. Colour follows <code>currentColor</code>.</p>
+      <div class="example" data-title="Icons">
+        <div class="icon-grid" data-icons></div>
+        <div class="row"><img src="/assets/logo.svg" alt="SpeedMart logo" width="96" height="96" style="border-radius:22px"><img src="/assets/icon-192.png" alt="" width="64" height="64"><img src="/assets/apple-touch-icon.png" alt="" width="48" height="48" style="border-radius:11px"><img src="/assets/icon-32.png" alt="" width="32" height="32"></div>
+      </div>
+    </section>
+
+    <!-- ============================ SCREENS ============================ -->
+    <section class="demo" id="screens">
+      <h2>Screens <code>index · enter · store · exit · receipt</code></h2>
+      <p class="desc">Full screens with the intended structure, in 390 px frames. Same markup as the “Screen examples” in <code>docs/overnight/ui.md</code>. Scroll inside a phone; headers stick, action bars stay put.</p>
+
+      <div class="example" data-title="index.html · JOIN" data-kind="phone" data-action-bar="true">
+        <div class="screen">
+          <div class="page">
+            <header class="app-header">
+              <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+              <span class="pill brand">Sandbox</span>
+            </header>
+            <section class="hero">
+              <img class="brand-logo" src="/assets/logo.svg" alt="">
+              <h1 class="page-title">SpeedMart</h1>
+              <p class="subtitle">Grab and go, with a yes you control.</p>
+            </section>
+            <form class="card stack" onsubmit="return false">
+              <div class="field"><label>First name</label><input type="text" placeholder="Maya" autocomplete="given-name"></div>
+              <div class="field">
+                <div class="field-head"><label>Budget</label><span class="value" data-range-value>$20</span></div>
+                <input type="range" min="10" max="50" step="5" value="20" style="--range-pct:25%" data-range-money>
+                <p class="help">Your store agent can never approve more than this.</p>
+              </div>
+              <div class="field"><label>Dietary</label><select><option>None</option><option>Vegetarian</option><option>Vegan</option><option>Gluten free</option></select></div>
+            </form>
+            <p class="hint">Already a member? <a href="#">Sign in with Face ID</a></p>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+        <div class="action-bar">
+          <button class="primary"><svg class="icon"><use href="/assets/icons.svg#face-id"/></svg>Join with Face ID</button>
+          <p class="action-note">A Visa test card is linked automatically</p>
+        </div>
+      </div>
+
+      <div class="example" data-title="enter.html · ENTER" data-kind="phone" data-action-bar="true">
+        <div class="screen">
+          <div class="page">
+            <header class="app-header">
+              <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+              <span class="pill">Entry gate</span>
+            </header>
+            <section class="card state">
+              <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#door"/></svg></div>
+              <h2>Entry gate</h2>
+              <p>Confirm it's you and the door opens. One shopper at a time.</p>
+            </section>
+            <section class="card state ok">
+              <div class="state-icon"><svg class="icon"><use href="/assets/icons.svg#check"/></svg></div>
+              <h2>Welcome in, Maya</h2>
+              <p>The door is open. Your cart is live on this phone.</p>
+              <div class="stack mt-4"><button class="primary">Open my cart</button></div>
+            </section>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+        <div class="action-bar">
+          <button class="primary"><svg class="icon"><use href="/assets/icons.svg#face-id"/></svg>Enter with Face ID</button>
+          <p class="action-note">Not a member? <a href="#">Join first</a></p>
+        </div>
+      </div>
+
+      <div class="example" data-title="store.html · LIVE CART" data-kind="phone">
+        <div class="screen">
+          <div class="page">
+            <header class="topbar">
+              <h1>SpeedMart</h1>
+              <div class="session-tag"><span class="mono">#3xY9</span><span class="dot live" title="Live" aria-label="Live"></span></div>
+            </header>
+            <section class="card agent-card" aria-live="polite">Electrolytes added. A recovery drink is $4 and keeps you under $20.</section>
+            <section class="strip warn" aria-live="polite"><p>Protein bar is in the wrong bay. Please return it to its lit slot.</p></section>
+            <section class="card">
+              <h2>Your cart</h2>
+              <ul class="cart-list">
+                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+                <li class="cart-row"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+              </ul>
+            </section>
+            <section class="card">
+              <div class="totals">
+                <span class="muted">Subtotal</span><span>$12.00</span>
+                <span class="muted">Tax</span><span>$0.96</span>
+                <span class="grand">Total</span><span class="grand">$12.96</span>
+              </div>
+              <div class="budget">
+                <div class="budget-label"><span>Budget</span><span>$12.96 of $20.00</span></div>
+                <div class="bar" role="progressbar" aria-label="Budget used" aria-valuenow="65"><span style="width:64.8%"></span></div>
+              </div>
+            </section>
+            <p class="hint">When you're done, scan the EXIT code.</p>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+      </div>
+
+      <div class="example" data-title="exit.html · OVER BUDGET" data-kind="phone" data-action-bar="true">
+        <div class="screen">
+          <div class="page">
+            <header class="app-header">
+              <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+              <span class="pill warn"><span class="dot warn"></span>Exit gate</span>
+            </header>
+            <section class="card">
+              <h2>Your receipt</h2>
+              <ul class="cart-list receipt-list">
+                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 2</span><span class="line">$16.00</span></li>
+                <li class="cart-row"><span class="name">Recovery drink</span><span class="qty">× 1</span><span class="line">$4.00</span></li>
+              </ul>
+              <div class="totals mt-3">
+                <span class="muted">Subtotal</span><span>$20.00</span>
+                <span class="muted">Tax</span><span>$1.60</span>
+                <span class="grand">Total</span><span class="grand">$21.60</span>
+              </div>
+              <div class="budget">
+                <div class="budget-label"><span>Budget</span><span>$21.60 of $20.00</span></div>
+                <div class="bar red" role="progressbar" aria-valuenow="108"><span style="width:100%"></span></div>
+              </div>
+            </section>
+            <div class="strip bad">This is over your $20 limit. Put something back to continue.</div>
+            <details class="card disclosure">
+              <summary>What the payment network sees</summary>
+              <dl class="kv">
+                <dt>Agent</dt><dd>SpeedMart Store Agent</dd>
+                <dt>Merchant</dt><dd>SpeedMart #01</dd>
+                <dt>Max amount</dt><dd>$20.00 · single use</dd>
+                <dt>Expires</dt><dd>02:29</dd>
+                <dt>Intent</dt><dd>Pay $21.60 to SpeedMart #01 for 3 items</dd>
+              </dl>
+              <p class="small text-3">SANDBOX: modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
+            </details>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+        <div class="action-bar">
+          <button class="primary" disabled>Approve $21.60 with Face ID</button>
+          <button class="ghost">Keep shopping</button>
+        </div>
+      </div>
+
+      <div class="example" data-title="receipt.html · PAID" data-kind="phone" data-action-bar="true">
+        <div class="screen">
+          <div class="page">
+            <header class="app-header">
+              <a class="brand" href="#"><img class="brand-logo" src="/assets/logo.svg" alt="">SpeedMart</a>
+              <span class="pill live"><span class="dot live"></span>Paid</span>
+            </header>
+            <section class="card success">
+              <svg class="checkmark" viewBox="0 0 64 64" aria-hidden="true">
+                <circle class="checkmark-circle" cx="32" cy="32" r="29"/>
+                <path class="checkmark-check" d="M19 33.5l8.5 8.5L45 24"/>
+              </svg>
+              <p class="title">Paid</p>
+              <p class="amount">$8.64</p>
+              <p class="meta">Visa •••• 4242 (test) · auth A1B2C3 · 02:14</p>
+              <span class="points">+8 points · 23 total</span>
+            </section>
+            <section class="card">
+              <h2>Items</h2>
+              <ul class="cart-list receipt-list">
+                <li class="cart-row"><span class="name">Electrolyte tabs</span><span class="qty">× 1</span><span class="line">$8.00</span></li>
+              </ul>
+              <div class="totals mt-3">
+                <span class="muted">Subtotal</span><span>$8.00</span>
+                <span class="muted">Tax</span><span>$0.64</span>
+                <span class="grand">Total</span><span class="grand">$8.64</span>
+              </div>
+            </section>
+            <details class="card disclosure">
+              <summary>Show payment record</summary>
+<pre class="json">{
+  "payment_id": "pay_91Kd",
+  "provider": "stripe_test",
+  "status": "AUTHORIZED",
+  "auth_code": "A1B2C3",
+  "amount_usd": 8.64,
+  "points_earned": 8
+}</pre>
+            </details>
+          </div>
+          <footer class="site-footer">Sandbox demo · no real payments</footer>
+        </div>
+        <div class="action-bar"><button class="primary">Done</button></div>
+      </div>
+    </section>
+
+    <!-- ============================ ADMIN ============================ -->
+    <section class="demo" id="admin">
+      <h2>Admin dashboard pieces <code>body.admin · .stat · .bay · .log · .override-row · .toggle</code></h2>
+      <p class="desc">The control room is always dark (<code>&lt;html data-theme="dark"&gt;</code>). These are the pieces <code>admin.js</code> renders; see <a href="/admin.html">admin.html</a> for the live thing.</p>
+      <div class="example" data-title="Admin" data-kind="dark-only">
+        <div class="admin stack">
+          <div class="health">
+            <span class="stat ok"><span class="k">Store</span><span class="v">Free</span></span>
+            <span class="stat ok"><span class="k">Vision</span><span class="v">180 ms</span></span>
+            <span class="stat bad"><span class="k">Serial</span><span class="v">Off</span></span>
+            <span class="stat ok"><span class="k">Stripe</span><span class="v">Test mode</span></span>
+            <span class="stat warn"><span class="k">LLM</span><span class="v">Templates only</span></span>
+          </div>
+          <div class="bays">
+            <div class="bay stable"><div class="bay-head"><span class="bay-id">Bay 0</span><span class="pill ok">stable</span></div><div class="bay-count">2<small>tags</small></div><div class="bay-tags">ids 0, 1</div></div>
+            <div class="bay motion"><div class="bay-head"><span class="bay-id">Bay 1</span><span class="pill warn">motion</span></div><div class="bay-count">1<small>tag</small></div><div class="bay-tags">ids 3</div></div>
+            <div class="bay nodata empty"><div class="bay-head"><span class="bay-id">Bay 2</span><span class="pill">no data</span></div><div class="bay-count">0<small>tags</small></div><div class="bay-tags">empty</div></div>
+          </div>
+          <div class="override-row">
+            <div class="meta"><span class="name">Electrolyte tabs</span><span class="ov active">override +1</span></div>
+            <div class="stepper"><button type="button">−</button><span class="count">2</span><button type="button">+</button></div>
+          </div>
+          <div class="row"><button class="toggle on" aria-pressed="true">Force decline: ON</button><button class="danger">Force exit</button><button class="danger solid">Reset</button></div>
+          <div class="log">
+            <div><span class="t">07:05:47.04</span><span class="ty cart">cart_changed</span><span class="d">{"source":"vision","state":"IN_STORE","total_usd":12.96}</span></div>
+            <div><span class="t">07:05:46.72</span><span class="ty gate">dev_start</span><span class="d">{"member_id":"mem_edW…","session_id":"ses_PyY…"}</span></div>
+            <div><span class="t">07:05:10.30</span><span class="ty admin">admin_login</span><span class="d">{}</span></div>
+            <div><span class="t">07:04:58.11</span><span class="ty bad">admin_login_failed</span><span class="d">{}</span></div>
+            <div><span class="t">07:04:40.02</span><span class="ty ws">ws_connect</span><span class="d">{"tag":"admin"}</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p class="guide-footer">SpeedMart design system · overnight build · <a href="/admin.html">admin</a> · <a href="/store.html">store</a></p>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <!-- Live bottom sheet (page level) -->
+  <div class="sheet-backdrop" id="live-backdrop" data-action="close-sheet"></div>
+  <div class="sheet" id="live-sheet" role="dialog" aria-modal="true" aria-label="What the payment network sees">
+    <div class="sheet-handle"></div>
+    <h2>What the payment network sees</h2>
+    <dl class="kv rows">
+      <dt>Agent</dt><dd>SpeedMart Store Agent · speedmart-shelf-agent-01</dd>
+      <dt>Token scope</dt><dd>SpeedMart #01 · max $20.00 · single use · expires 02:29</dd>
+      <dt>Your intent</dt><dd>Pay $12.96 to SpeedMart #01 for 2 items</dd>
+      <dt>Confirmation</dt><dd>Passkey (Face ID)</dd>
+    </dl>
+    <p class="small text-3 mt-3">SANDBOX: structure modeled on Visa Intelligent Commerce concepts. Not a Visa API call.</p>
+    <div class="actions"><button class="primary" data-action="close-sheet">Got it</button></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    (function () {
+      const money = (n) => "$" + Number(n).toFixed(2);
+      const ICONS = ["bolt", "bag", "door", "exit", "scan", "face-id", "check", "check-circle", "x", "x-circle", "alert", "info",
+        "arrow-left", "chevron-down", "chevron-right", "receipt", "refresh", "clock", "user", "shield-check", "sparkles", "wifi-off", "plus", "minus", "card"];
+
+      // Fill the icon grid before cloning so both frames get it.
+      document.querySelectorAll("[data-icons]").forEach((grid) => {
+        ICONS.forEach((name) => {
+          const cell = document.createElement("div");
+          cell.innerHTML = '<svg class="icon lg"><use href="/assets/icons.svg#' + name + '"/></svg><span>' + name + "</span>";
+          grid.append(cell);
+        });
+      });
+
+      function dedent(html) {
+        const lines = html.replace(/^\s*\n/, "").replace(/\s+$/, "").split("\n");
+        const indent = Math.min(...lines.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length));
+        return lines.map((l) => l.slice(indent)).join("\n");
+      }
+
+      function markupDetails(source) {
+        const details = document.createElement("details");
+        details.className = "markup";
+        details.innerHTML = "<summary>Markup</summary><pre class=\"json code\"></pre>";
+        details.querySelector("pre").textContent = dedent(source);
+        return details;
+      }
+
+      // Render every .example twice: once light, once dark (or in phones / dark-only).
+      document.querySelectorAll(".example").forEach((ex) => {
+        const source = ex.innerHTML;
+        const kind = ex.dataset.kind || "frame";
+        const wrap = document.createElement("div");
+
+        if (kind === "phone") {
+          wrap.className = "phones";
+          ["light", "dark"].forEach((theme) => {
+            const holder = document.createElement("div");
+            const phone = document.createElement("div");
+            phone.className = "phone" + (ex.dataset.actionBar ? " has-action-bar" : "");
+            phone.dataset.theme = theme;
+            phone.innerHTML = source;
+            const label = document.createElement("p");
+            label.className = "phone-label";
+            label.textContent = ex.dataset.title + " · " + theme;
+            holder.append(phone, label);
+            wrap.append(holder);
+          });
+        } else if (kind === "dark-only") {
+          wrap.className = "pair";
+          const frame = document.createElement("div");
+          frame.className = "theme-frame";
+          frame.dataset.theme = "dark";
+          frame.dataset.label = "dark (always)";
+          frame.innerHTML = source;
+          wrap.append(frame);
+        } else {
+          wrap.className = "pair";
+          ["light", "dark"].forEach((theme) => {
+            const frame = document.createElement("div");
+            frame.className = "theme-frame";
+            frame.dataset.theme = theme;
+            frame.dataset.label = theme;
+            frame.innerHTML = source;
+            wrap.append(frame);
+          });
+        }
+        ex.replaceChildren(wrap, markupDetails(source));
+        ex.classList.add("example-rendered");
+      });
+
+      // Swatch hex values, read from each rendered frame.
+      document.querySelectorAll(".theme-frame").forEach((frame) => {
+        const cs = getComputedStyle(frame);
+        frame.querySelectorAll(".swatch[data-var]").forEach((sw) => {
+          sw.querySelector(".h").textContent = cs.getPropertyValue(sw.dataset.var).trim();
+        });
+      });
+
+      // Theme view toggle.
+      document.querySelectorAll(".seg button[data-view]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.body.dataset.view = btn.dataset.view;
+          document.querySelectorAll(".seg button[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+        });
+      });
+
+      // Range sliders: filled track + money label.
+      function syncRange(input) {
+        const min = Number(input.min) || 0, max = Number(input.max) || 100, v = Number(input.value);
+        input.style.setProperty("--range-pct", ((v - min) / (max - min) * 100) + "%");
+        if (input.hasAttribute("data-range-money")) {
+          const field = input.closest(".field");
+          const out = field && field.querySelector("[data-range-value]");
+          if (out) out.textContent = "$" + Math.round(v);
+        }
+        if (input.hasAttribute("data-budget-demo")) {
+          const card = input.closest(".card");
+          const total = v, budget = 20, ratio = total / budget;
+          const sub = total / 1.08;
+          card.querySelector("[data-t=sub]").textContent = money(sub);
+          card.querySelector("[data-t=tax]").textContent = money(total - sub);
+          card.querySelector("[data-t=total]").textContent = money(total);
+          card.querySelector("[data-t=label]").textContent = money(total) + " of " + money(budget);
+          const bar = card.querySelector(".bar");
+          bar.classList.toggle("amber", ratio >= 0.8 && ratio <= 1);
+          bar.classList.toggle("red", ratio > 1);
+          bar.querySelector("span").style.width = Math.min(100, ratio * 100) + "%";
+          bar.setAttribute("aria-valuenow", String(Math.round(ratio * 100)));
+        }
+      }
+      document.addEventListener("input", (ev) => { if (ev.target.matches("input[type=range]")) syncRange(ev.target); });
+      document.querySelectorAll("input[type=range]").forEach(syncRange);
+
+      // Demo actions (delegated so cloned frames work).
+      const AGENT_LINES = [
+        "Electrolytes added. A recovery drink is $4 and keeps you under $20.",
+        "Recovery drink added. You're at $12.96 of your $20 budget.",
+        "Protein bar added. $3.50 more and you'd still be under budget.",
+      ];
+      document.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-action]");
+        if (!btn) return;
+        const root = btn.closest(".theme-frame, .phone") || document;
+        const action = btn.dataset.action;
+
+        if (action === "busy") {
+          btn.classList.add("busy"); btn.disabled = true;
+          setTimeout(() => { btn.classList.remove("busy"); btn.disabled = false; }, 1500);
+        } else if (action === "toggle") {
+          const on = btn.getAttribute("aria-pressed") !== "true";
+          btn.setAttribute("aria-pressed", String(on));
+          btn.classList.toggle("on", on);
+          btn.textContent = "Force decline: " + (on ? "ON" : "off");
+        } else if (action === "add-row" || action === "remove-row") {
+          const list = root.querySelector(".cart-list");
+          const existing = list.querySelector('.cart-row[data-sku="bar"]:not(.leaving)');
+          if (action === "add-row" && !existing) {
+            const li = document.createElement("li");
+            li.className = "cart-row"; li.dataset.sku = "bar";
+            li.innerHTML = '<span class="name">Protein bar</span><span class="qty">× 1</span><span class="line">$3.50</span>';
+            list.append(li);
+          } else if (action === "remove-row" && existing) {
+            existing.classList.add("leaving");
+            setTimeout(() => existing.remove(), 400);
+          }
+        } else if (action === "agent-fade") {
+          root.querySelectorAll(".agent-card, .agent-msg p").forEach((el) => {
+            const box = el.closest(".agent-card, .agent-msg");
+            const next = AGENT_LINES[(AGENT_LINES.indexOf(el.textContent) + 1) % AGENT_LINES.length];
+            box.classList.add("fading");
+            setTimeout(() => { el.textContent = next; box.classList.remove("fading"); }, 150);
+          });
+        } else if (action === "toast") {
+          api.toast(btn.dataset.text || "Hello from SpeedMart");
+        } else if (action === "open-sheet") {
+          document.getElementById("live-backdrop").classList.add("open");
+          document.getElementById("live-sheet").classList.add("open");
+        } else if (action === "close-sheet") {
+          document.getElementById("live-backdrop").classList.remove("open");
+          document.getElementById("live-sheet").classList.remove("open");
+        } else if (action === "replay-check") {
+          root.querySelectorAll(".checkmark").forEach((svg) => {
+            const clone = svg.cloneNode(true);
+            svg.replaceWith(clone);
+          });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
