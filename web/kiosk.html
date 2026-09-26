@@ -401,12 +401,15 @@
       margin: 0;
       min-height: 0;
       overflow: hidden;
-      align-self: center;
-      font-size: clamp(22px, 3.6vh, 42px);
+      display: flex;
+      flex-direction: column;
+      justify-content: safe center;       /* a long line starts at the top instead of spilling over the label */
+      font-size: clamp(22px, 3.6vh, 40px);
       font-weight: 700;
       line-height: 1.25;
       transition: opacity 0.6s ease;
     }
+    .k-caption.is-long { font-size: clamp(18px, 2.9vh, 32px); }
     .k-caption.is-old { opacity: 0.45; }
     .k-caption.is-hint { color: var(--k-muted); font-weight: 600; }
     .k-attract {
@@ -424,7 +427,8 @@
     }
     .k-attract.is-offer { animation: k-offer 1.2s ease-in-out infinite; }
     @keyframes k-offer { 50% { background: var(--brand, #1a56db); } }
-    body.k-touring .k-attract, body.k-visit .k-attract { visibility: hidden; }
+    body.k-touring .k-attract { visibility: hidden; }
+    body.k-visit .k-attract { display: none; }  /* the caption gets the whole panel while someone shops */
 
     /* During a visit the JOIN and ENTER codes make way for the shopper panel and the EXIT code (gates on only:
        k-has-exit). Hidden panels drop out of the grid, so the columns follow what is shown. */

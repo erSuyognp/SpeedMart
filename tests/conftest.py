@@ -37,6 +37,18 @@ def _no_board(port, baud, **kwargs):
 
 
 @pytest.fixture(autouse=True)
+def quiet_kiosk_narrator():
+    """The kiosk narrator's thread would keep working (and logging) after a test's temp data dir is gone. Tests
+    that want its output drive it with kiosk_agent.narrator.run_due(...)."""
+    from backend import kiosk_agent
+
+    kiosk_agent.narrator.threaded = False
+    kiosk_agent.narrator.visit_ended()
+    yield
+    kiosk_agent.narrator.visit_ended()
+
+
+@pytest.fixture(autouse=True)
 def no_serial_board(monkeypatch):
     """The app's lifespan starts the bridge when hardware_leds is on; make every open fail like a missing board."""
     monkeypatch.setattr(serial_bridge, "open_port", _no_board)

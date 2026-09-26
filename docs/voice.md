@@ -243,3 +243,29 @@ Checked on 2026-09-26.
   that is not ready within 5 s. Events: `tts_generated`, `tts_error` (`reason`).
 - To use a new voice, change `ELEVENLABS_VOICE_ID` and restart: the cache key includes the voice id, so the old
   files are simply not used (delete `data\tts_cache` to reclaim the space).
+
+## Phase 2: personalized shopper mode with narration
+
+- **On entry** the kiosk gets `kiosk_visit` "entered", calls `GET /api/kiosk/shopper?k=` and shows the shopper
+  panel: first name, budget left (bar: green, amber at 20 % left or less, red when over), cart total and item
+  count. `kiosk_cart` keeps it live on every cart change. Nothing else about the shopper reaches the screen.
+- **Greeting** (chosen by the backend from `visit_count`; returns and cancelled visits do not count):
+  - first visit: "Welcome to your first visit, Maya. Just grab what you want; the camera adds it to your cart.
+    When you're done, scan the exit code." (no numbers, so it is cached as a file after the first time)
+  - returning: "Welcome back, Maya. You have $10 to spend." (generated on demand)
+- **Narration** (`kiosk_agent.Narrator`, spec 8.16): the backend watches `cart_changed` and, once the cart has been
+  still for 1.5 s, sends one `kiosk_say` line for the net change. A pick and a put back inside the window say
+  nothing. Lines, first match wins:
+  - misplaced: "Oops, the Water is in the wrong bay. Please put it back in bay 4." (the policy's `misplaced`)
+  - over budget: "That's $1.34 over your budget. Putting back the Vegan snack fixes it." (the policy's
+    `over_budget`, said on a pick, when crossing the budget, or when the amount over changes)
+  - pick: "See, the Chips are already in your cart. You're at $2.70." (the cart's own total with tax)
+  - put back: "Water is back on the shelf, removed from your cart." (+ "You're back under your budget." when it
+    fixes an over budget cart)
+  - exit reminder, after 60 s with items and no change, once: "When you're ready, scan the exit code to review
+    and pay."
+  Every amount comes from the cart snapshot or the agent policy (spec 7.4); the kiosk never builds a price.
+- **Never talking over itself:** lines queue on the kiosk and a line that is playing is never cut off. A newer cart
+  line replaces an older one that has not started yet. When the visit ends, queued lines about it are dropped, a
+  line about it that is still playing stops, and the caption goes back to the idle hint.
+- Narration stops at the exit scan (the cart is frozen) and starts again on "Keep shopping".

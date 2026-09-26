@@ -10,6 +10,9 @@
 //     never interrupt each other. If the audio fails or is not ready within 5 s, the caption shows alone.
 //   - Attract mode and the ~30 s tour, also offered on its own when the shelf reports motion while the store is
 //     empty (shelf_activity), at most once every 2 minutes.
+//   - The shopper panel (first name, budget left, cart total, item count: kiosk_cart), the greeting on entry
+//     (GET /api/kiosk/shopper, fuller on a first visit) and spoken cart lines (kiosk_say, chosen by the backend).
+//     All of it is cleared the moment the visit ends.
 //
 // Every kiosk-only request carries the token as ?k=. Texts come from the backend; this file never builds a price.
 
@@ -85,6 +88,7 @@
     const el = $("caption");
     el.textContent = text || "";
     el.classList.toggle("is-hint", !!isHint);
+    el.classList.toggle("is-long", String(text || "").length > 100);
     el.classList.remove("is-old");
     clearTimeout(dimTimer);
     clearTimeout(hintTimer);
@@ -254,13 +258,56 @@
     offerTimer = setTimeout(stopOfferGlow, OFFER_GLOW_MS);
   }
 
+  // --- the shopper panel: first name, budget left, cart total, item count (kiosk_cart / GET /api/kiosk/shopper) ---
+
+  function renderShopper(v) {
+    if (!visit || !v) return;
+    $("shopper-name").textContent = v.first_name;
+    $("shopper-remaining").textContent = api.money(v.remaining_usd);
+    $("shopper-total").textContent = api.money(v.cart_total_usd);
+    $("shopper-items").textContent = String(v.item_count);
+    const over = v.cart_total_usd > v.budget_usd;
+    const left = v.budget_usd > 0 ? Math.max(0, Math.min(1, v.remaining_usd / v.budget_usd)) : 0;
+    const bar = $("shopper-bar");
+    bar.classList.toggle("is-over", over);
+    bar.classList.toggle("is-warn", !over && left <= 0.2);
+    bar.firstElementChild.style.width = (over ? 100 : Math.round(left * 100)) + "%";
+    document.body.classList.add("k-has-shopper");
+  }
+
+  function clearShopper() {
+    document.body.classList.remove("k-has-shopper");
+    ["shopper-name", "shopper-remaining", "shopper-total", "shopper-items"].forEach((id) => { $(id).textContent = ""; });
+    $("shopper-bar").firstElementChild.style.width = "0";
+  }
+
+  // On entry: the panel and the greeting (fuller on a first visit). On a resync: the panel only.
+  async function loadShopper(greet) {
+    let body = null;
+    try { body = await kget("/api/kiosk/shopper"); } catch (e) { return; }
+    if (!visit || !body || !body.shopper) return;
+    renderShopper(body.shopper);
+    if (greet && body.greeting) say(body.greeting);
+  }
+
+  // Spoken lines about the cart replace an older one that has not started yet: the newest cart wins, and a
+  // line already playing is never cut off.
+  const NARRATION = ["pick", "put_back", "over_budget", "misplaced", "exit_reminder"];
+
+  function onNarration(item) {
+    if (!visit || !item) return;
+    dropQueued((it) => NARRATION.indexOf(it.kind) >= 0);
+    say(item);
+  }
+
   // --- visits (kiosk_visit on /ws) ---
 
   function setVisit(step) {
+    const changed = !visit || visit.step !== (step || 3);
     visit = { step: step || 3 };
     document.body.classList.add("k-visit");
     stopOfferGlow();
-    if ($("caption").classList.contains("is-hint")) showHint();
+    if ($("caption").classList.contains("is-hint") || (changed && !playing)) showHint();
     showSteps();
   }
 
@@ -269,6 +316,7 @@
     const hadVisit = !!visit;
     visit = null;
     document.body.classList.remove("k-visit");
+    clearShopper();
     dropQueued((it) => it.visit);
     if (playing && playing.visit && stopPlaying) stopPlaying();
     if (hadVisit) showHint();
@@ -280,6 +328,7 @@
     if (ev === "entered" || ev === "sync") {
       cancelTour();
       setVisit(data.step);
+      loadShopper(ev === "entered");
     } else if (ev === "exit_pending" || ev === "resumed") {
       setVisit(data.step);
     } else if (ev === "paid") {
@@ -295,13 +344,15 @@
   function onMessage(msg) {
     if (!msg || !msg.type) return;
     if (msg.type === "kiosk_visit") onVisit(msg.data);
+    else if (msg.type === "kiosk_cart") renderShopper(msg.data);
+    else if (msg.type === "kiosk_say") onNarration(msg.data);
     else if (msg.type === "shelf_activity") onShelfActivity();
     else if (msg.type === "store_status" && msg.data && !msg.data.occupied && visit) endVisit();
   }
 
   // On every (re)connect the server resends the visit in progress (kiosk_visit "sync"); start from "free".
   function onStatus(connected) {
-    if (connected && visit) { visit = null; document.body.classList.remove("k-visit"); showSteps(); }
+    if (connected && visit) { visit = null; document.body.classList.remove("k-visit"); clearShopper(); showSteps(); }
   }
 
   // --- Start overlay ---

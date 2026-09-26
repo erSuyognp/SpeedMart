@@ -724,6 +724,8 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 {"type":"kiosk_visit","data":{"event":"entered"|"sync"|"exit_pending"|"resumed"|"paid"|"ended","step":3|4|null}}
                                        // 8.16, kiosk sockets only: drives the step tracker (1 Join, 2 Enter,
                                        // 3 Grab items, 4 Scan exit). "sync" is sent to a (re)connecting kiosk
+{"type":"kiosk_cart","data":KioskShopper}  // 8.16, kiosk sockets only: the shopper panel, on every cart change
+{"type":"kiosk_say","data":Say}        // 8.16, kiosk sockets only: a spoken cart line (debounced 1.5 s)
 ```
 
 A kiosk socket is `/ws?role=kiosk&k=<KIOSK_TOKEN>` (8.16). With a valid token it gets the public messages plus
@@ -1116,10 +1118,32 @@ voice and no shopper data. `GET /api/kiosk/qr/{which}` stays public.
 | Method | Path | Returns | Notes |
 |---|---|---|---|
 | GET | `/api/kiosk/phrases?k=` | `{"speech":bool,"voice":bool,"tour":[Say + "step"],"phrases":{"offer":Say,"exit_reminder":Say}}` | The ~30 s tour (step 0 intro, then 1 to 4) and the fixed lines, worded for the flags. Warms the TTS file cache in the background |
+| GET | `/api/kiosk/shopper?k=` | `{"shopper":KioskShopper\|null,"greeting":Say\|null}` | The shopping visit holding the store (null while it is free or someone is returning items). `greeting` kind `greeting_first` (visit_count 1) or `greeting_returning` |
 | GET | `/api/kiosk/tts/{clip_id}?k=` | `audio/mpeg` | Audio of a line the backend registered. 404 `unknown_clip` (the browser can never choose the text), 503 `tts_unavailable` (speech off, ElevenLabs error or over 4 s): the kiosk shows the caption only |
 
-`Say` = `{"kind": str, "text": str, "audio_url": "/api/kiosk/tts/<clip_id>" | null}`. Every spoken line is also
-shown as a caption. Fixed lines (no digits) are generated once and cached as files under `data/tts_cache/`;
+`Say` = `{"kind": str, "text": str, "audio_url": "/api/kiosk/tts/<clip_id>" | null}` (lines about the visit also
+carry `"visit": true`, so the kiosk drops them when the visit ends). Every spoken line is also shown as a caption.
+
+`KioskShopper` is everything the public screen may know about the shopper, and nothing else (never a card, a
+balance, a receipt or item names):
+
+```json
+{"first_name": "Maya", "budget_usd": 10.0, "remaining_usd": 7.3, "cart_total_usd": 2.7, "item_count": 1,
+ "visit_count": 1}
+```
+
+`visit_count` counts the member's shopping visits including this one; returns and CANCELLED visits do not count.
+The kiosk shows first name, budget left (with a bar), cart total and item count, and clears them the moment the
+visit ends (`kiosk_visit` paid or ended).
+
+**Narration** (`kiosk_agent.Narrator`): on a `cart_changed` log line the panel is pushed at once; a spoken line
+follows once the cart has been still for 1.5 s and describes the net change since the last line, first match wins:
+a new misplaced item (the policy's `misplaced`, "Oops, the Water is in the wrong bay. Please put it back in bay 4."),
+over budget (the policy's `over_budget`, "That's $1.34 over your budget. Putting back the Vegan snack fixes it."),
+picks ("See, the Chips are already in your cart. You're at $2.70." with the cart's own total), put backs ("Water is
+back on the shelf, removed from your cart."). After 60 s with items and no change: "When you're ready, scan the
+exit code to review and pay." (once per quiet spell). Only while IN_STORE. Prices come from the cart or the policy
+(7.4), never from the kiosk. Logged as `kiosk_say` (kind only). Fixed lines (no digits) are generated once and cached as files under `data/tts_cache/`;
 lines with numbers are generated on demand with a 4 s timeout and kept in memory only. Speech needs `voice` on,
 `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`; without them `audio_url` is null and the kiosk is captions only.
 Events: `tts_generated`, `tts_error` (`reason`), `tts_cache_error`, `shelf_activity`, `kiosk_bad_token`.

@@ -4,11 +4,14 @@ visit events for the step tracker, and shelf activity. ElevenLabs is mocked ever
 from __future__ import annotations
 
 import json
+import re
+import time
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from backend import cart as cart_mod
 from backend import kiosk, kiosk_agent, shelf_state, store, tts, ws
 from backend.main import app
 from identity_helpers import login_as, set_env, set_features
@@ -25,12 +28,14 @@ HEADERS = {"X-Internal-Token": TOKEN}
 KIOSK_ONLY = [
     ("GET", "/api/kiosk/phrases"),
     ("GET", "/api/kiosk/tts/" + "0" * 32),
+    ("GET", "/api/kiosk/shopper"),
 ]
 
 
 @pytest.fixture(autouse=True)
 def kiosk_setup(monkeypatch):
-    set_features(monkeypatch, voice=True, llm=False, gates=False, hardware_leds=False, passkeys=False)
+    # yolo off: tag snapshots drive the cart whatever vision.mode the local config.json has
+    set_features(monkeypatch, voice=True, llm=False, gates=False, hardware_leds=False, passkeys=False, yolo=False)
     set_env(monkeypatch, kiosk_token=KIOSK_TOKEN, elevenlabs_api_key="", elevenlabs_voice_id="")
     tts.reset()
     kiosk_agent.reset()
@@ -331,8 +336,10 @@ def shop_a_visit(client: TestClient, member_id: str) -> None:
     login_as(client, member_id)
     assert client.post("/internal/shelf", json=snap(FULL), headers=HEADERS).status_code == 200
     assert client.post("/api/dev/start").status_code == 200
+    kiosk_agent.narrator.run_due(time.monotonic())  # what the narrator thread does at once: the entry baseline
     picked = with_bays(b2=[u for u in FULL[2]][1:])
     assert client.post("/internal/shelf", json=snap(picked, frame_id=5), headers=HEADERS).status_code == 200
+    kiosk_agent.narrator.run_due(time.monotonic() + 5)  # flush the panel update and the debounced line
     store.cancel(reason="test")
 
 
@@ -362,7 +369,14 @@ def test_kiosk_socket_gets_visit_steps():
     visits = [m["data"] for m in got if m["type"] == "kiosk_visit"]
     assert visits[0] == {"event": "entered", "step": 3}
     assert visits[-1] == {"event": "ended", "step": None}
-    assert "4242" not in json.dumps(got)
+    panel = [m["data"] for m in got if m["type"] == "kiosk_cart"][-1]
+    assert panel == {"first_name": "Maya", "budget_usd": 10.0, "remaining_usd": 7.3, "cart_total_usd": 2.7,
+                     "item_count": 1, "visit_count": 1}
+    said = [m["data"] for m in got if m["type"] == "kiosk_say"]
+    assert [d["text"] for d in said] == ["See, the Chips are already in your cart. You're at $2.70."]
+    text = json.dumps(got)
+    for leak in ("4242", "Lopez", "balance", "card_label", maya):
+        assert leak not in text, leak
 
 
 def test_a_reconnecting_kiosk_gets_the_visit_in_progress():
@@ -381,6 +395,20 @@ def test_a_reconnecting_kiosk_gets_the_visit_in_progress():
     assert public_first == {"type": "store_status", "data": {"occupied": True}}
 
 
+def test_a_reconnecting_kiosk_gets_the_panel_too():
+    maya = add_member()
+    with TestClient(app) as client:
+        login_as(client, maya)
+        client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
+        assert client.post("/api/dev/start").status_code == 200
+        client.cookies.clear()
+        with client.websocket_connect(f"/ws?role=kiosk&k={KIOSK_TOKEN}") as sock:
+            first = [sock.receive_json() for _ in range(3)]
+    assert first[2] == {"type": "kiosk_cart", "data": {"first_name": "Maya", "budget_usd": 10.0,
+                                                       "remaining_usd": 10.0, "cart_total_usd": 0.0,
+                                                       "item_count": 0, "visit_count": 1}}
+
+
 def test_kiosk_page_itself_has_no_shopper_data():
     maya = add_member()
     c = TestClient(app)
@@ -395,3 +423,308 @@ def test_kiosk_page_itself_has_no_shopper_data():
         assert "Maya" not in r.text and KIOSK_TOKEN not in r.text, url
     assert c.get("/api/store/current").json() == {"session": None}
     assert shelf_state.has_snapshot()
+
+
+# --- Phase 2: the shopper endpoint, greetings, narration ---
+
+def enter_as(client: TestClient, member_id: str) -> dict:
+    login_as(client, member_id)
+    assert client.post("/internal/shelf", json=snap(FULL), headers=HEADERS).status_code == 200
+    r = client.post("/api/dev/start")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def finish_visit(member_id: str, state: str = "CLOSED") -> None:
+    """A past visit on record (the same row shape store.py writes)."""
+    from backend import db
+    conn = db.connect()
+    try:
+        conn.execute("INSERT INTO store_sessions (id, member_id, state, baseline_json, started_at, ended_at) "
+                     "VALUES (?, ?, ?, '{}', ?, ?)", (db.new_id("ses"), member_id, state, db.now_iso(), db.now_iso()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+SHOPPER_FIELDS = {"first_name", "budget_usd", "remaining_usd", "cart_total_usd", "item_count", "visit_count"}
+
+
+def test_shopper_endpoint_is_null_while_the_store_is_free():
+    assert TestClient(app).get(k("/api/kiosk/shopper")).json() == {"shopper": None, "greeting": None}
+
+
+def test_shopper_endpoint_fields_and_nothing_else():
+    maya = add_member(budget=10.0)
+    c = TestClient(app)
+    enter_as(c, maya)
+    picked = with_bays(b2=list(FULL[2])[1:])  # one Chips: $2.50 + 8% = $2.70
+    c.post("/internal/shelf", json=snap(picked, frame_id=5), headers=HEADERS)
+    c.cookies.clear()
+    body = c.get(k("/api/kiosk/shopper")).json()
+    assert set(body) == {"shopper", "greeting"}
+    assert set(body["shopper"]) == SHOPPER_FIELDS
+    assert body["shopper"] == {"first_name": "Maya", "budget_usd": 10.0, "remaining_usd": 7.3,
+                               "cart_total_usd": 2.7, "item_count": 1, "visit_count": 1}
+    text = json.dumps(body)
+    for leak in ("Lopez", "4242", "Visa", "balance", "card", "mem_", "ses_", "Chips"):
+        assert leak not in text, leak
+
+
+def test_shopper_endpoint_ignores_a_return_in_progress(monkeypatch):
+    maya = add_member()
+    c = TestClient(app)
+    enter_as(c, maya)
+    session = store.current_session()
+    store.cancel(session["id"], reason="test")
+    monkeypatch.setattr(store, "current_session", lambda: {**session, "state": "RETURNING", "return_of": "ses_x"})
+    assert c.get(k("/api/kiosk/shopper")).json() == {"shopper": None, "greeting": None}
+
+
+def test_first_visit_greeting():
+    maya = add_member(budget=10.0)
+    c = TestClient(app)
+    enter_as(c, maya)
+    g = c.get(k("/api/kiosk/shopper")).json()["greeting"]
+    assert g["kind"] == "greeting_first"
+    assert g["text"] == ("Welcome to your first visit, Maya. Just grab what you want; the camera adds it to your "
+                         "cart. When you're done, tap Checkout on your phone.")
+    assert tts.is_fixed(g["text"])  # no numbers: cached as a file
+
+
+def test_returning_greeting(monkeypatch):
+    set_features(monkeypatch, gates=True)
+    maya = add_member(budget=10.0)
+    finish_visit(maya)
+    c = TestClient(app)
+    login_as(c, maya)
+    c.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
+    store.start_session(maya)
+    body = c.get(k("/api/kiosk/shopper")).json()
+    assert body["shopper"]["visit_count"] == 2
+    assert body["greeting"]["kind"] == "greeting_returning"
+    assert body["greeting"]["text"] == "Welcome back, Maya. You have $10 to spend."
+
+
+def test_cancelled_and_return_visits_do_not_make_a_first_timer_returning():
+    maya = add_member()
+    finish_visit(maya, state="CANCELLED")  # an admin reset their first try
+    from backend import db
+    conn = db.connect()
+    try:
+        conn.execute("INSERT INTO store_sessions (id, member_id, state, baseline_json, started_at, return_of) "
+                     "VALUES ('ses_ret', ?, 'CLOSED', '{}', ?, 'ses_x')", (maya, db.now_iso()))
+        conn.commit()
+    finally:
+        conn.close()
+    c = TestClient(app)
+    enter_as(c, maya)
+    assert c.get(k("/api/kiosk/shopper")).json()["greeting"]["kind"] == "greeting_first"
+
+
+# --- narration: debounce and line selection (Narrator with its own clock, no thread, no vision) ---
+
+SESSION = {"id": "ses_narr", "state": "IN_STORE", "member_id": "mem_narr"}
+
+
+def cart_of(budget: float = 10.0, misplaced=None, state: str = "IN_STORE", **qty: int) -> dict:
+    """A CartSnapshot priced by the real cart code (8.5), so the totals are the backend's own."""
+    return cart_mod.priced_cart({**SESSION, "state": state}, qty, {"budget_usd": budget}, misplaced=misplaced)
+
+
+class Harness:
+    """A Narrator driven by hand: change() moves the cart and the clock, run(t) does what is due at t."""
+
+    def __init__(self, budget: float = 10.0):
+        self.now = 0.0
+        self.budget = budget
+        self.session = dict(SESSION)
+        self.cart = cart_of(budget)
+        self.member = {"id": "mem_narr", "name": "Maya Lopez", "budget_usd": budget}
+        self.sent: list[dict] = []
+        self.n = kiosk_agent.Narrator(threaded=False, clock=lambda: self.now,
+                                      current=lambda: (self.session, self.cart, self.member), emit=self.sent.append)
+        self.n.visit_started(SESSION["id"])
+        self.run(0.0)  # baseline: the cart at entry
+
+    def change(self, at: float, misplaced=None, **qty: int) -> None:
+        self.now = at
+        self.cart = cart_of(self.budget, misplaced=misplaced, state=self.session["state"], **qty)
+        self.n.cart_changed(SESSION["id"], self.session["state"])
+
+    def run(self, at: float) -> None:
+        self.now = at
+        self.n.run_due(at)
+
+    def said(self) -> list[str]:
+        return [m["data"]["text"] for m in self.sent if m["type"] == "kiosk_say"]
+
+    def panels(self) -> list[dict]:
+        return [m["data"] for m in self.sent if m["type"] == "kiosk_cart"]
+
+
+def test_pick_line_uses_the_carts_own_total():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.run(2.49)
+    assert h.said() == []
+    h.run(2.5)
+    assert h.said() == ["See, the Chips are already in your cart. You're at $2.70."]
+
+
+def test_single_item_that_is_not_plural():
+    h = Harness()
+    h.change(1.0, wat=1)
+    h.run(3.0)
+    assert h.said() == ["See, the Water is already in your cart. You're at $1.62."]
+
+
+def test_debounce_waits_for_the_cart_to_be_still_and_says_one_line_for_the_net_change():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.change(2.0, bar=1, wat=1)
+    h.change(3.0, bar=1, wat=1, elx=1)
+    h.run(4.49)
+    assert h.said() == []  # still inside 1.5 s of the last change
+    h.run(4.5)
+    assert h.said() == ["See, the Hydration drink, Chips and Water are already in your cart. You're at $8.10."]
+
+
+def test_pick_and_put_back_inside_the_window_says_nothing():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.change(1.8)  # back on the shelf 0.8 s later
+    h.run(10.0)
+    assert h.said() == []
+
+
+def test_put_back_line():
+    h = Harness()
+    h.change(1.0, wat=1, bar=1)
+    h.run(3.0)
+    h.change(5.0, bar=1)
+    h.run(7.0)
+    assert h.said()[-1] == "Water is back on the shelf, removed from your cart."
+
+
+def test_over_budget_line_follows_the_policy():
+    h = Harness(budget=10.0)
+    h.change(1.0, elx=1, rec=1)  # $7.02
+    h.run(3.0)
+    h.change(5.0, elx=1, rec=1, mix=1)  # $11.34 on a $10 budget
+    h.run(7.0)
+    assert h.said()[-1] == "That's $1.34 over your budget. Putting back the Vegan snack fixes it."
+    h.change(9.0, elx=1, rec=1)
+    h.run(11.0)
+    assert h.said()[-1] == ("Vegan snack is back on the shelf, removed from your cart. "
+                            "You're back under your budget.")
+
+
+def test_still_over_budget_by_a_new_amount_is_said_again():
+    h = Harness(budget=10.0)
+    h.change(1.0, elx=1, rec=1, mix=1, bar=1)  # $14.04: $4.04 over
+    h.run(3.0)
+    assert h.said() == ["That's $4.04 over your budget. Putting back the Vegan snack fixes it."]
+    h.change(5.0, elx=1, rec=1, mix=1)  # still over, now $1.34
+    h.run(7.0)
+    assert h.said()[-1] == "That's $1.34 over your budget. Putting back the Vegan snack fixes it."
+
+
+def test_misplaced_line_names_the_bay_to_return_it_to():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.run(3.0)
+    wrong = [{"tag_id": 6, "sku": "wat", "name": "Water", "bay": 0, "home_bay": 3, "count": 1}]
+    h.change(5.0, misplaced=wrong, bar=1)
+    h.run(7.0)
+    card = next(b.id for b in kiosk_agent.settings.bays if b.sku == "wat") + 1
+    assert h.said()[-1] == f"Oops, the Water is in the wrong bay. Please put it back in bay {card}."
+    h.change(9.0, misplaced=wrong, bar=1, wat=0)
+    h.run(11.0)
+    assert len(h.said()) == 2  # the same misplaced item is said once
+
+
+def test_exit_reminder_after_60_s_idle_with_items_once():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.run(2.5)  # the pick line; the reminder is due 60 s after it
+    h.run(62.49)
+    assert h.said() == ["See, the Chips are already in your cart. You're at $2.70."]
+    h.run(62.5)
+    assert h.said()[-1] == "When you're ready, tap Checkout on your phone to review and pay."
+    h.run(500.0)
+    assert len(h.said()) == 2  # once per quiet spell
+    reminder = [m["data"] for m in h.sent if m["type"] == "kiosk_say"][-1]
+    assert reminder["kind"] == "exit_reminder" and tts.is_fixed(reminder["text"])
+
+
+def test_no_exit_reminder_with_an_empty_cart():
+    h = Harness()
+    h.run(500.0)
+    h.change(501.0, bar=1)
+    h.change(501.5)
+    h.run(1000.0)
+    assert h.said() == []
+
+
+def test_nothing_is_said_after_the_exit_scan_or_the_end_of_the_visit():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.session["state"] = "CHECKOUT_PENDING"
+    h.n.visit_paused(SESSION["id"])
+    h.run(100.0)
+    assert h.said() == []
+    h.session["state"] = "IN_STORE"
+    h.n.visit_resumed(SESSION["id"])
+    h.change(101.0, bar=1, wat=1)
+    h.run(103.0)
+    assert h.said() == ["See, the Chips and Water are already in your cart. You're at $4.32."]
+    h.n.visit_ended()
+    h.change(104.0, bar=2)
+    h.run(500.0)
+    assert len(h.said()) == 1
+
+
+def test_panel_updates_at_once_with_only_the_allowed_fields():
+    h = Harness()
+    h.change(1.0, bar=1)
+    h.run(1.0)  # no debounce for the panel
+    assert h.panels()[-1] == {"first_name": "Maya", "budget_usd": 10.0, "remaining_usd": 7.3,
+                              "cart_total_usd": 2.7, "item_count": 1, "visit_count": 0}
+    assert h.said() == []
+
+
+def test_every_amount_said_comes_from_the_cart_or_the_policy():
+    h = Harness(budget=10.0)
+    steps = [dict(bar=1), dict(bar=1, rec=1), dict(bar=1, rec=1, mix=1, elx=1), dict(bar=1, rec=1), dict()]
+    allowed = set()
+    for i, qty in enumerate(steps):
+        h.change(10.0 * i + 1, **qty)
+        c = h.cart
+        allowed |= {cart_mod.to_cents(c["total_usd"])}
+        decision = kiosk_agent.agent.policy(c, h.member)
+        if decision["kind"] == "over_budget":
+            allowed.add(cart_mod.to_cents(decision["over_by"]))
+        h.run(10.0 * i + 5)
+    said = " ".join(h.said())
+    for amount in re.findall(r"\$(\d+(?:\.\d{2})?)", said):
+        assert cart_mod.to_cents(amount) in allowed, amount
+
+
+def test_a_visit_already_under_way_is_joined_without_narrating_its_past():
+    """After a backend restart the narrator has no visit; the first cart change of an IN_STORE session adopts it."""
+    sent = []
+    cart = {"now": cart_of(bar=2)}
+    n = kiosk_agent.Narrator(threaded=False, clock=lambda: 0.0,
+                             current=lambda: (SESSION, cart["now"], {"id": "m", "name": "Maya", "budget_usd": 10}),
+                             emit=sent.append)
+    n.cart_changed("ses_narr", "CHECKOUT_PENDING")
+    assert n.run_due(10.0) is None  # not a shopping change: ignored
+    n.cart_changed("ses_narr", "IN_STORE")
+    n.run_due(10.0)
+    assert [m for m in sent if m["type"] == "kiosk_say"] == []  # the baseline is today's cart
+    cart["now"] = cart_of(bar=2, wat=1)
+    n.cart_changed("ses_narr", "IN_STORE")
+    n.run_due(20.0)
+    assert [m["data"]["text"] for m in sent if m["type"] == "kiosk_say"] == \
+        ["See, the Water is already in your cart. You're at $7.02."]

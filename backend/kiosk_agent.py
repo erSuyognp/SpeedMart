@@ -6,6 +6,10 @@ This module decides what the kiosk says and when; backend/kiosk.py serves it and
 - Visit events for the kiosk's step tracker: {"type": "kiosk_visit"} on kiosk sockets only (8.4), taken from the
   store's own session_state log lines, so nothing in store.py needs to know the kiosk exists.
 - "shelf_activity" (public, no data): motion at the shelf while the store is empty, so the kiosk can offer the tour.
+- The shopper in the store (kiosk sockets and GET /api/kiosk/shopper only): first name, budget, what is left, cart
+  total, item count and visit count, plus a greeting (fuller on a first visit).
+- Narration: short spoken lines about cart changes, debounced 1.5 s, chosen from the agent policy's decisions (7.4)
+  and the cart's own totals, so a price is never invented. {"type": "kiosk_say"} on kiosk sockets.
 
 Everything here is decoration on top of the core loop: every hook is wrapped so a failure is logged, never raised.
 """
@@ -16,13 +20,17 @@ import threading
 import time
 from typing import Any
 
-from backend import eventlog, tts, ws
+from backend import agent, db, eventlog, tts, ws
+from backend.cart import to_cents, to_usd
 from backend.settings import settings
 
 SHOPPING_STATES = ("IN_STORE", "CHECKOUT_PENDING")
 STEP_FOR_STATE = {"IN_STORE": 3, "CHECKOUT_PENDING": 4}  # 1 Join, 2 Enter, 3 Grab items, 4 Scan exit
 SHELF_ACTIVITY_MIN_INTERVAL_S = 30.0  # at most one public shelf_activity message per 30 s (the kiosk offers
                                       # the tour at most once every 2 minutes on top of that)
+DEBOUNCE_S = 1.5  # a cart change is narrated once the cart has been still this long; the line describes the net
+                  # change, so a pick and a put back inside the window say nothing
+EXIT_REMINDER_IDLE_S = 60.0  # items in the cart and no change for this long: say how to check out (once)
 
 
 # --- wording that follows the feature flags ---
@@ -68,6 +76,15 @@ def phrases() -> dict[str, str]:
     }
 
 
+def _money(usd: float) -> str:
+    """$2.70, $10: the phone agent's formatting (agent.fmt_usd), so both say prices the same way."""
+    return "$" + agent.fmt_usd(usd)
+
+
+def _join(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
 def say_item(kind: str, text: str, **extra: Any) -> dict[str, Any]:
     """One line for the kiosk: the text (always shown as a caption) and where to fetch its audio, if speech is on.
     The audio URL names a clip id; the kiosk adds its token (?k=) to fetch it."""
@@ -82,6 +99,280 @@ def script() -> dict[str, Any]:
     tts.warm([t["text"] for t in tour] + [p["text"] for p in fixed.values()])
     # speech: lines come with audio. voice: ElevenLabs is on, so the Start tap also asks for the microphone.
     return {"speech": tts.available(), "voice": settings.features.voice, "tour": tour, "phrases": fixed}
+
+
+# --- the shopper in the store (kiosk only) ---
+
+def first_name(name: str | None) -> str:
+    return (name or "").strip().split(" ")[0] or "there"
+
+
+def visit_count(member_id: str) -> int:
+    """Shopping visits this member has made, this one included. A return is not a visit, and a cancelled visit
+    (admin reset, timeout) does not count, so a first timer whose first try was reset is still greeted as new."""
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM store_sessions WHERE member_id = ? AND return_of IS NULL "
+                           "AND state != 'CANCELLED'", (member_id,)).fetchone()
+        return int(row["n"])
+    finally:
+        conn.close()
+
+
+def shopper_view(cart: dict[str, Any], member: dict[str, Any], visits: int) -> dict[str, Any]:
+    """Everything the public screen may know about the shopper, and nothing more: first name, budget, what is left,
+    cart total, item count and visit count. Never a card, a balance, a receipt or the items themselves."""
+    budget = to_cents(cart.get("budget_usd", member.get("budget_usd", 0)))
+    total = to_cents(cart.get("total_usd", 0))
+    return {
+        "first_name": first_name(member.get("name")),
+        "budget_usd": to_usd(budget),
+        "remaining_usd": to_usd(max(0, budget - total)),
+        "cart_total_usd": to_usd(total),
+        "item_count": sum(int(i["qty"]) for i in cart.get("items") or []),
+        "visit_count": visits,
+    }
+
+
+def greeting(view: dict[str, Any]) -> tuple[str, str]:
+    """(kind, text): a fuller welcome on the first visit (no numbers, so cached as a file), a short one after."""
+    name = view["first_name"]
+    if view["visit_count"] <= 1:
+        return "greeting_first", (f"Welcome to your first visit, {name}. Just grab what you want; the camera adds "
+                                  f"it to your cart. When you're done, {exit_action()}.")
+    return "greeting_returning", f"Welcome back, {name}. You have {_money(view['remaining_usd'])} to spend."
+
+
+def current_visit() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+    """(session, cart, member) for the shopping visit holding the store, or None (free, or a return)."""
+    from backend import members, store  # local: both import modules that import this one
+
+    session = store.current_session()
+    if session is None or session.get("return_of") or session["state"] not in SHOPPING_STATES:
+        return None
+    member = members.get_member(session["member_id"])
+    if member is None:
+        return None
+    return session, store.cart_for(session), member
+
+
+def shopper_payload() -> dict[str, Any]:
+    """GET /api/kiosk/shopper: {"shopper": view, "greeting": Say}, or both null while nobody is shopping."""
+    visit = current_visit()
+    if visit is None:
+        return {"shopper": None, "greeting": None}
+    session, cart, member = visit
+    view = shopper_view(cart, member, visit_count(member["id"]))
+    kind, text = greeting(view)
+    return {"shopper": view, "greeting": say_item(kind, text, visit=True)}
+
+
+def cart_message(view: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "kiosk_cart", "data": view}
+
+
+# --- narration: what the kiosk says about cart changes ---
+
+def _item_names(changes: list[tuple[str, int]]) -> tuple[str, bool]:
+    """[("Chips", 1), ("Water", 2)] -> ("Chips and 2 Waters", plural)."""
+    parts = [name if n == 1 else f"{n} {name}" + ("" if name.endswith("s") else "s") for name, n in changes]
+    plural = len(changes) > 1 or changes[0][1] > 1 or changes[0][0].lower().endswith("s")
+    return _join(parts), plural
+
+
+def _over_budget(cart: dict[str, Any], member: dict[str, Any]) -> dict[str, Any] | None:
+    """The policy's over_budget decision for this cart, even while a misplaced warning outranks it (7.4)."""
+    decision = agent.policy({**cart, "warnings": []}, member)
+    return decision if decision["kind"] == "over_budget" else None
+
+
+def narration_line(prev: dict[str, Any], cart: dict[str, Any], member: dict[str, Any]) -> tuple[str, str] | None:
+    """(kind, text) for the net change from `prev` to `cart`, or None when there is nothing worth saying.
+
+    First match wins: a new misplaced item, then over budget (on a pick, on crossing the budget, or a new amount
+    over), then picks, then put backs. Every price comes from the cart or the policy, never from here.
+    """
+    before = {i["sku"]: int(i["qty"]) for i in prev.get("items") or []}
+    now = {i["sku"]: int(i["qty"]) for i in cart.get("items") or []}
+    names = {sku: s.name for sku, s in settings.skus.items()}
+    added = [(names[s], now[s] - before.get(s, 0)) for s in settings.skus if now.get(s, 0) > before.get(s, 0)]
+    removed = [(names[s], before[s] - now.get(s, 0)) for s in settings.skus if before.get(s, 0) > now.get(s, 0)]
+
+    decision = agent.policy(cart, member)
+    seen = {(w.get("sku"), w.get("bay")) for w in prev.get("warnings") or []}
+    if decision["kind"] == "misplaced" and (decision["sku"], decision["bay"]) not in seen:
+        return "misplaced", (f"Oops, the {decision['name']} is in the wrong bay. "
+                             f"Please put it back in bay {decision['return_to_bay']}.")
+
+    over, was_over = _over_budget(cart, member), _over_budget(prev, member)
+    if over and (added or was_over is None or to_cents(was_over["over_by"]) != to_cents(over["over_by"])):
+        return "over_budget", (f"That's {_money(over['over_by'])} over your budget. "
+                               f"Putting back the {over['put_back_name']} fixes it.")
+    if added:
+        text, plural = _item_names(added)
+        return "pick", (f"See, the {text} {'are' if plural else 'is'} already in your cart. "
+                        f"You're at {_money(cart['total_usd'])}.")
+    if removed:
+        text, plural = _item_names(removed)
+        line = f"{text} {'are' if plural else 'is'} back on the shelf, removed from your cart."
+        if was_over and not over:
+            line += " You're back under your budget."
+        return "put_back", line
+    return None
+
+
+def _say(kind: str, text: str) -> dict[str, Any]:
+    return {"type": "kiosk_say", "data": say_item(kind, text, visit=True)}
+
+
+class Narrator:
+    """Turns cart changes into kiosk lines: one debounced line per burst of changes, an immediate panel update
+    (kiosk_cart) for every change, and the exit reminder after EXIT_REMINDER_IDLE_S without a change.
+
+    Inputs come from the eventlog subscriber and never block; the work (DB reads, choosing a line) runs on one
+    daemon thread. Tests pass threaded=False and drive run_due(now) with their own clock and cart source.
+    """
+
+    def __init__(self, *, debounce_s: float = DEBOUNCE_S, idle_s: float = EXIT_REMINDER_IDLE_S,
+                 clock=time.monotonic, current=None, emit=None, threaded: bool = True) -> None:
+        self.debounce_s = debounce_s
+        self.idle_s = idle_s
+        self.clock = clock
+        self._current = current or current_visit
+        self._emit = emit or ws.broadcast_kiosk
+        self.threaded = threaded
+        self._cond = threading.Condition()
+        self._dirty = False
+        self._thread: threading.Thread | None = None
+        self._reset_locked(None)
+
+    def _reset_locked(self, session_id: str | None) -> None:
+        self._session_id = session_id
+        self._active = session_id is not None  # IN_STORE: narrate. Paused at the exit, stopped when it ends.
+        self._last: dict[str, Any] | None = None  # the cart the last line described (None: take a baseline)
+        self._panel_due: float | None = None
+        self._say_due: float | None = None
+        self._idle_due: float | None = None
+
+    # --- inputs (called inside eventlog.log: must not block) ---
+
+    def visit_started(self, session_id: str) -> None:
+        with self._cond:
+            self._reset_locked(session_id)
+            self._panel_due = self.clock()
+            self._wake_locked()
+
+    def visit_paused(self, session_id: str | None = None) -> None:
+        """Exit scanned: the cart is frozen, the kiosk stops talking about it (the panel still updates)."""
+        with self._cond:
+            if session_id is None or session_id == self._session_id:
+                self._active = False
+                self._say_due = self._idle_due = None
+                self._wake_locked()
+
+    def visit_resumed(self, session_id: str) -> None:
+        """Keep shopping: narrate again, and the exit reminder comes back if the cart still has items."""
+        with self._cond:
+            if session_id != self._session_id:
+                self._reset_locked(session_id)
+            self._active = True
+            self._panel_due = self.clock()
+            if self._last and self._last.get("items"):
+                self._idle_due = self.clock() + self.idle_s
+            self._wake_locked()
+
+    def visit_ended(self) -> None:
+        with self._cond:
+            self._reset_locked(None)
+            self._wake_locked()
+
+    def cart_changed(self, session_id: str | None, state: str | None = None) -> None:
+        with self._cond:
+            if session_id != self._session_id:
+                if state != "IN_STORE" or not session_id:
+                    return
+                self._reset_locked(session_id)  # a visit already under way (e.g. after a backend restart)
+            now = self.clock()
+            self._panel_due = now
+            if self._active:
+                self._say_due = now + self.debounce_s  # every change pushes the line back: latest cart wins
+                self._idle_due = None
+            self._wake_locked()
+
+    # --- work ---
+
+    def _wake_locked(self) -> None:
+        self._dirty = True
+        if self.threaded and (self._thread is None or not self._thread.is_alive()):
+            self._thread = threading.Thread(target=self._run, name="kiosk-narrator", daemon=True)
+            self._thread.start()
+        self._cond.notify_all()
+
+    def _next_wait_locked(self, now: float) -> float | None:
+        dues = [d for d in (self._panel_due, self._say_due, self._idle_due) if d is not None]
+        return max(0.0, min(dues) - now) if dues else None
+
+    def run_due(self, now: float | None = None) -> float | None:
+        """Do whatever is due at `now`. Returns seconds until the next due time, or None when nothing is pending."""
+        now = self.clock() if now is None else now
+        with self._cond:
+            session_id = self._session_id
+            panel = self._panel_due is not None and self._panel_due <= now
+            say = self._active and self._say_due is not None and self._say_due <= now
+            idle = self._active and self._idle_due is not None and self._idle_due <= now
+            if panel:
+                self._panel_due = None
+            if say:
+                self._say_due = None
+            if idle:
+                self._idle_due = None
+            baseline = self._last is None
+            if session_id is None or not (panel or say or idle):
+                return self._next_wait_locked(now)
+
+        visit = self._current()
+        if visit is None or visit[0]["id"] != session_id:
+            with self._cond:
+                return self._next_wait_locked(now)
+        session, cart, member = visit
+        if panel:
+            self._emit(cart_message(shopper_view(cart, member, visit_count(member["id"]))))
+
+        line = None
+        with self._cond:
+            if session_id != self._session_id:  # the visit ended while we read the cart
+                return self._next_wait_locked(now)
+            if baseline:
+                self._last = cart  # the cart at entry (or when we joined a visit): nothing to say about it
+            elif say:
+                line = narration_line(self._last, cart, member)
+                self._last = cart
+            if (baseline or say) and self._active and cart.get("items"):
+                self._idle_due = now + self.idle_s
+            remind = idle and self._active and session["state"] == "IN_STORE" and bool(cart.get("items"))
+            wait = self._next_wait_locked(now)
+        if line is not None:
+            self._emit(_say(*line))
+            eventlog.log("kiosk_say", session_id=session_id, kind=line[0])
+        if remind:
+            self._emit(_say("exit_reminder", phrases()["exit_reminder"]))
+            eventlog.log("kiosk_say", session_id=session_id, kind="exit_reminder")
+        return wait
+
+    def _run(self) -> None:
+        while True:
+            try:
+                wait = self.run_due()
+            except Exception as e:  # never let the narrator thread die
+                eventlog.log("kiosk_error", where="narrator", error=repr(e)[:300])
+                wait = 1.0
+            with self._cond:
+                if not self._dirty:
+                    self._cond.wait(wait)
+                self._dirty = False
+
+
+narrator = Narrator()
 
 
 # --- visit events for the step tracker (kiosk sockets only) ---
@@ -110,19 +401,32 @@ def visit_event(entry: dict[str, Any]) -> tuple[str, int | None] | None:
 
 def _on_event(entry: dict[str, Any]) -> None:
     """eventlog subscriber: must not block (it runs inside eventlog.log on the caller's thread)."""
+    if entry.get("type") == "cart_changed":
+        narrator.cart_changed(entry.get("session_id"), entry.get("state"))
+        return
     found = visit_event(entry)
-    if found is not None:
-        ws.broadcast_kiosk(visit_message(*found))
+    if found is None:
+        return
+    event, step = found
+    ws.broadcast_kiosk(visit_message(event, step))
+    if event == "entered":
+        narrator.visit_started(entry["session_id"])
+    elif event == "exit_pending":
+        narrator.visit_paused(entry.get("session_id"))
+    elif event == "resumed":
+        narrator.visit_resumed(entry["session_id"])
+    else:  # paid, ended
+        narrator.visit_ended()
 
 
 def initial_messages() -> list[dict[str, Any]]:
-    """What a (re)connecting kiosk socket needs to catch up: the visit in progress, if any."""
-    from backend import store  # local: store imports modules that import this one
-
-    session = store.current_session()
-    if session is None or session.get("return_of") or session["state"] not in SHOPPING_STATES:
+    """What a (re)connecting kiosk socket needs to catch up: the visit in progress and its panel, if any."""
+    visit = current_visit()
+    if visit is None:
         return []
-    return [visit_message("sync", STEP_FOR_STATE[session["state"]])]
+    session, cart, member = visit
+    return [visit_message("sync", STEP_FOR_STATE[session["state"]]),
+            cart_message(shopper_view(cart, member, visit_count(member["id"])))]
 
 
 # --- shelf activity: someone near the shelf while the store is empty ---
@@ -152,6 +456,7 @@ def reset() -> None:
     global _last_activity_at
     with _activity_lock:
         _last_activity_at = None
+    narrator.visit_ended()
 
 
 _subscribed = False

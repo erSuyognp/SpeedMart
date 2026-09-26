@@ -129,6 +129,15 @@ def kiosk_phrases(request: Request):
     return kiosk_agent.script()
 
 
+@router.get("/api/kiosk/shopper")
+def kiosk_shopper(request: Request):
+    """The shopper in the store, for the kiosk's panel and greeting: first name, budget, what is left, cart total,
+    item count and visit count, plus the greeting to say (fuller on a first visit). Both null while the store is
+    free or someone is returning items. Never a card, a balance, a receipt or item names."""
+    require_kiosk(request)
+    return kiosk_agent.shopper_payload()
+
+
 @router.get("/api/kiosk/tts/{clip_id}", responses={200: {"content": {"audio/mpeg": {}}}})
 def kiosk_tts(clip_id: str, request: Request):
     """MP3 for a line the backend registered (tts.register). Unknown ids are 404: the browser can never choose the
