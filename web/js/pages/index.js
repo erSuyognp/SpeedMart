@@ -108,8 +108,7 @@
       await passkey.signIn("login");
       await loadMe();
     } catch (e) {
-      setError(passkey.friendlyError(e));
-      passkey.prefetch("login", "login");
+      setError(passkey.friendlyError(e)); // passkey.js already fetched options for the retry tap
     } finally {
       btn.disabled = false;
     }

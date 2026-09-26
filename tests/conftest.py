@@ -15,6 +15,7 @@ os.environ["ADMIN_PASSWORD"] = "test-admin-password"
 # and tests must never reach Stripe or an LLM with real keys.
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 os.environ["RP_ID"] = "testserver"
+os.environ["RP_NAME"] = "SpeedMart"
 os.environ["ENTRY_GATE_TOKEN"] = "test-entry-token"
 os.environ["EXIT_GATE_TOKEN"] = "test-exit-token"
 os.environ["STRIPE_SECRET_KEY"] = ""

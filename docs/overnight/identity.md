@@ -9,6 +9,7 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
 |---|---|
 | S3.1 tunnel | done |
 | S3.2 signup, members, demo account | done |
+| S3.3 passkeys | done (needs phones, see checklist) |
 
 ## Decisions
 
@@ -53,6 +54,43 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   member (including the Demo Shopper on a team phone) has no passkey and passkeys are on, `index.html` shows
   "Set up Face ID", so the team phone can register one for the demo account.
 - A deleted member's cookie (e.g. DB wiped) gets 401 and the member keys are cleared.
+
+### S3.3 passkeys
+
+- **Library versions checked.** Installed py_webauthn is **3.0.1** (spec says >= 2.0). Its function names and
+  arguments are the same as the spec's 2.x calls; the code is written against 3.0.1.
+  `@simplewebauthn/browser` is pinned to **13.3.0** (latest 13.x tonight). I checked the package's file list on
+  jsDelivr: the UMD bundle is `dist/bundle/index.umd.min.js` (`index.umd.js` does not exist), exposing the
+  global `SimpleWebAuthnBrowser`.
+- **Bundle loaded on demand.** Pages do not have a `<script>` tag for the CDN. `passkey.load()` injects it only
+  when `features.passkeys` is on, so LAN mode with passkeys off never depends on jsDelivr.
+- **User gesture.** Options are fetched when the page loads (and again after every failed attempt), so the button
+  tap goes straight to `startRegistration` / `startAuthentication`. The one exception is "Join with Face ID": the
+  member must exist first, so that tap does signup, then fetches options, then prompts. If Safari drops the
+  gesture there, the phone shows "Face ID was cancelled" with a "Try Face ID again" button whose options are
+  already loaded. Check this on the iPhone (Morning checklist).
+- **Challenges** live in the signed session cookie, are single use, and expire after 5 minutes (browser side
+  re-fetches after 4). A registration challenge is bound to the member who asked for it. A login challenge
+  remembers its `purpose`; verify must send the same purpose.
+- **Only one outstanding challenge per kind.** Because the session is a cookie, two in-flight option requests
+  would overwrite each other's challenge. `passkey.js` keeps one prefetch per kind and never prefetches after a
+  success (a late response could restore a fresh verification that `approve` had just used up).
+- **Fresh verification (7.2)** is set by any successful passkey login (purpose enter, exit or login), lasts 90 s,
+  must be for the same member, and is consumed by the first gate/enter or exit/approve that checks it, whether
+  that call then succeeds or not. A stale one is also wiped. With passkeys off the "Confirm" tap counts, and the
+  instruction's `cardholder_confirmation.method` is `confirm_button` instead of `passkey`.
+- **User verification is required** at registration and login (`require_user_verification=True`). A phone with no
+  screen lock fails with "This phone has no screen lock set up, use the demo account".
+- **Friendly errors** (`passkey.friendlyError`): cancel / timeout (`NotAllowedError`, `AbortError`,
+  `ERROR_CEREMONY_ABORTED`; v13 passes `NotAllowedError` through uncoded, so the DOMException name is checked
+  too) -> "Face ID was cancelled. Tap the button to try again."; missing authenticator features or
+  no WebAuthn -> the no-screen-lock message; wrong domain -> "Face ID only works on the store's https link";
+  already registered -> "use Sign in with Face ID"; CDN failed -> "Face ID could not load". Server errors show
+  the backend message.
+- **Tests:** mocked verify functions cover options, challenge storage, single use, expiry, purpose, failures,
+  unknown credentials, duplicates and the 90 s rule. `tests/soft_authenticator.py` is a small software passkey
+  (P-256, "none" attestation), so two extra tests run the **real** py_webauthn checks: register + sign in succeeds;
+  wrong origin, missing user verification and a replayed challenge are refused.
 
 ## Morning checklist
 
