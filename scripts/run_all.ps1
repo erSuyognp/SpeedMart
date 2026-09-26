@@ -122,7 +122,7 @@ try {
     $api = Start-Child -Name 'api' -FilePath $Py -Arguments @(
         '-m', 'uvicorn', 'backend.main:app',
         '--host', '0.0.0.0', '--port', "$Port", '--no-access-log',
-        '--proxy-headers', '--forwarded-allow-ips', '*'
+        '--proxy-headers'
     )
 
     # Wait for /api/health so the first snapshots do not all fail.
