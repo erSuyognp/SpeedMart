@@ -1,0 +1,52 @@
+{
+  "features": {
+    "motion_freeze": true,
+    "signup": true,
+    "passkeys": true,
+    "gates": true,
+    "stripe": true,
+    "llm": true,
+    "hardware_leds": true,
+    "yolo": false,
+    "https_tunnel": true,
+    "loyalty": true,
+    "load_cells": false
+  },
+  "store": {
+    "name": "Aisle Market #01",
+    "currency": "USD",
+    "tax_rate": 0.08,
+    "default_budget_usd": 20,
+    "max_session_minutes": 15
+  },
+  "camera": {
+    "index": 0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "auto_exposure": false,
+    "exposure": -6,
+    "autofocus": false,
+    "focus": 0
+  },
+  "vision": {
+    "aruco_dict": "DICT_4X4_50",
+    "snapshot_hz": 5,
+    "stable_ms": 400,
+    "motion_threshold": 0.02,
+    "motion_settle_ms": 300,
+    "yolo_model": "models/aisle_yolo.pt",
+    "yolo_conf": 0.55,
+    "yolo_every_n_frames": 3
+  },
+  "bays": [
+    {"id": 0, "roi": [80, 200, 360, 620], "sku": "elx", "led_index": 0},
+    {"id": 1, "roi": [400, 200, 680, 620], "sku": "rec", "led_index": 1},
+    {"id": 2, "roi": [720, 200, 1000, 620], "sku": "bar", "led_index": 2}
+  ],
+  "serial": {
+    "port": "/dev/ttyUSB0",
+    "baud": 115200,
+    "gate_led_index": 3
+  }
+}

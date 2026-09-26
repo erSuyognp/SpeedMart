@@ -1,0 +1,15 @@
+{
+  "skus": [
+    {"sku": "elx", "name": "Electrolyte tabs", "price_usd": 8.00, "tags": ["recovery"], "yolo_class": "electrolytes"},
+    {"sku": "rec", "name": "Recovery drink",   "price_usd": 4.00, "tags": ["drink", "complements:elx"], "yolo_class": "recovery_drink"},
+    {"sku": "bar", "name": "Protein bar",      "price_usd": 3.50, "tags": ["snack"], "yolo_class": "protein_bar"}
+  ],
+  "units": [
+    {"tag_id": 0, "sku": "elx", "home_bay": 0},
+    {"tag_id": 1, "sku": "elx", "home_bay": 0},
+    {"tag_id": 2, "sku": "rec", "home_bay": 1},
+    {"tag_id": 3, "sku": "rec", "home_bay": 1},
+    {"tag_id": 4, "sku": "bar", "home_bay": 2},
+    {"tag_id": 5, "sku": "bar", "home_bay": 2}
+  ]
+}
