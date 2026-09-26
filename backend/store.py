@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend import cart, db, eventlog, shelf_state, ws
+from backend import agent, cart, db, eventlog, shelf_state, ws
 from backend.settings import settings
 
 IN_STORE = "IN_STORE"
@@ -168,8 +168,8 @@ def compute_live_cart(session: dict[str, Any], member: dict[str, Any] | None = N
             member = _member(conn, session["member_id"])
         finally:
             conn.close()
-    return cart.compute_cart(session, _live_shelf_counts(session), get_overrides(session["id"]), member,
-                             misplaced=shelf_state.misplaced())
+    return agent.on_cart(cart.compute_cart(session, _live_shelf_counts(session), get_overrides(session["id"]),
+                                           member, misplaced=shelf_state.misplaced()), member)
 
 
 def cart_for(session: dict[str, Any]) -> dict[str, Any]:
