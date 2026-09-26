@@ -59,6 +59,7 @@ Each feature has an ID and a flag. The human will decide which to keep. **Core**
 | F16 | Load cells via HX711 per bay | `load_cells` | Optional, default OFF | F12 | 3 h |
 | F17 | Demo tools: admin panel, override keys, reset, demo account | — | Core | F1 | 1.5 h |
 | F18 | "Tell us what you need": intent planner (LLM proposes a plan, the store validates it against stock and budget) | `llm` | Optional (keyword planner always on) | F4, F6 | 2 h |
+| F19 | Voice store agent (ElevenLabs Agents): the shopper talks to the store; the agent acts only through client tools over the store's own endpoints. See `docs/voice.md` | `voice` | Optional (typed F18 flow is the fallback) | F18, F14 | 2 h |
 
 **Default config for the weekend:** all flags `true` except `yolo` (turn on Saturday if ahead) and `load_cells` (off).
 

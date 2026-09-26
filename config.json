@@ -10,7 +10,8 @@
     "yolo": false,
     "https_tunnel": true,
     "loyalty": true,
-    "load_cells": false
+    "load_cells": false,
+    "voice": true
   },
   "store": {
     "name": "SpeedMart #01",

@@ -21,6 +21,8 @@ os.environ["EXIT_GATE_TOKEN"] = "test-exit-token"
 os.environ["STRIPE_SECRET_KEY"] = ""
 os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
+os.environ["ELEVENLABS_API_KEY"] = ""
+os.environ["ELEVENLABS_AGENT_ID"] = ""
 
 import pytest  # noqa: E402
 import serial  # noqa: E402

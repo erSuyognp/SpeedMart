@@ -36,6 +36,7 @@ class Features:
     https_tunnel: bool
     loyalty: bool
     load_cells: bool
+    voice: bool
 
     def as_dict(self) -> dict[str, bool]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -58,6 +59,8 @@ class Env:
     openai_api_key: str
     openai_model: str
     openai_base_url: str
+    elevenlabs_api_key: str
+    elevenlabs_agent_id: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,8 @@ def _load_env() -> Env:
         openai_api_key=g("OPENAI_API_KEY"),
         openai_model=g("OPENAI_MODEL"),
         openai_base_url=g("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        elevenlabs_api_key=g("ELEVENLABS_API_KEY"),
+        elevenlabs_agent_id=g("ELEVENLABS_AGENT_ID"),
     )
     if not env.session_secret:
         raise SettingsError("SESSION_SECRET is not set. Copy .env.example to .env and fill it in.")

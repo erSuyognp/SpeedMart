@@ -114,6 +114,14 @@
     });
   }
 
+  // F19: the voice agent (voice.js) renders plans exactly like the text flow and falls back to typing.
+  function focusTextInput() {
+    show(["ask"]);
+    $("ask").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("goal").focus({ preventScroll: true });
+  }
+  window.intentPage = { renderPlan, focusTextInput, showError, showAsk: () => show(["ask"]) };
+
   async function init() {
     $("ask-form").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("goal").value); });
     document.querySelectorAll(".chip").forEach((chip) => {
