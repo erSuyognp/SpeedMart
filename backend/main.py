@@ -10,8 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import (admin, auth_passkeys, db, disputes, eventlog, evidence, intent, kiosk, members, returns,
-                     review, routes_api, serial_bridge, shelf_state, store, voice, ws)
+from backend import (admin, auth_passkeys, bank, db, disputes, eventlog, evidence, intent, kiosk, members,
+                     returns, review, routes_api, serial_bridge, shelf_state, store, voice, ws)
 from backend.settings import WEB_DIR, settings
 
 
@@ -19,6 +19,7 @@ from backend.settings import WEB_DIR, settings
 async def lifespan(app: FastAPI):
     db.init_db()
     db.seed_demo_member()
+    bank.backfill()  # demo bank (8.15): existing members and the demo member get their opening balance
     ws.manager.bind(asyncio.get_running_loop())
     eventlog.log("startup", features=settings.features.as_dict())
     timeout_task = asyncio.create_task(store.timeout_task())

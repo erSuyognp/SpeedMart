@@ -24,6 +24,11 @@
   "disputes": {
     "auto_refund_max_usd": 2.00
   },
+  "demo_bank": {
+    "opening_balance_usd": 50.00,
+    "top_up_usd": 20.00,
+    "max_top_ups": 3
+  },
   "camera": {
     "index": 1,
     "width": 1280,

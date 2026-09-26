@@ -45,6 +45,24 @@
     return li;
   }
 
+  // Demo bank (8.15): "Balance after this purchase: $X.XX" (hidden when the charge predates the demo bank).
+  function renderBankAfter(r) {
+    const line = $("bank-after");
+    const b = r.bank || {};
+    const after = b.balance_after_usd;
+    if (!r.paid || after === null || after === undefined) { line.hidden = true; return; }
+    line.replaceChildren();
+    line.append("Balance after this purchase: ");
+    const strong = document.createElement("strong");
+    strong.textContent = api.money(after);
+    line.append(strong);
+    const note = document.createElement("span");
+    note.className = "bank-note-inline";
+    note.textContent = (b.card_label ? b.card_label + " · " : "") + (b.note || "Demo balance · not a real account");
+    line.append(note);
+    line.hidden = false;
+  }
+
   function renderResults(r) {
     const box = $("results");
     box.replaceChildren();
@@ -194,6 +212,7 @@
       $("points").hidden = !loyalty;
       $("points").textContent = "+" + r.points_earned + " points · " + r.points_total + " total";
     }
+    renderBankAfter(r);
     renderResults(r);
     renderRefunds(r.refunds);
 

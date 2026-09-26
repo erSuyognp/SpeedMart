@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from backend import db, eventlog, store
+from backend import bank, db, eventlog, store
 from backend.payments import DEFAULT_CARD_LABEL as TEST_CARD_LABEL
 from backend.routes_api import ApiError
 from backend.settings import settings
@@ -116,6 +116,7 @@ def signup(body: SignupBody, request: Request):
     finally:
         conn.close()
     eventlog.log("member_signup", member_id=member_id, budget_usd=budget, dietary=DIETARY[dietary_key])
+    bank.open_account(member_id)  # demo bank (8.15): the opening balance behind the demo card
     if settings.features.stripe:
         _link_card(member_id, name)
     log_in(request, member_id)

@@ -25,6 +25,8 @@
         <span id="session-id" class="mono"></span>
         <span id="live-dot" class="dot" title="Disconnected" aria-label="Disconnected"></span>
       </div>
+      <!-- Demo bank (8.15): compact balance line, live over the socket. Filled by /js/bank.js. -->
+      <div id="bank-mini" class="bank-mini" aria-live="polite" hidden></div>
     </header>
 
     <section id="loading" class="card">
@@ -91,6 +93,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
+  <script src="/js/bank.js"></script>
   <script src="/js/shelfmap.js"></script>
   <script src="/js/guardrails.js"></script>
   <script src="/js/dispute.js"></script>

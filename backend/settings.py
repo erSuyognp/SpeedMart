@@ -30,6 +30,8 @@ class SettingsError(Exception):
 VISION_MODES = ("tags", "yolo", "fusion")
 DEFAULT_VISION_MODE = "fusion"
 DEFAULT_AUTO_REFUND_MAX_USD = 2.00  # config.json disputes.auto_refund_max_usd when the section is absent
+# config.json demo_bank (8.15): the simulated bank account behind every member's demo card.
+DEFAULT_DEMO_BANK = {"opening_balance_usd": 50.00, "top_up_usd": 20.00, "max_top_ups": 3}
 
 
 def effective_vision_mode(mode: str, yolo_on: bool) -> str:
@@ -118,6 +120,7 @@ class Settings:
     skus: dict[str, Sku]
     units: dict[int, Unit]
     disputes: dict[str, Any] = field(default_factory=lambda: {"auto_refund_max_usd": DEFAULT_AUTO_REFUND_MAX_USD})
+    demo_bank: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_DEMO_BANK))
 
     @property
     def vision_mode(self) -> str:
@@ -205,6 +208,14 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
     if isinstance(line, bool) or not isinstance(line, (int, float)) or line < 0:
         errors.append(f"config.json: disputes.auto_refund_max_usd must be a dollar amount of 0 or more, got {line!r}")
 
+    demo_bank = {**DEFAULT_DEMO_BANK, **(config.get("demo_bank") or {})}  # optional section (8.15)
+    for key in ("opening_balance_usd", "top_up_usd"):
+        value = demo_bank[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            errors.append(f"config.json: demo_bank.{key} must be a dollar amount of 0 or more, got {value!r}")
+    if isinstance(demo_bank["max_top_ups"], bool) or not isinstance(demo_bank["max_top_ups"], int) or demo_bank["max_top_ups"] < 0:
+        errors.append(f"config.json: demo_bank.max_top_ups must be a whole number of 0 or more, got {demo_bank['max_top_ups']!r}")
+
     bay_ids = {b.id for b in bays}
     for b in bays:
         if b.sku not in skus:
@@ -233,6 +244,7 @@ def _build(env: Env, config: dict[str, Any], catalog: dict[str, Any]) -> Setting
         skus=skus,
         units=units,
         disputes=disputes,
+        demo_bank=demo_bank,
     )
 
 

@@ -117,7 +117,7 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    from backend import intent, shelf_state, store  # local import: store imports this module
+    from backend import bank, intent, shelf_state, store  # local import: store imports this module
 
     await websocket.accept()
     session = websocket.session
@@ -133,6 +133,8 @@ async def websocket_endpoint(websocket: WebSocket):
         initial.append({"type": "cart", "data": await asyncio.to_thread(store.cart_for, current)})
     if tag == ADMIN:
         initial.append({"type": "shelf", "data": shelf_state.state()})
+    elif tag is not None:  # a signed-in shopper: their demo balance, so the bank card is live from the start
+        initial.append({"type": "bank", "data": await asyncio.to_thread(bank.summary, tag)})
     glowing = intent.shown_bays()
     if glowing:  # clients start with nothing glowing, so an empty list needs no message
         initial.append({"type": "plan_bays", "data": {"bays": glowing}})

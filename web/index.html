@@ -78,6 +78,9 @@
       <p class="verify-note" data-verify-note></p>
     </section>
 
+    <!-- Demo bank (8.15): the simulated account behind the demo card, live over the socket. Filled by /js/bank.js. -->
+    <div id="bank" class="stack" hidden></div>
+
     <!-- index.js rewrites #member-icon's class ("big-icon ok" / "big-icon brand"), so it stays a .big-icon. -->
     <section id="member" class="card notice" hidden>
       <div id="member-icon" class="big-icon ok" aria-hidden="true">✓</div>
@@ -102,6 +105,8 @@
   <footer class="site-footer">Sandbox demo · no real payments</footer>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ws.js"></script>
+  <script src="/js/bank.js"></script>
   <script src="/js/passkey.js"></script>
   <script src="/js/pages/index.js"></script>
 </body>

@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS disputes (
   decision_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS bank_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id TEXT NOT NULL REFERENCES members(id),
+  type TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  description TEXT NOT NULL,
+  related_id TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS clips (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   store_session_id TEXT NOT NULL,

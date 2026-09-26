@@ -103,7 +103,7 @@
         <a href="#cards">Cards</a><a href="#cart">Cart rows</a><a href="#totals">Totals + budget</a><a href="#agent">Agent bubble</a>
         <a href="#strips">Strips</a><a href="#toast">Toast</a><a href="#sheet">Bottom sheet</a><a href="#disclosure">Disclosure</a>
         <a href="#states">States</a><a href="#success">Success</a><a href="#skeleton">Skeletons</a><a href="#footer">Footer</a>
-        <a href="#icons">Icons</a><a href="#screens">Screens</a><a href="#admin">Admin</a>
+        <a href="#icons">Icons</a><a href="#bank">Demo bank</a><a href="#screens">Screens</a><a href="#admin">Admin</a>
       </nav>
     </section>
 
@@ -233,7 +233,7 @@
     <!-- ============================ FORMS ============================ -->
     <section class="demo" id="forms">
       <h2>Forms <code>.field · input · select · input[type=range] · .toggle · .stepper</code></h2>
-      <p class="desc">52 px fields with 17 px text (iOS won't zoom). Range shows a filled track when JS sets <code>--range-pct</code> (this page does). The toggle is a plain button with <code>aria-pressed</code>; the stepper is two 48 px buttons around a count.</p>
+      <p class="desc">52 px fields with 17 px text (iOS won't zoom). Range shows a filled track when JS sets <code>--range-pct</code> (this page does). The toggle is a plain button with <code>aria-pressed</code>: the switch is a fixed 42 × 26 flex item beside the label with a 12 px gap, so the knob never covers the text and long labels wrap next to it (<code>.small</code> is the 34 × 20 header variant). The stepper is two 48 px buttons around a count.</p>
       <div class="example" data-title="Form fields">
         <form class="card stack" onsubmit="return false">
           <div class="field">
@@ -258,6 +258,52 @@
           <button class="toggle" aria-pressed="false" data-action="toggle">Force decline: off</button>
           <div class="stepper"><button type="button" aria-label="Remove one">−</button><span class="count">1</span><button type="button" aria-label="Add one">+</button></div>
           <div class="stepper"><button type="button" disabled>−</button><span class="count">0</span><button type="button" disabled>+</button></div>
+        </div>
+      </div>
+      <div class="example" data-title="Toggle states · label beside the switch, never under it">
+        <div class="stack">
+          <button class="toggle" aria-pressed="false" data-action="toggle">Force decline: off</button>
+          <button class="toggle on" aria-pressed="true" data-action="toggle">Force decline: ON</button>
+          <button class="toggle small" aria-pressed="true" data-action="toggle-sound">Sound: on</button>
+          <button class="toggle block" aria-pressed="false" data-action="toggle-long">Play a sound and show a badge when a new dispute arrives in the review queue: off</button>
+          <div class="actions-grid" style="max-width:328px"><button class="toggle full" aria-pressed="true" data-action="toggle">Force decline: ON</button><button class="danger">Force exit</button><button class="danger solid">Reset</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ DEMO BANK ============================ -->
+    <section class="demo" id="bank">
+      <h2>Demo bank <code>.bank-card · .bank-tx · .bank-mini · .bank-line</code></h2>
+      <p class="desc">The simulated account behind the demo card (spec 8.15). <code>bank.js</code> renders the full card on the member home page and the compact line in the store header from <code>GET /api/bank</code>; a <code>bank</code> socket message animates the number. Every view says “Demo balance · not a real account”.</p>
+      <div class="example" data-title="Bank card + transactions">
+        <div class="stack">
+          <section class="bank-card">
+            <div class="bank-head"><span class="bank-label">Demo Visa •••• 4242</span><span class="bank-chip">Demo</span></div>
+            <span class="bank-available bank-amount">$46.22</span>
+            <div class="bank-available-label">Available</div>
+            <div class="bank-current">Current balance <strong class="bank-amount">$46.22</strong></div>
+            <div class="bank-actions"><button type="button" class="block">Add $20 demo funds</button><p class="bank-topups">3 top ups left for this demo account</p></div>
+            <p class="bank-note">Demo balance · not a real account</p>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>Recent transactions</h2><span class="pill">3 recent</span></div>
+            <ul class="bank-tx">
+              <li class="pending"><span class="desc">SpeedMart #01 · 1 item</span><span class="meta">Hold · 2:16 PM<span class="pending-badge">Pending</span></span><span class="amount debit">−$3.78</span></li>
+              <li><span class="desc">Refund · 1 Water</span><span class="meta">Refund · 2:15 PM</span><span class="amount credit">+$1.62</span></li>
+              <li><span class="desc">SpeedMart #01 · 2 items</span><span class="meta">Purchase · 2:14 PM</span><span class="amount debit">−$5.40</span></li>
+              <li><span class="desc">Opening demo balance</span><span class="meta">Opening balance · 2:10 PM</span><span class="amount debit">+$50.00</span></li>
+            </ul>
+            <p class="bank-note-inline small muted mt-3">Demo balance · not a real account</p>
+          </section>
+        </div>
+      </div>
+      <div class="example" data-title="Compact header line + receipt line">
+        <div class="stack">
+          <header class="topbar app-header" style="position:static;margin:0">
+            <h1>SpeedMart</h1><span class="demo-badge">DEMO</span><div class="session-tag"><span class="mono">#Ab3x</span><span class="dot live"></span></div>
+            <div class="bank-mini"><span class="bank-mini-card">Demo Visa •••• 4242</span><span class="bank-mini-amount"><span class="bank-amount">$46.22</span> available</span><span class="bank-mini-note">Demo balance · not a real account</span></div>
+          </header>
+          <p class="bank-line">Balance after this purchase: <strong>$44.60</strong><span class="bank-note-inline">Demo Visa •••• 4242 · Demo balance · not a real account</span></p>
         </div>
       </div>
     </section>
@@ -948,6 +994,11 @@
           btn.setAttribute("aria-pressed", String(on));
           btn.classList.toggle("on", on);
           btn.textContent = "Force decline: " + (on ? "ON" : "off");
+        } else if (action === "toggle-sound" || action === "toggle-long") {
+          const on = btn.getAttribute("aria-pressed") !== "true";
+          btn.setAttribute("aria-pressed", String(on));
+          btn.classList.toggle("on", on);
+          btn.textContent = btn.textContent.replace(/: (on|off|ON)$/i, ": " + (on ? "on" : "off"));
         } else if (action === "add-row" || action === "remove-row") {
           const list = root.querySelector(".cart-list");
           const existing = list.querySelector('.cart-row[data-sku="bar"]:not(.leaving)');

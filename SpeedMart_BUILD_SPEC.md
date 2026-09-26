@@ -145,6 +145,7 @@ SpeedMart/
 │   ├── disputes.py              # F20 cart disputes: camera recheck, evidence, remove anyway, cleanup (8.13)
 │   ├── evidence.py              # F20 event clips: /internal/clips registration, lookups, files (8.14)
 │   ├── review.py                # F20 AI assisted dispute review + the human decision routes (8.14)
+│   ├── bank.py                  # Demo bank: the simulated account behind the demo card, ledger + top ups (8.15)
 │   └── routes_api.py            # public API routes (catalog, session, gates, receipt, guardrails)
 │
 ├── vision/
@@ -182,6 +183,7 @@ SpeedMart/
 │   │   ├── ws.js                # WebSocket with auto-reconnect
 │   │   ├── guardrails.js        # "Your agent's permissions" card (8.10)
 │   │   ├── dispute.js           # F20 dispute sheet: recheck, before/now photos, keep / remove anyway
+│   │   ├── bank.js              # Demo bank card (home page) and the compact header line (store), live (8.15)
 │   │   └── pages/*.js           # one small script per page
 │   └── css/styles.css
 │
@@ -300,6 +302,10 @@ REVIEW_MODEL=
 ROIs are `[x1, y1, x2, y2]` in pixels at the configured resolution. `calibrate.py` overwrites them.
 
 `features` also carries `voice` (F19) and `disputes` (F20, cart disputes with camera evidence, default `true`).
+
+`demo_bank` (8.15, optional section) configures the simulated bank account behind every member's demo card:
+`{"opening_balance_usd": 50.00, "top_up_usd": 20.00, "max_top_ups": 3}` are the defaults when the section or a
+key is missing. Amounts must be 0 or more and `max_top_ups` a whole number; anything else fails startup.
 With `disputes` false the worker saves no photos, the dispute routes answer 404 `disputes_off` and the phone
 shows no dispute buttons; nothing else changes.
 
@@ -441,6 +447,17 @@ CREATE TABLE IF NOT EXISTS disputes (          -- F20 (8.13)
   decision_json TEXT                           -- 8.14: {"by": "ai"|"staff", "decision": "approve"|"keep", note, agreed, at}
 );
 
+CREATE TABLE IF NOT EXISTS bank_ledger (       -- Demo bank (8.15): one row per movement on a member's demo account
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id TEXT NOT NULL REFERENCES members(id),
+  type TEXT NOT NULL,                          -- opening | hold | hold_release | charge | refund | top_up
+  amount_cents INTEGER NOT NULL,               -- signed: charges and holds negative, everything else positive
+  status TEXT NOT NULL,                        -- pending (a hold not yet captured) | posted
+  description TEXT NOT NULL,                   -- the statement line, e.g. "SpeedMart #01 · 2 items"
+  related_id TEXT,                             -- pay_xxx for a charge or hold, ref_xxx for a refund
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS clips (             -- F20 (8.14): one event clip per stable change in a bay during a visit
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   store_session_id TEXT NOT NULL,
@@ -470,6 +487,9 @@ and the `disputes` columns `review_json`, `decision_json` to an older `data/spee
 `ALTER TABLE ... ADD COLUMN`, so no reset is needed.
 
 Seed a **demo member** on startup if none exists: name "Demo Shopper", `is_demo=1`, budget 20, linked test card if Stripe is on.
+
+After seeding, `bank.backfill()` gives every member without an `opening` row (older members, the demo member)
+the opening demo balance (8.15). Signup opens the account the same way.
 
 ---
 
@@ -567,7 +587,7 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | GET | `/api/health` | — | `{"ok":true,"vision_age_ms":int,"serial":bool}` | `vision_age_ms` = ms since last shelf snapshot |
 | GET | `/api/config/public` | — | features, store name, currency | Frontend reads flags from here |
 | GET | `/api/catalog` | — | `{"skus":[{sku,name,price_usd}],"bays":[{bay,card,sku,name,on_shelf}]}` | `bays` feeds the shelf map: `card` is the printed number (bay id 0 is card 1), `on_shelf` the SKU's units on the shelf now (`null` before the first snapshot) |
-| POST | `/api/members/signup` | `{"name":str,"budget_usd"?:num,"dietary"?:str}` | `{"member":{...}}` | Creates member, logs in via cookie. If F10 on, creates Stripe customer + attaches `pm_card_visa` |
+| POST | `/api/members/signup` | `{"name":str,"budget_usd"?:num,"dietary"?:str}` | `{"member":{...}}` | Creates member, logs in via cookie. If F10 on, creates Stripe customer + attaches `pm_card_visa`. Opens the demo bank account with the opening balance (8.15) |
 | GET | `/api/me` | — | member + `has_passkey` + active session id | 401 if not logged in |
 | POST | `/api/logout` | — | `{"ok":true}` | |
 | POST | `/api/passkey/register/options` | — | WebAuthn creation options JSON | Logged-in member only |
@@ -577,9 +597,9 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | POST | `/api/gate/enter` | `{"gate_token":str}` | `{"session":{...},"cart":CartSnapshot}` | 403 bad token, 401 not verified, 409 occupied, 409 `returning` (your own return is open) |
 | GET | `/api/store/current` | — | `{"session":...,"cart":CartSnapshot}` or `{"session":null}` | |
 | POST | `/api/gate/exit/quote` | `{"gate_token":str}` | `{"cart":CartSnapshot,"instruction":Instruction,"plan_check":PlanCheck\|null}` | Freezes cart, state → CHECKOUT_PENDING. `plan_check` (8.9) is `null` unless the shopper made an F18 plan this visit. `POST /api/dev/checkout`, the gates-off fallback, returns the same three keys |
-| POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on. 409 `nothing_to_pay` if a dispute emptied the frozen cart (the next quote closes it) |
+| POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on. 409 `nothing_to_pay` if a dispute emptied the frozen cart (the next quote closes it). 402 `insufficient_funds` when the total exceeds the available demo balance (8.15): "Insufficient funds on your demo card (demo balance $X.XX). Put something back, or add demo funds on your home page." Refused before the fresh verification is used up, logged as `bank_insufficient_funds`, gate event `declined` |
 | POST | `/api/gate/exit/cancel` | — | `{"ok":true}` | Back to IN_STORE |
-| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points, `in_and_out_s`, `approvals`, `refunds: [Refund]`, `refunded_usd`, `return: {eligible, reason, message, deadline}`, `report: {eligible, reason, message, deadline, items:[{sku,name,qty}]}`, `disputes: [Dispute]` | Only the owner. `in_and_out_s` = entered → approved; `approvals` = payment attempts, each one Face ID (or Confirm) tap. `report` = F20 "Report a problem" (8.13): the unrefunded items, for 30 min after paying. `disputes` (8.14) = this visit's disputes that are open or decided (not withdrawn), shopper view |
+| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points, `in_and_out_s`, `approvals`, `refunds: [Refund]`, `refunded_usd`, `return: {eligible, reason, message, deadline}`, `report: {eligible, reason, message, deadline, items:[{sku,name,qty}]}`, `disputes: [Dispute]`, `bank: {balance_after_usd, card_label, note}` | Only the owner. `bank` (8.15): "Balance after this purchase", `balance_after_usd` null when the charge predates the demo bank. `in_and_out_s` = entered → approved; `approvals` = payment attempts, each one Face ID (or Confirm) tap. `report` = F20 "Report a problem" (8.13): the unrefunded items, for 30 min after paying. `disputes` (8.14) = this visit's disputes that are open or decided (not withdrawn), shopper view |
 | GET | `/api/guardrails` | — | `Guardrails` (8.10) | Logged-in member. 401 otherwise |
 | POST | `/api/returns/start` | `{"session_id":str}` (the paid visit) | `{"return":ReturnSnapshot}` | Needs fresh verification if F7 on (7.2). 404 not yours, 409 `not_returnable` / `return_window_closed` (30 min after payment) / `nothing_to_return` / `store_occupied` (with `occupant_first_name`), 503 `vision_unavailable`. Refusals that need no Face ID come first. The same visit tapped twice returns the open return |
 | GET | `/api/returns/current` | — | `{"return":ReturnSnapshot\|null}` | Your open return, if any |
@@ -590,6 +610,8 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | POST | `/api/disputes/{id}/remove` | — | `{"dispute":Dispute,"cart":...}` (+ `refund` after paying; `message` when the refund FAILED) | "Remove anyway": signed override −1 (source `dispute`), or after paying a refund (reason `dispute`). 409 `dispute_limit` "Please ask a staff member." after 2 per visit, `dispute_closed`, `not_in_cart` |
 | GET | `/api/disputes/evidence/{session_id}/{file}` | — | `image/jpeg` | F20. Only the visit's shopper (401 signed out, 404 anyone else or an unknown file) |
 | GET | `/api/disputes/evidence/{session_id}/clips/{file}` | — | `image/jpeg` | F20 (8.14). A clip **keyframe** for the visit's own shopper; the MP4 answers 404 here (admins only) |
+| GET | `/api/bank` | — | `BankSummary` (8.15) | Logged-in member. Balance, available balance, the last 20 transactions, top ups left |
+| POST | `/api/bank/topup` | — | `BankSummary` (8.15) | "Add $20 demo funds" (`demo_bank.top_up_usd`), at most `demo_bank.max_top_ups` per member: 409 `topup_limit` after that |
 | WS | `/ws` | — | stream of messages (8.4) | Identifies member by cookie |
 | POST | `/api/intent` | `{"text":str}` (≤ 300 chars) | `Plan` (8.8) | F18. Logged-in member. 401 `not_logged_in`, 400 `empty_text` / `text_too_long`, 404 `unknown_member` |
 | GET | `/api/intent/current` | — | `Plan` (8.8) or `null` | F18. 401 if not logged in |
@@ -654,7 +676,7 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 
 | Method | Path | Body | Effect |
 |---|---|---|---|
-| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, `return` (ReturnSnapshot while RETURNING, else null), `metrics` (below), `disputes` (F20: newest 20 Disputes with `member_name`, photos through `/admin/evidence`), last 50 events, serial status |
+| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, `return` (ReturnSnapshot while RETURNING, else null), `bank` (the shopper's BankSummary while someone is in the store, else null, 8.15), `metrics` (below), `disputes` (F20: newest 20 Disputes with `member_name`, photos through `/admin/evidence`), last 50 events, serial status |
 | GET | `/admin/evidence/{session_id}/{file}` | — | The same evidence crops, for the admin disputes card (F20) |
 | GET | `/admin/evidence/{session_id}/clips/{file}` | — | Event clips: the MP4 (`video/mp4`) and keyframes (8.14) |
 | POST | `/admin/disputes/{id}/approve` | `{"note":str}` | 8.14 "Approve refund": the refund (after paying, reason `staff_review`) or one unit off the cart. `{"dispute":Dispute,"refund"?:Refund,"cart"?:CartSnapshot}`. 422 `note_required` (under 3 chars), 409 `dispute_closed` / `nothing_to_refund`, 502 `refund_failed` |
@@ -665,6 +687,7 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 | POST | `/admin/demo-login` | — | Logs this browser in as the demo member |
 | POST | `/admin/led` | `{"cmd":"DISP,IDLE"}` | Raw serial command (gate screen test) |
 | POST | `/admin/force-decline` | `{"on":bool}` | Next charge returns DECLINED (for Q&A demos) |
+| POST | `/admin/bank/reset` | — | 8.15 "Reset demo balances": every member's ledger replaced by a fresh opening row (top ups available again). `{"ok":true,"members":int,"opening_balance_usd":num}`; every member's socket gets a `bank` message |
 
 `metrics` (the laptop's local day): `{"since", "sessions_today", "paid_today", "avg_in_store_s", "avg_exit_to_approval_s", "refunds_today", "refunded_usd_today", "disputes_today", "reviewed_today", "ai_human_agreement_pct", "auto_approved_today", "open_now"}`. Shopping sessions only (returns are not sessions); averages are over paid visits, `null` when there are none. `ai_human_agreement_pct` (8.14) is over today's staff decisions whose AI verdict was not `unclear`, `null` when there are none; `auto_approved_today` counts policy approvals; `open_now` is not limited to today. `health.review` = `{"available", "provider", "model", "vision"}` (`vision` `null` until the startup probe ran). The raw timestamps are also logged: `first_pick`, `session_metrics` (at approval: entered, first pick, quote, approved, seconds between), `return_started`, `return_detected`, `refund`.
 
@@ -679,6 +702,8 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 {"type":"plan_bays","data":{"bays":[0,1]}}   // public: bays the current plan points at, [] when cleared
 {"type":"dispute","data":Dispute}      // 8.14: a dispute opened, reviewed or decided. Admin sockets get the admin
                                        // view (review, decision, clips, timeline); the shopper gets their own view
+{"type":"bank","data":BankSummary}    // 8.15: the member (+ admins) whenever their ledger changes: charge, refund,
+                                       // top up, reset. A signed-in member's socket gets it among its first messages
 {"type":"shelf","data":{...}}          // admin sockets only
 {"type":"log","data":{...}}            // admin sockets only
 ```
@@ -1004,6 +1029,56 @@ need a note of at least 3 characters. Events: `dispute_reviewed`, `dispute_polic
 "Refunded", "Charge confirmed" plus the staff note); a `dispute` socket message refreshes it. Signup says:
 "The shelf camera records short clips of the shelf during your visit. They're kept only if there's a dispute."
 Clips are served to admins (MP4 + keyframes) and to the visit's own shopper (keyframes only).
+
+### 8.15 Demo bank (`backend/bank.py`)
+
+Every member gets a simulated bank account behind the demo card, so the app feels like a real banking
+experience without a real account anywhere. It is a ledger (`bank_ledger`, Section 6) in integer cents:
+
+```
+opening       +  demo_bank.opening_balance_usd, created with the member (signup, or the startup backfill)
+charge        -  an AUTHORIZED payment (payments.record), description "SpeedMart #01 · 2 items", related pay_xxx
+refund        +  a SUCCEEDED refund (payments.record_refund: return, dispute, ai_auto_small, staff_review),
+                 description "Refund · 1 Hydration drink" ("Refund (reported problem) · …" for a dispute), related ref_xxx
+top_up        +  "Add $20 demo funds" (demo_bank.top_up_usd), at most demo_bank.max_top_ups per member
+hold          -  a pre-authorization, status pending; hold_release + when it is captured (the charge then posts)
+```
+
+`balance` (current) = the sum of `posted` rows. `available` = current minus the `pending` holds. This build
+never issues a hold: charges are immediate PaymentIntents (9.9), so `hold` / `hold_release` are carried by the
+math (a pending hold with the payment's id is posted and released when that charge lands) but never appear.
+
+**Insufficient funds:** `gate/exit/approve` compares the frozen cart's total with the available balance before
+the fresh verification is consumed (after `over_scope`). Over it: 402 `insufficient_funds`, "Insufficient funds
+on your demo card (demo balance $X.XX). Put something back, or add demo funds on your home page.", logged as
+`bank_insufficient_funds`, gate event `declined`, nothing charged; the checkout stays pending for a retry.
+
+```json
+{
+  "card_label": "Demo Visa •••• 4242",
+  "note": "Demo balance · not a real account",
+  "balance_usd": 43.52,
+  "available_usd": 43.52,
+  "pending_usd": 0.0,
+  "opening_balance_usd": 50.0,
+  "top_up_usd": 20.0,
+  "top_ups_used": 0,
+  "top_ups_left": 3,
+  "transactions": [
+    {"id": 2, "type": "charge", "amount_usd": -6.48, "status": "posted", "description": "SpeedMart #01 · 2 items",
+     "related_id": "pay_91Kd", "created_at": "2026-09-26T02:14:03Z"},
+    {"id": 1, "type": "opening", "amount_usd": 50.0, "status": "posted", "description": "Opening demo balance",
+     "related_id": null, "created_at": "2026-09-26T02:10:00Z"}
+  ]
+}
+```
+
+`BankSummary` is what `GET /api/bank` returns, what `POST /api/bank/topup` returns, and what the `bank` socket
+message (8.4) carries after every ledger change (`bank.publish`, to the member and the admins). `transactions`
+are the newest 20. Every balance view on a screen says "Demo balance · not a real account". Events:
+`bank_opened`, `bank_backfill`, `bank_charge`, `bank_refund`, `bank_insufficient_funds`, `bank_topup`,
+`bank_topup_limit`, `bank_reset`. The receipt carries `bank.balance_after_usd`: the posted balance right after
+the charge row. `POST /admin/bank/reset` (8.3) puts every member back to the opening balance.
 
 ---
 
@@ -1401,6 +1476,10 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - Button "Join with Face ID" (or "Join" if passkeys off).
 - Success: "You're a member. Card linked: Visa •••• 4242 (test). Walk to the entry gate."
 - Link "Already a member? Sign in with Face ID".
+- 8.15: signed in, a bank style card at the top of the page (`web/js/bank.js`): "Demo Visa •••• 4242", the
+  available balance large, the current balance smaller, "Add $20 demo funds" (disabled after the third),
+  a recent transactions list (pending badges, refunds in green) and "Demo balance · not a real account".
+  The `bank` socket message animates the number when it changes.
 
 ### 11.2 `enter.html?g=…` (QR 2 · ENTER)
 - Big door icon, "Entry gate".
@@ -1409,6 +1488,8 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 
 ### 11.3 `store.html` (live cart)
 - Header: "SpeedMart Market" + session last 4 chars + live dot (green = socket connected).
+- 8.15: a compact balance line in the header, "Demo Visa •••• 4242 · $43.52 available · Demo balance · not a
+  real account", live over the socket.
 - Agent card at top: the one-sentence agent line, subtle fade on change.
 - Cart rows: name, qty, line total; new rows slide in; removed rows fade out.
 - Totals block: subtotal, tax, total; budget bar (green under 80%, amber 80 to 100%, red over).
@@ -1427,6 +1508,8 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - Button "Approve $X.XX with Face ID". Secondary "Keep shopping" (cancel).
 - Over scope: "This is over your $20 limit. Put something back to continue."
 - Declined: red state + retry.
+- 8.15: the available demo balance under the card line; `insufficient_funds` shows the backend's message with a
+  link "Add demo funds" to the home page, and the approve button stays for a retry.
 - F20: "Something wrong? Tap an item to dispute it" above the items; a tap opens the same dispute sheet, then the
   quote is fetched again (a frozen cart emptied by a dispute closes with "Nothing to pay").
 
@@ -1446,13 +1529,19 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
   the staff note) in neutral, friendly wording, plus the clip keyframes the team looks at. Live over the socket.
 - Toggle "Show payment record" → payment JSON.
 - Button "Done" (clears to index).
+- 8.15: "Balance after this purchase: $X.XX" with "Demo balance · not a real account" (hidden when the charge
+  predates the demo bank).
 
 ### 11.6 `admin.html` (team only)
 - Password gate. Panels: store status and lock, results today (sessions, average time in store, average exit scan to approval, refunds), current session and baseline (a return in progress shows its detected items and refund), live shelf per bay (stable / motion), cart, overrides (+/− per SKU), reset, force-exit, demo-login, force-decline toggle, LED test buttons, health badges (vision age, serial, Stripe mode, LLM on/off), event log tail, and (F20) a review queue: new disputes pop up live with a sound and a
   badge count; each card shows the shopper's first name, item, amount, status, the AI verdict with a confidence
   bar and summary, evidence observations linked to keyframes, an inline MP4 player per clip, baseline vs latest
   photos, the timeline, and "Approve refund" / "Keep the charge" (each with a required note). The Results card
-  adds disputes today, AI and human agreement rate and auto approved count (8.14).
+  adds disputes today, AI and human agreement rate and auto approved count (8.14). 8.15: a "Reset demo
+  balances" button (every member back to the opening balance) and the shopper's demo balance in the session panel.
+- Toggle switches (`button.toggle`, `web/css/app.css`): the switch is a fixed 42 × 26 flex item beside the label
+  with a 12 px gap, never positioned over the text; long labels wrap next to it; `.small` is the 34 × 20 variant
+  in card headings. `design.html` shows every state.
 
 ---
 

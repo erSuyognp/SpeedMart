@@ -103,6 +103,25 @@
       const me = await api.get("/api/me");
       if (me.member.card_label) $("card-line").textContent = "Paying with " + me.member.card_label;
     } catch (e) { /* the notice already explains */ }
+    loadBank();
+  }
+
+  // Demo bank (8.15): the available demo balance this charge has to fit. The backend decides at approve time.
+  async function loadBank() {
+    try {
+      const b = await api.get("/api/bank");
+      const line = $("bank-line");
+      line.replaceChildren();
+      line.append(b.card_label + " \u00b7 available ");
+      const strong = document.createElement("strong");
+      strong.textContent = api.money(b.available_usd);
+      line.append(strong);
+      const note = document.createElement("span");
+      note.className = "bank-note-inline";
+      note.textContent = b.note;
+      line.append(note);
+      line.hidden = false;
+    } catch (e) { $("bank-line").hidden = true; }
   }
 
   async function onApprove(ev) {
@@ -125,6 +144,18 @@
         $("over-scope").textContent = e.message;
         $("over-scope").hidden = false;
         btn.hidden = true;
+      } else if (e instanceof api.ApiError && e.code === "insufficient_funds") {
+        // Demo bank (8.15): the cart does not fit the demo balance. Put something back, or add demo funds.
+        const strip = $("over-scope");
+        strip.replaceChildren();
+        strip.append(document.createTextNode(e.message + " "));
+        const link = document.createElement("a");
+        link.href = "/";
+        link.textContent = "Add demo funds";
+        strip.append(link);
+        strip.hidden = false;
+        btn.textContent = passkeysOn() ? "Try again with Face ID" : "Try again";
+        loadBank();
       } else {
         $("declined").textContent = e instanceof api.ApiError ? e.message : passkey.friendlyError(e);
         $("declined").hidden = false;

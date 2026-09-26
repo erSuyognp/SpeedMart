@@ -11,6 +11,8 @@ picking things up: health -> admin login -> reset -> full shelf -> demo login ->
 -> put it back -> pick two -> quote -> approve -> receipt -> return one of the two (start return, put it back,
 confirm refund) -> receipt shows the refund -> reset. Prices and tax come from catalog.json and
 config.json, so the totals it asserts are the ones the catalog says, not ones copied from the backend.
+The demo bank (8.15) is checked alongside: the available balance drops by the charge, rises by the refund,
+the receipt shows the balance after the purchase, and a top up adds the configured amount.
 
 A background thread keeps posting the shelf at 5 Hz for the whole run, so /api/health vision_age_ms stays
 fresh and store.start_session() can take a baseline (it refuses a snapshot older than 2 s).
@@ -369,6 +371,52 @@ def step_approve(api: Api, catalog: Catalog, passkeys_on: bool, want: dict[str, 
             f"auth {payment.get('auth_code')}")
 
 
+def step_bank_balance(api: Api) -> tuple[str, int]:
+    """Demo bank (8.15): the signed-in member's available balance in cents (the later steps compare against it)."""
+    b = api.get("/api/bank", skip_on_404="the demo bank routes are not written yet")
+    if b.get("note") != "Demo balance · not a real account":
+        raise Fail(f"every balance view must say it is a demo balance, got {b.get('note')!r}")
+    available = to_cents(b.get("available_usd", 0))
+    # ASCII only on the console: the card label carries bullets, so it is not printed.
+    return (f"demo card: {usd(available)} available, {usd(to_cents(b.get('balance_usd', 0)))} current, "
+            f"{b.get('top_ups_left')} top ups left"), available
+
+
+def step_bank_after_pay(api: Api, catalog: Catalog, before: int, want: dict[str, int]) -> str:
+    _, _, total = catalog.totals(want)
+    b = api.get("/api/bank")
+    available = to_cents(b.get("available_usd", 0))
+    if available != before - total:
+        raise Fail(f"available balance is {usd(available)}, expected {usd(before)} - {usd(total)} = {usd(before - total)}")
+    newest = (b.get("transactions") or [{}])[0]
+    if newest.get("type") != "charge" or to_cents(newest.get("amount_usd", 0)) != -total:
+        raise Fail(f"the newest transaction should be the charge of -{usd(total)}, got {newest}")
+    line = str(newest.get("description", "")).replace("·", "-")  # ASCII only on the console
+    return f"{usd(before)} -> {usd(available)}; statement line {line!r}"
+
+
+def step_bank_after_refund(api: Api, catalog: Catalog, before: int, sku: str, session_id: str) -> str:
+    _, _, total = catalog.totals({sku: 1})
+    b = api.get("/api/bank")
+    available = to_cents(b.get("available_usd", 0))
+    if available != before + total:
+        raise Fail(f"available balance is {usd(available)}, expected {usd(before)} + {usd(total)} = {usd(before + total)}")
+    r = api.get(f"/api/receipt/{session_id}")
+    after = (r.get("bank") or {}).get("balance_after_usd")
+    if after is None or to_cents(after) != before:
+        raise Fail(f"the receipt's balance after this purchase is {after}, expected {usd(before)}")
+    return f"{usd(before)} -> {usd(available)}; receipt says balance after purchase {usd(before)}"
+
+
+def step_bank_topup(api: Api, before: int) -> str:
+    b = api.post("/api/bank/topup")
+    available = to_cents(b.get("available_usd", 0))
+    top_up = to_cents(b.get("top_up_usd", 0))
+    if not top_up or available != before + top_up:
+        raise Fail(f"after a top up the available balance is {usd(available)}, expected {usd(before)} + {usd(top_up)}")
+    return f"+{usd(top_up)} -> {usd(available)}, {b.get('top_ups_left')} top ups left"
+
+
 def step_receipt(api: Api, session_id: str) -> str:
     """Measured results on the receipt, and the return offer (Continue stage)."""
     r = api.get(f"/api/receipt/{session_id}")
@@ -477,6 +525,7 @@ def main() -> int:
         passkeys_on = bool(flags.get("passkeys"))
 
         report.run("demo login", step_demo_login, api)
+        bank_before = report.run("demo bank balance", step_bank_balance, api)
         report.run("start session", step_start_session, api)
         first = catalog.sku_order[0]
         report.run(f"pick 1 {catalog.name[first].lower()}", step_pick_one, api, poster, catalog, first)
@@ -499,11 +548,19 @@ def main() -> int:
         if paid and isinstance(quoted, dict):
             sid = quoted["session_id"]
             report.run("receipt: time and taps", step_receipt, api, sid)
+            if bank_before is not None:
+                report.run("demo bank: charge posted", step_bank_after_pay, api, catalog, bank_before, want_two)
             returning = report.run("start return", step_start_return, api, sid, passkeys_on)
             if returning:
                 report.run(f"put 1 {catalog.name[first].lower()} back", step_put_one_back, api, poster, catalog, two)
                 report.run("confirm refund", step_confirm_refund, api, catalog, first)
                 report.run("receipt shows the refund", step_receipt_refund, api, sid)
+                if bank_before is not None:
+                    _, _, paid_total = catalog.totals(want_two)
+                    after_pay = bank_before - paid_total
+                    report.run("demo bank: refund posted", step_bank_after_refund, api, catalog, after_pay, first, sid)
+                    _, _, refund_total = catalog.totals({first: 1})
+                    report.run("demo bank: top up", step_bank_topup, api, after_pay + refund_total)
         elif not report.blocked:
             report.skipped += 1
             report.line("SKIP", "return and refund", "nothing was paid, so there is nothing to return")

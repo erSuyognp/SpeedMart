@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from backend import db, eventlog, returns, serial_bridge, shelf_state, store, ws
+from backend import bank, db, eventlog, returns, serial_bridge, shelf_state, store, ws
 from backend.routes_api import ApiError, public_session
 from backend.settings import settings
 
@@ -129,6 +129,7 @@ def state():
         "lock": {"occupied": session is not None},
         "session": public_session(session) if session else None,
         "member": member,
+        "bank": bank.summary(session["member_id"]) if session else None,  # the shopper's demo balance (8.15)
         "baseline": session["baseline"] if session else None,
         "overrides": store.get_overrides(session["id"]) if session else {},
         "shelf": shelf_state.state(),
@@ -157,6 +158,14 @@ def do_reset(source: str = "admin") -> dict:
 @router.post("/admin/reset")
 def reset():
     return do_reset()
+
+
+@router.post("/admin/bank/reset")
+def bank_reset():
+    """Demo bank (8.15): every member back to the opening balance, top ups available again."""
+    members = bank.reset_all()
+    return {"ok": True, "members": len(members), "opening_balance_usd": bank.summary(members[0])["opening_balance_usd"]
+            if members else round(float(settings.demo_bank["opening_balance_usd"]), 2)}
 
 
 @router.post("/admin/force-exit")

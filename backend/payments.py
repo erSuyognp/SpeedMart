@@ -18,6 +18,7 @@ from typing import Any
 
 import stripe
 
+from backend import bank
 from backend import cart as cart_mod
 from backend import db, eventlog
 from backend.settings import settings
@@ -317,6 +318,8 @@ def record(session_id: str, member: dict[str, Any], amount_cents: int, result: d
     eventlog.log("payment", session_id=session_id, member_id=member["id"], payment_id=payment["payment_id"],
                  provider=payment["provider"], status=payment["status"], amount_usd=payment["amount_usd"],
                  auth_code=payment["auth_code"], message=result.get("message"))
+    if payment["status"] == AUTHORIZED:  # demo bank (8.15): the charge leaves the simulated account
+        bank.post_charge(member["id"], payment["payment_id"], amount_cents, instruction.get("items") or [])
     return payment
 
 
@@ -451,6 +454,8 @@ def record_refund(payment: dict[str, Any], return_session_id: str | None, member
                  provider=view["provider"], provider_ref=view["provider_ref"], status=view["status"],
                  amount_usd=view["amount_usd"], items={i["sku"]: i["qty"] for i in items},
                  points_removed=view["points_removed"], message=result.get("message"))
+    if succeeded:  # demo bank (8.15): the refund comes back to the simulated account
+        bank.post_refund(member["id"], view["refund_id"], amount_cents, view["items_text"], reason)
     return view
 
 

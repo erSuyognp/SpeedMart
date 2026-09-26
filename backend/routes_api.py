@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend import eventlog, payments, shelf_state, store, ws
+from backend import bank, eventlog, payments, shelf_state, store, ws
 from backend.settings import settings
 
 # HTTP status for each StoreError code. Unlisted codes are 400.
@@ -223,6 +223,11 @@ def gate_exit_approve(request: Request):
         eventlog.log("approve_over_scope", member_id=member["id"], session_id=session["id"],
                      total_usd=cart["total_usd"], max_amount_usd=limit)
         raise ApiError(409, "over_scope", f"This is over your ${limit:g} limit. Put something back to continue.")
+    try:  # demo bank (8.15): the cart must fit the available demo balance; refused before Face ID is used up
+        bank.check_funds(member["id"], payments.cart_mod.to_cents(cart["total_usd"]), session["id"])
+    except bank.BankError as e:
+        ws.broadcast_gate(member["id"], "declined")
+        raise ApiError(402, e.code, e.message)
     instruction["cardholder_confirmation"] = auth_passkeys.consume_fresh_verification(request, member["id"])
 
     with _approve_lock:
@@ -287,7 +292,33 @@ def receipt(session_id: str, request: Request):
         "return": returns.eligibility(session),
         "report": disputes.report_status(session),  # "Report a problem" (8.13)
         "disputes": disputes.customer_disputes(session),  # status of each reported problem (8.14)
+        # demo bank (8.15): "Balance after this purchase"; null when the charge predates the demo bank
+        "bank": {"balance_after_usd": bank.balance_after(session["member_id"], paid["id"]) if paid else None,
+                 "card_label": bank.CARD_LABEL, "note": bank.NOTE},
     }
+
+
+# --- demo bank (8.15): the simulated account behind the demo card ---
+
+@router.get("/api/bank")
+def bank_summary(request: Request):
+    """Balance, available balance and the last 20 transactions of the signed-in member's demo account."""
+    from backend import members
+
+    member = members.current_member(request)
+    return bank.summary(member["id"])
+
+
+@router.post("/api/bank/topup")
+def bank_topup(request: Request):
+    """"Add $20 demo funds", at most demo_bank.max_top_ups per member. 409 `topup_limit` after that."""
+    from backend import members
+
+    member = members.current_member(request)
+    try:
+        return bank.top_up(member["id"])
+    except bank.BankError as e:
+        raise ApiError(409, e.code, e.message)
 
 
 # --- the permissions card (8.10): what the agent may do, and where only the shopper decides ---

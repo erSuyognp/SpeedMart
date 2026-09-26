@@ -5,12 +5,15 @@
   const $ = (id) => document.getElementById(id);
   let cfg = { features: {} };
   let me = null; // GET /api/me result while signed in
+  let bank = null; // demo bank card (8.15), mounted once, live over the socket
+  let socket = null;
 
   const passkeysOn = () => !!cfg.features.passkeys;
   const gatesOn = () => !!cfg.features.gates;
 
   function show(which) {
     ["loading", "join", "signup-off", "member"].forEach((id) => { $(id).hidden = id !== which; });
+    if (which !== "member") $("bank").hidden = true;
     // "Already a member?" only makes sense while signed out, and only with passkeys.
     $("signin").hidden = which === "member" || which === "loading" || !passkeysOn();
   }
@@ -48,7 +51,20 @@
     $("passkey-setup").hidden = !needsPasskey;
     $("cart-link").hidden = needsPasskey || (gatesOn() && !me.active_session_id);
     show("member");
+    showBank();
     if (needsPasskey) passkey.prefetch("register");
+  }
+
+  // The bank style card at the top of the member home page (8.15). One socket keeps it live.
+  function showBank() {
+    if (!bank) bank = Bank.mount($("bank"), { compact: false });
+    bank.load();
+    if (!socket) {
+      socket = connectSocket({
+        onMessage: (msg) => { if (msg.type === "bank" && me) bank.update(msg.data); },
+        onResync: () => { if (me) bank.load(); },
+      });
+    }
   }
 
   async function loadMe() {

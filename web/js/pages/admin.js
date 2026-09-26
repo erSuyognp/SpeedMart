@@ -103,6 +103,7 @@
       ["Shopper", s.member ? s.member.name : "–"],
       ["Started", sess ? sess.started_at : "–"],
       ["Baseline", baseline],
+      ["Demo balance", s.bank ? api.money(s.bank.available_usd) + " available · " + api.money(s.bank.balance_usd) + " current · " + s.bank.top_ups_used + " top ups" : "–"],
       ["Sockets", "admin " + s.sockets.admin + " · member " + s.sockets.member + " · other " + s.sockets.anonymous],
     ]));
 
@@ -723,6 +724,20 @@
     });
     $("force-exit").addEventListener("click", (ev) => {
       if (confirm("Cancel the active session?")) act(ev.currentTarget, "/admin/force-exit");
+    });
+    $("bank-reset").addEventListener("click", async (ev) => {
+      if (!confirm("Put every member back to the opening demo balance?")) return;
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      try {
+        const res = await api.post("/admin/bank/reset");
+        api.toast(res.members + (res.members === 1 ? " member" : " members") + " back to " + api.money(res.opening_balance_usd) + ".");
+        scheduleRefresh();
+      } catch (e) {
+        api.toast(e.message);
+      } finally {
+        btn.disabled = false;
+      }
     });
     $("force-decline").addEventListener("click", (ev) =>
       act(ev.currentTarget, "/admin/force-decline", { on: !(state && state.force_decline) }));

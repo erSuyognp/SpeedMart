@@ -9,6 +9,7 @@
   let current = null; // last CartSnapshot rendered
   let paidSession = null; // session id once PAID, so CLOSED afterwards still says "Paid"
   let shelf = null; // compact ShelfMap; glows while this shopper has a plan
+  let bank = null; // demo bank (8.15): the compact balance line in the header
 
   function show(which) {
     $("loading").hidden = which !== "loading";
@@ -159,6 +160,7 @@
     } catch (e) { /* keep the last known value */ }
     renderCurrent(res);
     loadPlan();
+    bank.load();
   }
 
   // Glow the bays of this shopper's own plan. plan_bays on the socket is only the cue to re-read it.
@@ -202,6 +204,8 @@
       api.toast("Your session was ended by staff.");
     } else if (msg.type === "plan_bays") {
       loadPlan();
+    } else if (msg.type === "bank") {
+      bank.update(msg.data); // the balance animates when a charge, refund or top up lands
     }
   }
 
@@ -210,11 +214,13 @@
     // Gates off: the exit page does the quote (/api/dev/checkout), approval and receipt.
     $("checkout-btn").addEventListener("click", () => { location.href = "/exit.html"; });
     shelf = ShelfMap.create($("shelf-map"), { size: "compact" });
+    bank = Bank.mount($("bank-mini"), { compact: true });
     try {
       const cfg = await api.config();
       gates = !!cfg.features.gates;
       disputes = Dispute.enabled(cfg);
       renderCurrent(await api.get("/api/store/current"));
+      bank.load();
     } catch (e) {
       renderOutside("Can't reach the store", e.message);
     }
