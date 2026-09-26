@@ -3,7 +3,7 @@
     "motion_freeze": true,
     "signup": true,
     "passkeys": true,
-    "gates": true,
+    "gates": false,
     "stripe": true,
     "llm": true,
     "hardware_leds": true,
