@@ -57,6 +57,8 @@
 
     const list = $("items");
     list.innerHTML = "";
+    const disputes = Dispute.enabled(cfg); // F20: tap an item to dispute it
+    $("dispute-hint").hidden = !disputes || cart.items.length === 0;
     cart.items.forEach((item) => {
       const li = document.createElement("li");
       li.className = "cart-row";
@@ -64,6 +66,16 @@
       li.querySelector(".name").textContent = item.name;
       li.querySelector(".qty").textContent = "× " + item.qty;
       li.querySelector(".line").textContent = api.money(item.line_total_usd);
+      if (disputes) {
+        li.classList.add("tappable");
+        li.setAttribute("role", "button");
+        li.tabIndex = 0;
+        li.setAttribute("aria-label", "Dispute " + item.name);
+        const openDispute = () => Dispute.open({ sku: item.sku, name: item.name,
+          onChange: () => loadQuote().catch((e) => api.toast(e.message)) });
+        li.addEventListener("click", openDispute);
+        li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDispute(); } });
+      }
       list.appendChild(li);
     });
     $("subtotal").textContent = api.money(cart.subtotal_usd);
@@ -128,6 +140,14 @@
     location.href = "/store.html";
   }
 
+  // The quote freezes the cart once; asking again returns the frozen cart (and closes it if a dispute emptied it).
+  async function loadQuote() {
+    const res = cfg.features.gates
+      ? await api.post("/api/gate/exit/quote", { gate_token: token })
+      : await api.post("/api/dev/checkout");
+    render(res);
+  }
+
   async function init() {
     $("approve-btn").addEventListener("click", onApprove);
     $("cancel-btn").addEventListener("click", onCancel);
@@ -138,10 +158,7 @@
         return;
       }
       if (passkeysOn()) passkey.load();
-      const res = cfg.features.gates
-        ? await api.post("/api/gate/exit/quote", { gate_token: token })
-        : await api.post("/api/dev/checkout");
-      render(res);
+      await loadQuote();
       loadCard();
     } catch (e) {
       if (e.code === "not_logged_in") {

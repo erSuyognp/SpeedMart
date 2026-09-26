@@ -37,6 +37,7 @@ class Features:
     loyalty: bool
     load_cells: bool
     voice: bool
+    disputes: bool
 
     def as_dict(self) -> dict[str, bool]:
         return {f.name: getattr(self, f.name) for f in fields(self)}

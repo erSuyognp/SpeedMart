@@ -302,6 +302,56 @@ def apply_override(sku: str, delta: int) -> dict[str, Any]:
     return snapshot
 
 
+def camera_quantities(session: dict[str, Any]) -> dict[str, int]:
+    """What the camera alone puts in the cart right now: clamp(baseline - shelf_now, 0, baseline), no overrides.
+    A cart dispute (8.13) compares the cart the shopper sees against this."""
+    return cart.cart_quantities(session["baseline"], _live_shelf_counts(session), {})
+
+
+def remove_one(sku: str, source: str = "dispute") -> dict[str, Any]:
+    """Take one unit of `sku` out of the active shopping cart (cart disputes, 8.13) and return the cart.
+
+    IN_STORE: a signed override of -1, clamped like apply_override. CHECKOUT_PENDING: the same override, so the
+    live cart agrees if the shopper keeps shopping, and one unit fewer in the frozen cart the charge uses.
+    """
+    if sku not in settings.skus:
+        raise StoreError("unknown_sku", f"Unknown SKU '{sku}'.")
+    session = current_session()
+    if session is None or session["state"] not in SHOPPING_STATES:
+        raise StoreError("no_active_session", "You are not in the store.")
+    base = session["baseline"].get(sku, 0)
+    shelf = _live_shelf_counts(session).get(sku, 0)
+    with _lock:
+        _load_overrides_locked(session["id"])
+        before = _overrides.get(sku, 0)
+        unclamped = base - shelf
+        target = max(0, min(base, unclamped + before - 1))
+        _overrides[sku] = target - unclamped
+        after = _overrides[sku]
+        _save_overrides_locked()
+        if session["state"] == CHECKOUT_PENDING and session["final_cart"] is not None:
+            frozen = session["final_cart"]
+            qty = {i["sku"]: int(i["qty"]) for i in frozen["items"]}
+            qty[sku] = max(0, qty.get(sku, 0) - 1)
+            refrozen = {**cart.priced_cart(session, qty, {"budget_usd": frozen["budget_usd"]},
+                                           agent_line=frozen.get("agent_line", "")),
+                        "warnings": frozen.get("warnings", []), "state": CHECKOUT_PENDING}
+            conn = db.connect()
+            try:
+                conn.execute("UPDATE store_sessions SET final_cart_json = ? WHERE id = ? AND state = ?",
+                             (json.dumps(refrozen), session["id"], CHECKOUT_PENDING))
+                conn.commit()
+            finally:
+                conn.close()
+    eventlog.log("override", source=source, session_id=session["id"], sku=sku, delta=-1,
+                 override_before=before, override_after=after, state=session["state"])
+    session = get_session(session["id"])
+    snapshot = cart_for(session)
+    _log_cart_if_changed(snapshot, source)
+    ws.broadcast_cart(session["member_id"], snapshot)
+    return snapshot
+
+
 def _open_session_locked(conn: sqlite3.Connection, member_id: str, state: str,
                          return_of: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Insert a new lock-holding session (call with _lock held). Baseline = the shelf right now.

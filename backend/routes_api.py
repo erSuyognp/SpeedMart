@@ -156,15 +156,15 @@ def quote_for(member_id: str) -> dict[str, Any]:
     from backend import intent, members
 
     session = own_active_session(member_id)
+    # A cart dispute (8.13) at the exit can empty the frozen cart: that is an empty exit too.
+    cart = store.compute_live_cart(session) if session["state"] == store.IN_STORE else store.cart_for(session)
+    if not cart["items"]:
+        closed = store.close(session["id"], reason="empty_cart")
+        payments.forget_instruction(session["id"])
+        eventlog.log("exit_empty", member_id=member_id, session_id=session["id"])
+        return {"cart": store.cart_for(closed), "instruction": None, "plan_check": None}
     if session["state"] == store.IN_STORE:
-        live = store.compute_live_cart(session)
-        if not live["items"]:
-            closed = store.close(session["id"], reason="empty_cart")
-            eventlog.log("exit_empty", member_id=member_id, session_id=session["id"])
-            return {"cart": store.cart_for(closed), "instruction": None, "plan_check": None}
         cart = store.freeze_cart()
-    else:
-        cart = store.cart_for(session)
     member = payments.ensure_card(members.get_member(member_id))  # Stripe backfill (e.g. the demo member)
     # F18: when the shopper made a plan this visit, the exit screen shows how the cart compares (null otherwise).
     plan = intent.current_plan(member_id)
@@ -215,6 +215,8 @@ def gate_exit_approve(request: Request):
     if session["state"] != store.CHECKOUT_PENDING:
         raise ApiError(409, "invalid_state", "Scan the exit code first to review your cart.")
     cart = store.cart_for(session)
+    if not cart["items"]:  # emptied by a cart dispute (8.13): the exit quote closes it, never a $0 charge
+        raise ApiError(409, "nothing_to_pay", "Your cart is empty. Scan the exit code again.")
     instruction = payments.instruction_for(session["id"], cart, member)
     if payments.over_scope(cart, instruction):
         limit = instruction["agent_token"]["scope"]["max_amount_usd"]
@@ -260,7 +262,7 @@ def receipt(session_id: str, request: Request):
     if session["state"] == store.PAID and session["member_id"] == viewer:
         session = store.close(session_id, reason="receipt_viewed")
     cart = session["final_cart"] or store.cart_for(session)
-    from backend import returns  # local: returns imports this module
+    from backend import disputes, returns  # local: they import this module
 
     refunds = [payments.refund_view(r, member.get("card_label"))
                for r in (payments.payment_refunds(paid["id"]) if paid else []) if r["status"] == payments.REFUND_SUCCEEDED]
@@ -283,6 +285,7 @@ def receipt(session_id: str, request: Request):
         "refunds": refunds,
         "refunded_usd": payments.cart_mod.to_usd(sum(payments.cart_mod.to_cents(r["amount_usd"]) for r in refunds)),
         "return": returns.eligibility(session),
+        "report": disputes.report_status(session),  # "Report a problem" (8.13)
     }
 
 

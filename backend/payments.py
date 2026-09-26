@@ -338,15 +338,17 @@ def mock_refund() -> dict[str, Any]:
 
 
 def stripe_refund(payment: dict[str, Any], amount_cents: int, return_session_id: str,
-                  attempt: int = 1) -> dict[str, Any] | None:
-    """A partial Refund on the original PaymentIntent. None means "not a card problem": fall back to mock."""
+                  attempt: int = 1, reason: str = "return") -> dict[str, Any] | None:
+    """A partial Refund on the original PaymentIntent. None means "not a card problem": fall back to mock.
+    A dispute refund (8.13) passes its dispute id as return_session_id: it keys the idempotency key."""
     s = _stripe()
+    ref_key = "return_session_id" if reason == "return" else "dispute_id"
     try:
         refund = s.Refund.create(
             payment_intent=payment["provider_ref"],
             amount=amount_cents,
-            metadata={"session_id": payment["store_session_id"], "return_session_id": return_session_id,
-                      "payment_id": payment["id"]},
+            metadata={"session_id": payment["store_session_id"], ref_key: return_session_id,
+                      "payment_id": payment["id"], "reason": reason},
             idempotency_key=f"speedmart-refund-{return_session_id}-{attempt}",
         )
     except s.CardError as e:
@@ -361,12 +363,14 @@ def stripe_refund(payment: dict[str, Any], amount_cents: int, return_session_id:
             "message": f"The refund did not complete (Stripe status: {refund.status})."}
 
 
-def refund(payment: dict[str, Any], amount_cents: int, return_session_id: str, attempt: int = 1) -> dict[str, Any]:
+def refund(payment: dict[str, Any], amount_cents: int, return_session_id: str, attempt: int = 1,
+           reason: str = "return") -> dict[str, Any]:
     """Refund part of an AUTHORIZED payment. Stripe test mode when the payment went through Stripe and Stripe is
-    on; mock otherwise, or on any Stripe failure that is not a card error. Never raises."""
+    on; mock otherwise, or on any Stripe failure that is not a card error. Never raises. reason "return" (a
+    RETURNING session) or "dispute" (8.13, return_session_id is then the dispute id)."""
     if payment["provider"] == "stripe_test" and payment.get("provider_ref") and stripe_active():
         try:
-            result = stripe_refund(payment, amount_cents, return_session_id, attempt)
+            result = stripe_refund(payment, amount_cents, return_session_id, attempt, reason)
         except Exception as e:  # belt and braces, like charge()
             eventlog.log("stripe_refund_fallback", return_session_id=return_session_id,
                          error=f"{type(e).__name__}: {e}")
@@ -384,11 +388,15 @@ def points_to_remove(amount_usd: float) -> int:
 def refund_view(row: dict[str, Any], card_label: str | None) -> dict[str, Any]:
     """Refund (8.11) from a refunds row."""
     items = json.loads(row["items_json"])
+    reason = row.get("reason") or "return"
     return {
         "refund_id": row["id"],
         "payment_id": row["payment_id"],
         "session_id": row["store_session_id"],
-        "return_session_id": row["return_session_id"],
+        # a dispute refund has no RETURNING session: the row stores the paid visit there (NOT NULL), shown as null
+        "return_session_id": row["return_session_id"] if reason == "return" else None,
+        "reason": reason,
+        "dispute_id": row.get("dispute_id"),
         "provider": row["provider"],
         "provider_ref": row["provider_ref"],
         "amount_usd": cart_mod.to_usd(row["amount_cents"]),
@@ -402,16 +410,18 @@ def refund_view(row: dict[str, Any], card_label: str | None) -> dict[str, Any]:
     }
 
 
-def record_refund(payment: dict[str, Any], return_session_id: str, member: dict[str, Any], amount_cents: int,
-                  items: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Any]:
-    """Save one refund to SQLite and data/payments.log.jsonl (type REFUND); take the points back."""
+def record_refund(payment: dict[str, Any], return_session_id: str | None, member: dict[str, Any], amount_cents: int,
+                  items: list[dict[str, Any]], result: dict[str, Any], reason: str = "return",
+                  dispute_id: str | None = None) -> dict[str, Any]:
+    """Save one refund to SQLite and data/payments.log.jsonl (type REFUND); take the points back.
+    A dispute refund (reason "dispute", 8.13) has no return session: the paid visit fills that column."""
     succeeded = result["status"] == REFUND_SUCCEEDED
     points = points_to_remove(cart_mod.to_usd(amount_cents)) if succeeded else 0
     row = {
         "id": db.new_id("ref"),
         "payment_id": payment["id"],
         "store_session_id": payment["store_session_id"],
-        "return_session_id": return_session_id,
+        "return_session_id": return_session_id or payment["store_session_id"],
         "member_id": member["id"],
         "amount_cents": amount_cents,
         "currency": payment["currency"],
@@ -421,6 +431,8 @@ def record_refund(payment: dict[str, Any], return_session_id: str, member: dict[
         "items_json": json.dumps(items),
         "points_removed": 0,
         "created_at": db.now_iso(),
+        "reason": reason,
+        "dispute_id": dispute_id,
     }
     conn = db.connect()
     try:
@@ -434,8 +446,8 @@ def record_refund(payment: dict[str, Any], return_session_id: str, member: dict[
         conn.close()
     view = refund_view(row, member.get("card_label"))
     _append_log({"type": "REFUND", **view, "member_id": member["id"], "message": result.get("message")})
-    eventlog.log("refund", session_id=payment["store_session_id"], return_session_id=return_session_id,
-                 member_id=member["id"], refund_id=view["refund_id"], payment_id=payment["id"],
+    eventlog.log("refund", session_id=payment["store_session_id"], return_session_id=view["return_session_id"],
+                 reason=reason, dispute_id=dispute_id, member_id=member["id"], refund_id=view["refund_id"], payment_id=payment["id"],
                  provider=view["provider"], provider_ref=view["provider_ref"], status=view["status"],
                  amount_usd=view["amount_usd"], items={i["sku"]: i["qty"] for i in items},
                  points_removed=view["points_removed"], message=result.get("message"))

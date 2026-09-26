@@ -5,6 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const ACTIVE = ["IN_STORE", "CHECKOUT_PENDING"];
   let gates = true;
+  let disputes = false; // F20: "Not mine?" on every cart row
   let current = null; // last CartSnapshot rendered
   let paidSession = null; // session id once PAID, so CLOSED afterwards still says "Paid"
   let shelf = null; // compact ShelfMap; glows while this shopper has a plan
@@ -74,6 +75,18 @@
         li.className = "cart-row";
         li.dataset.sku = item.sku;
         li.innerHTML = '<span class="name"></span><span class="qty"></span><span class="line"></span>';
+        if (disputes) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ghost dispute-btn";
+          btn.textContent = "Not mine?";
+          btn.addEventListener("click", () => Dispute.open({
+            sku: li.dataset.sku, name: li.querySelector(".name").textContent,
+            onChange: (res) => { if (res.cart) render(res.cart); },
+          }));
+          li.classList.add("disputable");
+          li.appendChild(btn);
+        }
       }
       li.querySelector(".name").textContent = item.name;
       li.querySelector(".qty").textContent = "× " + item.qty;
@@ -139,7 +152,11 @@
   }
 
   async function resync(res) {
-    try { gates = !!(await api.config()).features.gates; } catch (e) { /* keep the last known value */ }
+    try {
+      const cfg = await api.config();
+      gates = !!cfg.features.gates;
+      disputes = Dispute.enabled(cfg);
+    } catch (e) { /* keep the last known value */ }
     renderCurrent(res);
     loadPlan();
   }
@@ -196,6 +213,7 @@
     try {
       const cfg = await api.config();
       gates = !!cfg.features.gates;
+      disputes = Dispute.enabled(cfg);
       renderCurrent(await api.get("/api/store/current"));
     } catch (e) {
       renderOutside("Can't reach the store", e.message);

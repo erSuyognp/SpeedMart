@@ -64,6 +64,7 @@ Each feature has an ID and a flag. The human will decide which to keep. **Core**
 | F17 | Demo tools: admin panel, override keys, reset, demo account | — | Core | F1 | 1.5 h |
 | F18 | "Tell us what you need": intent planner (LLM proposes a plan, the store validates it against stock and budget) | `llm` | Optional (keyword planner always on) | F4, F6 | 2 h |
 | F19 | Voice store agent (ElevenLabs Agents): the shopper talks to the store; the agent acts only through client tools over the store's own endpoints. See `docs/voice.md` | `voice` | Optional (typed F18 flow is the fallback) | F18, F14 | 2 h |
+| F20 | Cart disputes with camera evidence: "Not mine?" rechecks the shelf, shows before/now bay photos, "Remove anyway" or a refund after paying (8.13) | `disputes` | Optional (default on) | F2, F4, Continue stage | 2 h |
 
 **Default config for the weekend:** all flags `true` except `yolo` (turn on Saturday if ahead) and `load_cells` (off).
 
@@ -141,6 +142,7 @@ SpeedMart/
 │   ├── serial_bridge.py         # ESP32 serial read/write thread
 │   ├── admin.py                 # admin routes: reset, overrides, logs, metrics
 │   ├── returns.py               # Continue stage: returns + camera-verified refunds (8.1, 8.11, 8.12)
+│   ├── disputes.py              # F20 cart disputes: camera recheck, evidence, remove anyway, cleanup (8.13)
 │   └── routes_api.py            # public API routes (catalog, session, gates, receipt, guardrails)
 │
 ├── vision/
@@ -151,6 +153,7 @@ SpeedMart/
 │   ├── motion.py                # per-bay motion detection (F3)
 │   ├── yolo_detect.py           # YOLO inference → per-bay SKU counts (F13)
 │   ├── fusion.py                # combine tags + YOLO into per-bay SKU counts
+│   ├── evidence.py              # F20: bay crops (never the full frame) for the shopping session
 │   └── overlay.py               # debug window drawing
 │
 ├── training/                    # F13 only
@@ -175,6 +178,7 @@ SpeedMart/
 │   │   ├── passkey.js           # wraps SimpleWebAuthnBrowser
 │   │   ├── ws.js                # WebSocket with auto-reconnect
 │   │   ├── guardrails.js        # "Your agent's permissions" card (8.10)
+│   │   ├── dispute.js           # F20 dispute sheet: recheck, before/now photos, keep / remove anyway
 │   │   └── pages/*.js           # one small script per page
 │   └── css/styles.css
 │
@@ -185,7 +189,7 @@ SpeedMart/
 │   └── reset_demo.sh            # calls admin reset
 │
 ├── models/                      # YOLO weights (gitignored)
-├── data/                        # SpeedMart.db, events.log.jsonl, payments.log.jsonl (gitignored)
+├── data/                        # SpeedMart.db, events.log.jsonl, payments.log.jsonl, evidence/<session_id>/ (gitignored)
 └── docs/
     ├── DEMO.md                  # 90-second script + judge Q&A
     └── DEVPOST.md               # write-up draft
@@ -288,6 +292,10 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 ROIs are `[x1, y1, x2, y2]` in pixels at the configured resolution. `calibrate.py` overwrites them.
 
+`features` also carries `voice` (F19) and `disputes` (F20, cart disputes with camera evidence, default `true`).
+With `disputes` false the worker saves no photos, the dispute routes answer 404 `disputes_off` and the phone
+shows no dispute buttons; nothing else changes.
+
 ### 5.3 `catalog.json`
 
 Every **physical unit** has its own ArUco tag ID. Multiple units can share a SKU.
@@ -382,12 +390,46 @@ CREATE TABLE IF NOT EXISTS refunds (           -- Continue stage (8.11)
   status TEXT NOT NULL,                        -- SUCCEEDED | FAILED
   items_json TEXT NOT NULL,                    -- [{"sku","name","qty"}]
   points_removed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  reason TEXT,                                 -- "return" (NULL on older rows) | "dispute" (8.13)
+  dispute_id TEXT                              -- dsp_xxx when reason is "dispute"
+);
+
+CREATE TABLE IF NOT EXISTS evidence (          -- F20: one row per bay crop the vision worker saved
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_session_id TEXT NOT NULL,
+  bay INTEGER NOT NULL,
+  kind TEXT NOT NULL,                          -- "baseline" (session start) | "change" (stable contents changed)
+  file TEXT NOT NULL,                          -- name inside data/evidence/<session_id>/
+  captured_at TEXT NOT NULL,
+  width INTEGER NOT NULL,                      -- crop size in pixels (the bay ROI)
+  height INTEGER NOT NULL,
+  units_json TEXT NOT NULL,                    -- unit tag ids in the bay at that moment
+  tags_json TEXT NOT NULL,                     -- {"<tag_id>": [x, y, w, h]} in crop pixels
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS disputes (          -- F20 (8.13)
+  id TEXT PRIMARY KEY,                         -- dsp_xxx
+  store_session_id TEXT NOT NULL REFERENCES store_sessions(id),
+  member_id TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  stage TEXT NOT NULL,                         -- shopping | checkout | after_purchase
+  outcome TEXT NOT NULL,                       -- resolved_camera | needs_review | kept | removed | refunded
+  status TEXT NOT NULL,                        -- open | resolved | withdrawn
+  amount_cents INTEGER,                        -- taken off the cart, or refunded
+  refund_id TEXT,
+  evidence_json TEXT,                          -- bay, missing tag, outline, before/now file + path
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
 );
 ```
 
-`init_db()` adds the `store_sessions` columns after `ended_at` to an older `data/speedmart.db` with
-`ALTER TABLE ... ADD COLUMN`, so no reset is needed.
+A dispute refund has no RETURNING session: its `refunds.return_session_id` holds the paid visit (the column is
+NOT NULL) and the Refund (8.11) shows `return_session_id: null`.
+
+`init_db()` adds the `store_sessions` columns after `ended_at` and the `refunds` columns `reason`,
+`dispute_id` to an older `data/speedmart.db` with `ALTER TABLE ... ADD COLUMN`, so no reset is needed.
 
 Seed a **demo member** on startup if none exists: name "Demo Shopper", `is_demo=1`, budget 20, linked test card if Stripe is on.
 
@@ -497,14 +539,18 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | POST | `/api/gate/enter` | `{"gate_token":str}` | `{"session":{...},"cart":CartSnapshot}` | 403 bad token, 401 not verified, 409 occupied, 409 `returning` (your own return is open) |
 | GET | `/api/store/current` | — | `{"session":...,"cart":CartSnapshot}` or `{"session":null}` | |
 | POST | `/api/gate/exit/quote` | `{"gate_token":str}` | `{"cart":CartSnapshot,"instruction":Instruction,"plan_check":PlanCheck\|null}` | Freezes cart, state → CHECKOUT_PENDING. `plan_check` (8.9) is `null` unless the shopper made an F18 plan this visit. `POST /api/dev/checkout`, the gates-off fallback, returns the same three keys |
-| POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on |
+| POST | `/api/gate/exit/approve` | — | `{"payment":Payment}` | Needs fresh verification if F7 on. 409 `nothing_to_pay` if a dispute emptied the frozen cart (the next quote closes it) |
 | POST | `/api/gate/exit/cancel` | — | `{"ok":true}` | Back to IN_STORE |
-| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points, `in_and_out_s`, `approvals`, `refunds: [Refund]`, `refunded_usd`, `return: {eligible, reason, message, deadline}` | Only the owner. `in_and_out_s` = entered → approved; `approvals` = payment attempts, each one Face ID (or Confirm) tap |
+| GET | `/api/receipt/{session_id}` | — | receipt with items, payment, points, `in_and_out_s`, `approvals`, `refunds: [Refund]`, `refunded_usd`, `return: {eligible, reason, message, deadline}`, `report: {eligible, reason, message, deadline, items:[{sku,name,qty}]}` | Only the owner. `in_and_out_s` = entered → approved; `approvals` = payment attempts, each one Face ID (or Confirm) tap. `report` = F20 "Report a problem" (8.13): the unrefunded items, for 30 min after paying |
 | GET | `/api/guardrails` | — | `Guardrails` (8.10) | Logged-in member. 401 otherwise |
 | POST | `/api/returns/start` | `{"session_id":str}` (the paid visit) | `{"return":ReturnSnapshot}` | Needs fresh verification if F7 on (7.2). 404 not yours, 409 `not_returnable` / `return_window_closed` (30 min after payment) / `nothing_to_return` / `store_occupied` (with `occupant_first_name`), 503 `vision_unavailable`. Refusals that need no Face ID come first. The same visit tapped twice returns the open return |
 | GET | `/api/returns/current` | — | `{"return":ReturnSnapshot\|null}` | Your open return, if any |
 | POST | `/api/returns/confirm` | — | `{"refund":Refund,"agent_line":str}`, or `{"refund":Refund,"message":str}` when the refund FAILED | Refunds exactly the detected items + tax, then RETURNING → CLOSED. 409 `no_active_return` / `nothing_returned` / `return_expired` |
 | POST | `/api/returns/cancel` | — | `{"ok":true}` | RETURNING → CLOSED, no refund |
+| POST | `/api/disputes` | `{"sku":str,"session_id"?:str}` | `{"dispute":Dispute,"cart":CartSnapshot\|null}` (+ `refund` after paying) | F20 (8.13). No `session_id`: your cart (live, or frozen at the exit). `session_id` of a paid visit: the receipt. 401, 400 `unknown_sku`, 404 `disputes_off` / not yours, 409 `no_active_session` / `not_in_cart` / `not_disputable` / `dispute_window_closed` / `nothing_to_refund` |
+| POST | `/api/disputes/{id}/keep` | — | `{"dispute":Dispute,"cart":...}` | "Found it, keep it": outcome `kept`, status `withdrawn`. 409 `dispute_closed` |
+| POST | `/api/disputes/{id}/remove` | — | `{"dispute":Dispute,"cart":...}` (+ `refund` after paying; `message` when the refund FAILED) | "Remove anyway": signed override −1 (source `dispute`), or after paying a refund (reason `dispute`). 409 `dispute_limit` "Please ask a staff member." after 2 per visit, `dispute_closed`, `not_in_cart` |
+| GET | `/api/disputes/evidence/{session_id}/{file}` | — | `image/jpeg` | F20. Only the visit's shopper (401 signed out, 404 anyone else or an unknown file) |
 | WS | `/ws` | — | stream of messages (8.4) | Identifies member by cookie |
 | POST | `/api/intent` | `{"text":str}` (≤ 300 chars) | `Plan` (8.8) | F18. Logged-in member. 401 `not_logged_in`, 400 `empty_text` / `text_too_long`, 404 `unknown_member` |
 | GET | `/api/intent/current` | — | `Plan` (8.8) or `null` | F18. 401 if not logged in |
@@ -529,13 +575,29 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 
 `units` = unit tag IDs whose center lies in that bay's ROI. `loose_units` = tags seen outside every ROI (item in a hand). `yolo_counts` present only if F13 on.
 
+Reply: `{"ok":true,"changed":bool,"session_id":str|null}`. `session_id` (F20) is the session in `IN_STORE` or
+`CHECKOUT_PENDING`, `null` when nobody is shopping or `disputes` is off: the worker saves evidence crops for it.
+
+`POST /internal/evidence` (F20, same `X-Internal-Token`), one per saved crop:
+
+```json
+{"session_id": "ses_Ab3xY9", "bay": 0, "kind": "baseline", "file": "bay0_20260926T021403123Z_baseline.jpg",
+ "ts": 1727222400123, "width": 220, "height": 420, "units": [0, 1], "tags": {"0": [20, 40, 60, 60]}}
+```
+
+The file is already at `data/evidence/<session_id>/<file>`: a JPEG crop of that bay's ROI, never the full frame.
+`kind` is `baseline` (the bay's first stable picture after the session starts) or `change` (its stable contents
+changed). `tags` are unit tag bounding boxes in crop pixels. 200 `{"ok":true}`; 401 bad token; 404
+`disputes_off` / `file_missing`; 409 `session_not_active` (the worker then deletes the file); 422 bad name or bay.
+
 ### 8.3 Admin (team only)
 
 Protected by admin cookie set via `POST /admin/login {"password":...}`.
 
 | Method | Path | Body | Effect |
 |---|---|---|---|
-| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, `return` (ReturnSnapshot while RETURNING, else null), `metrics` (below), last 50 events, serial status |
+| GET | `/admin/state` | — | Full state: lock, session, baseline, shelf, cart, `return` (ReturnSnapshot while RETURNING, else null), `metrics` (below), `disputes` (F20: newest 20 Disputes with `member_name`, photos through `/admin/evidence`), last 50 events, serial status |
+| GET | `/admin/evidence/{session_id}/{file}` | — | The same evidence crops, for the admin disputes card (F20) |
 | POST | `/admin/reset` | — | Cancel active session, clear overrides, clear lock, LEDs idle |
 | POST | `/admin/force-exit` | — | Cancel active session only |
 | POST | `/admin/override` | `{"sku":"elx","delta":1}` | Adjust cart qty for that SKU by delta (manual fallback). Logged as `source:"override"` |
@@ -730,6 +792,11 @@ payment → mock provider (`re_mock_` + hex, SUCCEEDED). Every refund goes to SQ
 `floor(amount_usd)` points, never below zero. The agent line on success is fixed wording, not LLM phrased:
 "Refund of $8.64 is on its way to your Visa ending 4242."
 
+F20 adds `"reason": "return" | "dispute"` and `"dispute_id"` to the Refund. A dispute refund (8.13) goes through
+the same `refund()` / `record_refund()` path with `return_session_id: null`; its Stripe idempotency key and
+metadata use the dispute id. It is logged as `refund` with `reason:"dispute"`, and the gate screen does not show
+REFUND for it (the shopper is not at the gate, and someone else may be shopping).
+
 ### 8.12 ReturnSnapshot
 
 ```json
@@ -751,6 +818,65 @@ payment → mock provider (`re_mock_` + hex, SUCCEEDED). Every refund goes to SQ
 
 `returnable` = bought in that visit and not yet refunded; `items` = detected returns (7.1 Returning), priced at
 what was paid; `total_usd` is the refund `returns/confirm` will make.
+
+### 8.13 Dispute (F20, `backend/disputes.py`)
+
+"Not mine?" on a cart row, a tap on an item at the exit, or "Report a problem" on the receipt disputes **one
+unit** of a SKU. The store rechecks with the camera first:
+
+```
+shown  = qty in the cart the shopper sees (the frozen cart at the exit), or what is still unrefunded after paying
+camera = clamp(baseline[sku] - shelf_now[sku], 0, baseline[sku])     # latest stable shelf, any bay, no overrides
+camera < shown  -> "resolved_camera": the unit is back on the shelf. Shopping: one unit off the cart at once
+                   ("Our mistake, removed from your cart."). After paying: one unit refunded at once.
+otherwise       -> "needs_review": the baseline crop and the latest crop of the SKU's home bay
+```
+
+The camera recheck needs a snapshot younger than 2 s; after paying it also needs an empty store and no session
+started since the payment (otherwise the shelf may have changed for other reasons), else `needs_review`.
+Removing a unit is a signed override of −1 (source `dispute`, clamped like 8.3); at the exit it also takes the
+unit out of the frozen cart, so the charge and a later "Keep shopping" agree. After paying it is a refund of that
+unit plus its tax through the 8.11 path (`returns.refund_amount`, reason `dispute`), within 30 minutes of the
+payment and never more than is left unrefunded, so a return can never refund it again. "Remove anyway" (outcome
+`removed` or `refunded`) is allowed at most **2 times per visit**; after that `409 dispute_limit` "Please ask a
+staff member." Every step is logged: `dispute_opened`, `dispute_kept`, `dispute_removed`, `dispute_refunded`,
+`dispute_refund_failed`, `dispute_limit`, `evidence_saved`, `evidence_deleted`.
+
+```json
+{
+  "dispute_id": "dsp_Q1w2E3",
+  "session_id": "ses_Ab3xY9",
+  "sku": "elx",
+  "name": "Electrolyte tabs",
+  "stage": "shopping",
+  "outcome": "needs_review",
+  "status": "open",
+  "message": "The shelf camera still sees it gone. Compare the photos.",
+  "evidence": {
+    "bay": 0, "card": 1, "tag_id": 0,
+    "before": {"url": "/api/disputes/evidence/ses_Ab3xY9/bay0_20260926T021403123Z_baseline.jpg",
+               "captured_at": "2026-09-26T02:14:03.123Z", "outline": {"x": 0.09, "y": 0.1, "w": 0.27, "h": 0.14}},
+    "now": {"url": "...", "captured_at": "...", "outline": {"x": 0.09, "y": 0.1, "w": 0.27, "h": 0.14}},
+    "privacy": "These photos show only the shelf and are deleted after your visit."
+  },
+  "remove_anyway_left": 2,
+  "amount_usd": null,
+  "refund_id": null,
+  "created_at": "2026-09-26T02:16:40Z",
+  "resolved_at": null
+}
+```
+
+`tag_id` is the missing unit (in the baseline crop, not in the latest one); `outline` is its box from the newest
+crop that still saw it, as fractions of the crop. A photo is `null` when none was saved or it was deleted.
+`message` by outcome: `resolved_camera` "Our mistake, removed from your cart." (after paying: "Our mistake. Refund
+of $8.64 is on its way to your Visa ending 4242."), `kept` "Thanks. It stays in your cart." / "Thanks. Nothing was
+refunded.", `removed` "Removed. Our team will review the shelf photos.", `refunded` "Refunded $8.64. Our team will
+review the shelf photos."
+
+**Evidence lifetime:** a visit's crops are deleted (checked every 30 s) once the visit is over: at once when it is
+cancelled or leaves with an empty cart, and for a paid visit when its 30 minute "Report a problem" window closes.
+A visit with an `open` or `resolved` dispute keeps them 24 hours after its last dispute instead.
 
 ---
 
@@ -1162,6 +1288,10 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - Warnings strip for misplaced items.
 - Footer hint: "When you're done, scan the EXIT code." (gates on) or button "Checkout" (gates off).
 - Permissions card (8.10), collapsed, tap to expand.
+- F20: every cart row has a "Not mine?" button that opens the dispute sheet (8.13): "Checking the shelf camera…",
+  then "Our mistake, removed from your cart." or the two photos side by side, "When you walked in" / "Now", the
+  missing unit outlined, the line "These photos show only the shelf and are deleted after your visit.", and
+  "Found it, keep it" / "Remove anyway" ("Please ask a staff member." once the limit is used).
 
 ### 11.4 `exit.html?g=…` (QR 3 · EXIT)
 - Itemized receipt preview and total.
@@ -1170,6 +1300,8 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
 - Button "Approve $X.XX with Face ID". Secondary "Keep shopping" (cancel).
 - Over scope: "This is over your $20 limit. Put something back to continue."
 - Declined: red state + retry.
+- F20: "Something wrong? Tap an item to dispute it" above the items; a tap opens the same dispute sheet, then the
+  quote is fetched again (a frozen cart emptied by a dispute closes with "Nothing to pay").
 
 ### 11.5 `receipt.html`
 - Big green check, "Paid $8.64", card label, auth code, time, items, "+8 points · 23 total".
@@ -1180,11 +1312,15 @@ Global rules: mobile first (design for 390 px wide), no framework, one styleshee
   purchase" rows, refund totals, time left, "Confirm refund $X" and "Cancel return". On success the agent line
   "Refund of $X is on its way to your Visa ending 4242." Store occupied → "Someone is shopping right now. Try
   again in a minute."
+- F20: "Something wrong?" card with "Report a problem" (30 minutes after paying): pick an item, then the same
+  dispute sheet; "Remove anyway" refunds it ("Refunded $X. Our team will review the shelf photos.") and the refund
+  line says "(reported problem)".
 - Toggle "Show payment record" → payment JSON.
 - Button "Done" (clears to index).
 
 ### 11.6 `admin.html` (team only)
-- Password gate. Panels: store status and lock, results today (sessions, average time in store, average exit scan to approval, refunds), current session and baseline (a return in progress shows its detected items and refund), live shelf per bay (stable / motion), cart, overrides (+/− per SKU), reset, force-exit, demo-login, force-decline toggle, LED test buttons, health badges (vision age, serial, Stripe mode, LLM on/off), event log tail.
+- Password gate. Panels: store status and lock, results today (sessions, average time in store, average exit scan to approval, refunds), current session and baseline (a return in progress shows its detected items and refund), live shelf per bay (stable / motion), cart, overrides (+/− per SKU), reset, force-exit, demo-login, force-decline toggle, LED test buttons, health badges (vision age, serial, Stripe mode, LLM on/off), event log tail, and (F20) a disputes card: each
+  dispute with its two shelf photos, outcome and amount.
 
 ---
 
@@ -1362,6 +1498,7 @@ If vision misbehaves: a teammate uses the admin override, and if a judge asks, s
 | Two shoppers? | Store lock: one shopper inside at a time. Multi-shopper would need per-person association, which is future work. |
 | What does the AI actually do? | A deterministic policy decides (budget, complements, misplaced items) and the LLM phrases it for the shopper. If the LLM is down, templates keep it working. |
 | How accurate is detection? | Tags give identity; motion freeze prevents hand flicker; (if on) YOLO covers occluded tags. Show the 10/10 test. |
+| What if the cart is wrong? | Tap "Not mine?". The store rechecks the shelf: if the camera sees it back, it's removed at once. If not, you see the shelf photos from when you walked in and now, and can remove it anyway (twice per visit, then staff). After paying, "Report a problem" refunds it the same way. Photos are bay crops only and are deleted after the visit. |
 
 ---
 
@@ -1398,6 +1535,7 @@ If vision misbehaves: a teammate uses the admin override, and if a judge asks, s
 | F14 tunnel | `https_tunnel: false` | LAN http only (requires F7 off) | ngrok setup |
 | F15 loyalty | `loyalty: false` | No points on receipt | points code |
 | F16 load cells | `load_cells: false` | Default | HX711 code |
+| F20 disputes | `disputes: false` | No "Not mine?" / "Report a problem", no evidence crops saved | `backend/disputes.py`, `vision/evidence.py`, `web/js/dispute.js` |
 
 ---
 

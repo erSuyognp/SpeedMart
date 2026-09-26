@@ -100,6 +100,8 @@ def metrics(now: datetime | None = None) -> dict:
 
 @router.get("/admin/state")
 def state():
+    from backend import disputes  # local: disputes imports this module
+
     session = store.current_session()
     member = None
     if session is not None:
@@ -119,6 +121,7 @@ def state():
         "shelf": shelf_state.state(),
         "cart": store.cart_for(session) if session else None,
         "return": returns.snapshot(session) if session and session["state"] == store.RETURNING else None,
+        "disputes": disputes.recent(),  # cart disputes (8.13), newest first, photos via /admin/evidence
         "metrics": metrics(),
         "health": _health(),
         "force_decline": force_decline,

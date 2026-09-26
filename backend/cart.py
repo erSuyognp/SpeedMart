@@ -35,7 +35,12 @@ def compute_cart(session: dict[str, Any], shelf_counts: dict[str, int], override
                  agent_line: str = "") -> dict[str, Any]:
     """Build a CartSnapshot (8.5). Computed from scratch every call, never accumulated."""
     qty = cart_quantities(session["baseline"], shelf_counts, overrides)
+    return priced_cart(session, qty, member, misplaced, agent_line)
 
+
+def priced_cart(session: dict[str, Any], qty: dict[str, int], member: dict[str, Any],
+                misplaced: list[dict[str, Any]] | None = None, agent_line: str = "") -> dict[str, Any]:
+    """CartSnapshot (8.5) for these quantities per SKU: prices, tax and totals in integer cents."""
     items = []
     subtotal = 0
     for sku, s in settings.skus.items():  # catalog order

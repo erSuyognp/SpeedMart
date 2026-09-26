@@ -48,6 +48,15 @@
       <p id="return-error" class="strip bad" role="alert" hidden></p>
     </section>
 
+    <!-- Cart disputes (8.13): "Report a problem" within 30 minutes of paying; the shelf photos decide. -->
+    <section id="report-offer" class="card stack" hidden>
+      <h2>Something wrong?</h2>
+      <p id="report-note" class="muted small" style="margin:0"></p>
+      <button id="report-btn" class="secondary block" type="button">Report a problem</button>
+      <p id="report-pick" class="muted small" style="margin:0" hidden>Tap the item that's wrong.</p>
+      <ul id="report-items" class="cart-list" hidden></ul>
+    </section>
+
     <div id="return-panel" class="stack" hidden>
       <section class="card notice">
         <div class="big-icon brand" aria-hidden="true">
@@ -99,6 +108,7 @@
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
   <script src="/js/passkey.js"></script>
+  <script src="/js/dispute.js"></script>
   <script src="/js/pages/receipt.js"></script>
 </body>
 </html>

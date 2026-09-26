@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import (admin, auth_passkeys, db, eventlog, intent, kiosk, members, returns, routes_api,
+from backend import (admin, auth_passkeys, db, disputes, eventlog, intent, kiosk, members, returns, routes_api,
                      serial_bridge, shelf_state, store, voice, ws)
 from backend.settings import WEB_DIR, settings
 
@@ -22,12 +22,14 @@ async def lifespan(app: FastAPI):
     ws.manager.bind(asyncio.get_running_loop())
     eventlog.log("startup", features=settings.features.as_dict())
     timeout_task = asyncio.create_task(store.timeout_task())
+    cleanup_task = asyncio.create_task(disputes.cleanup_task())  # F20: evidence goes when the visit is over
     serial_bridge.start()  # no-op unless hardware_leds is on
     yield
     serial_bridge.stop()
-    timeout_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await timeout_task
+    for task in (timeout_task, cleanup_task):
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     eventlog.log("shutdown")
     ws.manager.bind(None)
 
@@ -84,10 +86,12 @@ if SESSION_HTTPS_ONLY:  # added last, so it wraps SessionMiddleware and sees the
 app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
 app.include_router(returns.router)
+app.include_router(disputes.router)
 app.include_router(members.router)
 app.include_router(auth_passkeys.router)
 app.include_router(admin.public)
 app.include_router(admin.router)
+app.include_router(disputes.admin_router)
 app.include_router(intent.router)
 app.include_router(kiosk.router)
 app.include_router(voice.router)

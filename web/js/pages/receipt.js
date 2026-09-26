@@ -64,7 +64,8 @@
       const strip = document.createElement("section");
       strip.className = "strip ok";
       const main = document.createElement("p");
-      main.textContent = "Refunded " + api.money(f.amount_usd) + " for " + f.items_text;
+      main.textContent = "Refunded " + api.money(f.amount_usd) + " for " + f.items_text +
+        (f.reason === "dispute" ? " (reported problem)" : "");
       const sub = document.createElement("p");
       sub.className = "small";
       const provider = f.provider === "stripe_test" ? "Stripe test mode" : "sandbox mock";
@@ -86,6 +87,29 @@
       ? "Put it back on the shelf and get a refund. Returns close at " + clock(ret.deadline) + "."
       : ret.message;
     if (ret.eligible && passkeysOn()) passkey.prefetch("login", "return");
+  }
+
+  // "Report a problem" (8.13): pick an item from this visit, then the same dispute sheet as the cart.
+  function renderReport(r) {
+    const rep = r.report || {};
+    const show = !!(r.paid && !returning && Dispute.enabled(cfg) && rep.eligible);
+    $("report-offer").hidden = !show;
+    if (!show) return;
+    $("report-note").textContent = "Charged for something you didn't take? Report it by " + clock(rep.deadline) + ".";
+    const list = $("report-items");
+    list.replaceChildren();
+    rep.items.forEach((item) => {
+      const li = row(item.name, "× " + item.qty, "");
+      li.classList.add("tappable");
+      li.setAttribute("role", "button");
+      li.tabIndex = 0;
+      li.setAttribute("aria-label", "Report " + item.name);
+      const openDispute = () => Dispute.open({ sku: item.sku, name: item.name, sessionId,
+        onChange: () => loadReceipt().catch((e) => api.toast(e.message)) });
+      li.addEventListener("click", openDispute);
+      li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDispute(); } });
+      list.appendChild(li);
+    });
   }
 
   function render(r) {
@@ -118,6 +142,7 @@
     $("record").hidden = !p;
     if (p) $("record-json").textContent = JSON.stringify({ payment: p, refunds: r.refunds || [] }, null, 2);
     renderOffer(r);
+    renderReport(r);
   }
 
   async function loadReceipt() {
@@ -132,7 +157,7 @@
     $("cancel-return").hidden = !on;
     $("done").hidden = on;
     $("paid-card").hidden = on; // the instruction goes to the top of the screen
-    ["items-card", "record"].forEach((id) => { if (on) $(id).hidden = true; });
+    ["items-card", "record", "report-offer"].forEach((id) => { if (on) $(id).hidden = true; });
     if (on) $("return-offer").hidden = true;
     clearInterval(timer);
     if (on) timer = setInterval(tick, 1000);
@@ -248,6 +273,11 @@
     $("return-btn").addEventListener("click", onReturn);
     $("confirm-refund").addEventListener("click", onConfirm);
     $("cancel-return").addEventListener("click", onCancel);
+    $("report-btn").addEventListener("click", () => {
+      $("report-btn").hidden = true;
+      $("report-pick").hidden = false;
+      $("report-items").hidden = false;
+    });
     try {
       cfg = await api.config();
       if (passkeysOn()) passkey.load();

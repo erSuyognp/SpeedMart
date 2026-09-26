@@ -108,6 +108,7 @@
     renderCart(s.cart, s.return);
     renderOverrides(s);
     renderMetrics(s.metrics);
+    renderDisputes(s.disputes || []);
     renderShelf(s.shelf);
     events = s.events.slice();
     renderLog();
@@ -132,6 +133,65 @@
         tile.append(el("span", "k", k), el("span", "v", v));
         box.append(tile);
       });
+  }
+
+  // Cart disputes (8.13): each with its shelf photos (admin route), outcome and amount.
+  const OUTCOME_KIND = { resolved_camera: "ok", needs_review: "warn", kept: "", removed: "bad", refunded: "bad" };
+
+  function evidencePhoto(p, caption) {
+    const fig = el("figure", "evidence");
+    const frame = el("div", "evidence-frame" + (p ? "" : " empty"));
+    if (p) {
+      const img = el("img");
+      img.src = p.url;
+      img.alt = caption;
+      img.loading = "lazy";
+      frame.append(img);
+      if (p.outline) {
+        const box = el("span", "evidence-outline");
+        Object.assign(box.style, { left: p.outline.x * 100 + "%", top: p.outline.y * 100 + "%",
+          width: p.outline.w * 100 + "%", height: p.outline.h * 100 + "%" });
+        frame.append(box);
+      }
+    } else {
+      frame.append(el("span", "muted small", "No photo"));
+    }
+    fig.append(frame, el("figcaption", null, caption));
+    return fig;
+  }
+
+  let disputesKey = null;
+
+  function renderDisputes(list) {
+    const key = JSON.stringify(list.map((d) => [d.dispute_id, d.outcome, d.amount_usd, !!d.evidence && !!d.evidence.now]));
+    if (key === disputesKey) return; // the 5 s refresh must not reload every photo
+    disputesKey = key;
+    const box = $("disputes");
+    box.replaceChildren();
+    if (!list.length) {
+      box.append(el("p", "empty-cart", "No disputes yet."));
+      return;
+    }
+    list.forEach((d) => {
+      const entry = el("div", "dispute-entry");
+      const head = el("div", "head");
+      const who = el("div");
+      who.append(el("div", null, d.name + " · " + (d.member_name || d.session_id)));
+      who.append(el("div", "muted small mono", d.stage.replace("_", " ") + " · " + d.session_id + " · " + ago(d.created_at)));
+      const kind = OUTCOME_KIND[d.outcome];
+      const pill = el("span", "pill" + (kind ? " " + kind : ""), d.outcome.replace("_", " ") +
+        (d.amount_usd !== null && d.amount_usd !== undefined ? " · " + api.money(d.amount_usd) : ""));
+      head.append(who, pill);
+      entry.append(head);
+      const ev = d.evidence;
+      if (ev) {
+        const grid = el("div", "evidence-grid");
+        grid.append(evidencePhoto(ev.before, "Walked in"), evidencePhoto(ev.now, "Latest"));
+        entry.append(grid);
+      }
+      if (d.refund_id) entry.append(el("p", "muted small mono", "Refund " + d.refund_id));
+      box.append(entry);
+    });
   }
 
   // A return in progress: what the camera has seen come back so far (items capped at the purchase).

@@ -179,7 +179,10 @@ async def post_shelf(request: Request):
     except (ValueError, ValidationError) as e:
         return _error(422, "bad_snapshot", f"Snapshot body is invalid: {e}")
     changed = apply_snapshot(snap)
+    from backend import store  # local import: store imports this module
     if changed:
-        from backend import store  # local import: store imports this module
         store.on_shelf_change()
-    return {"ok": True, "changed": changed}
+    # Cart disputes (8.13): the worker saves shelf crops for the shopping session named here, none when null.
+    session = store.current_session() if settings.features.disputes else None
+    evidence_for = session["id"] if session and session["state"] in store.SHOPPING_STATES else None
+    return {"ok": True, "changed": changed, "session_id": evidence_for}

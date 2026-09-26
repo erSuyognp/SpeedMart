@@ -11,7 +11,8 @@
     "https_tunnel": true,
     "loyalty": true,
     "load_cells": false,
-    "voice": true
+    "voice": true,
+    "disputes": true
   },
   "store": {
     "name": "SpeedMart #01",

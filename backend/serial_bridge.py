@@ -431,6 +431,9 @@ class DisplayDirector:
 
     def _on_refund(self, e: dict[str, Any]) -> None:
         # "refund" carries status and amount_usd (payments.py record_refund). A failed refund changes nothing.
+        # A dispute refund (8.13) is made from the receipt, away from the gate: it never covers someone's TOTAL.
+        if e.get("reason") == "dispute":
+            return
         if str(e.get("status") or "").upper() == "SUCCEEDED":
             self._show("REFUND", _money(e.get("amount_usd")) or "")
 

@@ -1431,6 +1431,57 @@ body:has(> .action-bar) .site-footer { padding-bottom: var(--space-4); }
   100% { transform: scale(1); }
 }
 
+/* ==========================================================================
+   CART DISPUTES (8.13): "Not mine?" on cart rows, tappable exit rows, the evidence sheet (web/js/dispute.js)
+   ========================================================================== */
+
+.cart-row.disputable { grid-template-areas: "name qty line" "act act act"; row-gap: 0; }
+.cart-row .dispute-btn {
+  grid-area: act;
+  justify-self: start;
+  min-height: 48px;
+  padding: 0 2px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.cart-row.tappable { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.cart-row.tappable:active { background: var(--surface-2); }
+.cart-row.tappable .name::after { content: " ›"; color: var(--text-3); }
+.dispute-hint { margin: 0 0 var(--space-2); }
+
+.dispute-item { margin: 0; font-weight: 600; }
+.dispute-checking { display: flex; align-items: center; gap: var(--space-3); min-height: 64px; }
+.evidence-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.evidence { margin: 0; min-width: 0; }
+.evidence-frame {
+  position: relative;
+  width: fit-content;  /* hugs the photo, so the outline's percentages are the photo's */
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.evidence-frame img { display: block; width: auto; max-width: 100%; height: auto; max-height: 30vh; max-height: 30dvh; }
+.evidence-frame.empty { display: grid; place-items: center; width: 100%; height: 30vh; height: 30dvh; }
+.evidence-outline {
+  position: absolute;
+  border: 3px solid var(--red);
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75);
+  pointer-events: none;
+}
+.evidence figcaption { margin-top: 6px; font-size: var(--text-sm); font-weight: 700; text-align: center; }
+.privacy-note { margin: 0; color: var(--text-2); }
+
+/* Admin disputes card */
+.dispute-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.dispute-entry { border-bottom: 1px solid var(--line); padding-bottom: var(--space-3); }
+.dispute-entry:last-child { border-bottom: 0; padding-bottom: 0; }
+.dispute-entry .head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.dispute-entry .evidence-grid { margin-top: var(--space-2); max-width: 360px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

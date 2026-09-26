@@ -76,13 +76,45 @@ CREATE TABLE IF NOT EXISTS refunds (
   status TEXT NOT NULL,
   items_json TEXT NOT NULL,
   points_removed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  reason TEXT,
+  dispute_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_session_id TEXT NOT NULL,
+  bay INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  file TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  units_json TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS disputes (
+  id TEXT PRIMARY KEY,
+  store_session_id TEXT NOT NULL REFERENCES store_sessions(id),
+  member_id TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  status TEXT NOT NULL,
+  amount_cents INTEGER,
+  refund_id TEXT,
+  evidence_json TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
 );
 """
 
 # Columns added after the first release. init_db() adds any that an older data/speedmart.db is missing.
 ADDED_COLUMNS = {
     "store_sessions": ("return_of TEXT", "first_pick_at TEXT", "quoted_at TEXT", "approved_at TEXT"),
+    "refunds": ("reason TEXT", "dispute_id TEXT"),  # cart disputes (8.13): reason "return" | "dispute"
 }
 
 

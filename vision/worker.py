@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 
 from vision.aruco_detect import TagDetector, assign_to_bays
 from vision.camera import CameraError, open_camera, save_section_settings
+from vision.evidence import EvidenceRecorder, evidence_url
 from vision.motion import MotionDetector
 from vision.overlay import draw_overlay
 from vision.yolo_detect import YoloDetector, load_yolo
@@ -275,8 +276,9 @@ class SnapshotPoster:
     """Posts snapshots from a daemon thread. submit() never blocks: the queue holds one snapshot and a
     newer one replaces whatever has not been sent yet."""
 
-    def __init__(self, url: str, token: str, timeout: float = HTTP_TIMEOUT_S):
+    def __init__(self, url: str, token: str, timeout: float = HTTP_TIMEOUT_S, on_session=None):
         self.url = url
+        self._on_session = on_session  # gets the reply's "session_id" (8.2) after every successful post
         self._headers = {"X-Internal-Token": token}
         self._timeout = timeout
         self._queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
@@ -339,6 +341,11 @@ class SnapshotPoster:
                     self._record(False, "401: INTERNAL_TOKEN in .env does not match the backend's")
                 elif resp.is_success:
                     self._record(True)
+                    if self._on_session is not None:
+                        try:
+                            self._on_session(resp.json().get("session_id"))
+                        except ValueError:
+                            self._on_session(None)
                 else:
                     self._record(False, f"HTTP {resp.status_code}: {resp.text[:200]}")
 
@@ -398,7 +405,10 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
         print(f"Camera error: {exc}", file=sys.stderr)
         return 1
 
-    poster = SnapshotPoster(url, token)
+    # F20 cart disputes: bay crops for the shopping session the backend names in each reply (vision/evidence.py).
+    evidence = (EvidenceRecorder(bays, ROOT / "data" / "evidence", evidence_url(url), token)
+                if config.get("features", {}).get("disputes", False) else None)
+    poster = SnapshotPoster(url, token, on_session=evidence.set_session if evidence else None)
     poster.start()
     log.info("posting snapshots to %s at %g Hz%s", url, 1.0 / interval, "" if show_window else " (no window)")
     fps_meter = FpsMeter()
@@ -426,6 +436,8 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
                 status = tracker.update(gray, per_bay, now,
                                         yolo_counts=None if yolo_result is None else yolo_result.per_bay)
                 fps = fps_meter.tick(now)
+                if evidence is not None:
+                    evidence.update(frame, status, detections, per_bay=per_bay)
 
                 if not paused and now >= next_post:
                     poster.submit(build_snapshot(int(time.time() * 1000), frame_id, per_bay, status, loose))
@@ -475,6 +487,8 @@ def run(backend: str, show_window: bool, tracker: BayTracker | None = None) -> i
         pass
     finally:
         poster.stop()
+        if evidence is not None:
+            evidence.stop()
         if show_window:
             cv2.destroyAllWindows()
     return 0
