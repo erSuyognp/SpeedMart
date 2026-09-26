@@ -1,2 +1,2 @@
-# Shell scripts must keep LF endings on Windows checkouts (core.autocrlf=true), or Git Bash fails on .
+# Shell scripts keep LF endings on Windows checkouts (core.autocrlf=true); Git Bash cannot run CRLF scripts.
 *.sh text eol=lf
