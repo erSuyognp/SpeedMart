@@ -1,0 +1,3 @@
+# unzipped Roboflow exports stay local
+*
+!.gitignore

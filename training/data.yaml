@@ -1,1 +1,10 @@
-# YOLO dataset config (F13). Filled in by S5.1.
+# YOLO dataset config (F13). Reference copy only: the real one comes inside the Roboflow "YOLOv8" export
+# zip and is what training uses. Class names must match catalog.json yolo_class exactly; the order does
+# not matter (fusion maps boxes to SKUs by name). Roboflow sorts classes alphabetically, as here.
+path: dataset  # folder that contains train/ valid/ test/
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 3
+names: ['electrolytes', 'protein_bar', 'recovery_drink']

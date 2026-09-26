@@ -1,0 +1,3 @@
+# captured frames stay local; upload them to Roboflow instead of committing
+*
+!.gitignore
