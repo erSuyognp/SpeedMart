@@ -3,13 +3,19 @@
 //   /kiosk.html              JOIN + ENTER codes side by side (entrance side)
 //   /kiosk.html?side=exit    the EXIT code on its own (exit side)
 //
-// Renders four things and nothing else: the store name from /api/config/public, the public
+//   /kiosk.html?k=<KIOSK_TOKEN>  the entrance side as the kiosk agent (js/kiosk_agent.js): step tracker,
+//                                spoken tour and captions, the shopper panel. A refused token keeps the public page.
+//
+// The public page renders four things and nothing else: the store name from /api/config/public, the public
 // store_status and plan_bays messages from /ws (8.4), QR PNGs from /api/kiosk/qr/{which}, and the shelf
 // map from /api/catalog. It never asks for /api/me and never reads a name out of a message, so no
-// personal data can reach this screen: plan_bays carries bay numbers only.
+// personal data can reach this screen: plan_bays carries bay numbers only. Only a socket opened with a valid
+// kiosk token gets kiosk_* messages, and only the agent reads them.
 
 (function () {
-  var SIDE = new URLSearchParams(location.search).get("side") === "exit" ? "exit" : "entrance";
+  var PARAMS = new URLSearchParams(location.search);
+  var SIDE = PARAMS.get("side") === "exit" ? "exit" : "entrance";
+  var TOKEN = SIDE === "entrance" ? (PARAMS.get("k") || "") : ""; // the agent runs on the entrance side only
 
   // Step numbers match the printed codes from scripts/gen_qr.py: 1 JOIN, 2 ENTER, 3 EXIT.
   var CARDS = {
@@ -50,28 +56,31 @@
   // --- QR cards ---
 
   function buildCards() {
-    CARDS[SIDE].forEach(function (card) {
-      var el = document.createElement("div");
-      el.className = "kiosk-code";
-      el.innerHTML =
-        '<div class="kiosk-step"><span class="num"></span><span class="label"></span></div>' +
-        '<div class="kiosk-qr"><img alt=""><p class="kiosk-qr-fallback"></p></div>' +
-        '<div class="kiosk-caption"></div>';
-      el.querySelector(".num").textContent = card.step;
-      el.querySelector(".label").textContent = card.label;
-      el.querySelector(".kiosk-caption").textContent = card.caption;
-      el.querySelector(".kiosk-qr-fallback").textContent =
-        "QR code unavailable. Use the printed " + card.label + " code.";
+    CARDS[SIDE].forEach(function (card) { buildCard(card, ""); });
+  }
 
-      var img = el.querySelector("img");
-      img.alt = card.label + " QR code";
-      // Cache-busted once per page load: the PNG is cached server side, but a restart after a tunnel
-      // domain change must not leave a stale code on a kiosk that has been up for hours.
-      img.src = "/api/kiosk/qr/" + card.which + "?v=" + Date.now();
-      img.onerror = function () { el.classList.add("qr-failed"); };
+  // extraClass "k-exit-card": the agent's EXIT code, shown only while someone is shopping (kiosk.html CSS).
+  function buildCard(card, extraClass) {
+    var el = document.createElement("div");
+    el.className = "kiosk-code" + (extraClass ? " " + extraClass : "");
+    el.innerHTML =
+      '<div class="kiosk-step"><span class="num"></span><span class="label"></span></div>' +
+      '<div class="kiosk-qr"><img alt=""><p class="kiosk-qr-fallback"></p></div>' +
+      '<div class="kiosk-caption"></div>';
+    el.querySelector(".num").textContent = card.step;
+    el.querySelector(".label").textContent = card.label;
+    el.querySelector(".kiosk-caption").textContent = card.caption;
+    el.querySelector(".kiosk-qr-fallback").textContent =
+      "QR code unavailable. Use the printed " + card.label + " code.";
 
-      codesEl.appendChild(el);
-    });
+    var img = el.querySelector("img");
+    img.alt = card.label + " QR code";
+    // Cache-busted once per page load: the PNG is cached server side, but a restart after a tunnel
+    // domain change must not leave a stale code on a kiosk that has been up for hours.
+    img.src = "/api/kiosk/qr/" + card.which + "?v=" + Date.now();
+    img.onerror = function () { el.classList.add("qr-failed"); };
+
+    codesEl.appendChild(el);
   }
 
   // --- status banner ---
@@ -135,10 +144,27 @@
       // Keep the markup default; the socket state is what matters on this screen.
     });
 
+    if (TOKEN && window.KioskAgent) {
+      // The agent checks the token with the backend first; a refused token leaves the public page as it was.
+      KioskAgent.init({
+        token: TOKEN,
+        addExitCard: function () { buildCard(CARDS.exit[0], "k-exit-card"); }
+      }).then(openSocket, function () { openSocket(false); });
+    } else {
+      openSocket(false);
+    }
+  }
+
+  function openSocket(agent) {
     // ws.js reconnects on its own with 0.5 s -> 4 s backoff and resyncs after each connect.
     connectSocket({
+      role: agent ? "kiosk" : undefined,
+      query: agent ? { k: TOKEN } : undefined,
       // On (re)connect nothing glows until the server says so: it sends plan_bays first thing if a plan is up.
-      onStatus: function (connected) { if (connected) setGlow([]); else setStatus("offline"); },
+      onStatus: function (connected) {
+        if (connected) setGlow([]); else setStatus("offline");
+        if (agent) KioskAgent.onStatus(connected);
+      },
       onMessage: function (msg) {
         if (msg && msg.type === "store_status" && msg.data) {
           setStatus(msg.data.occupied ? "busy" : "open");
@@ -147,6 +173,7 @@
           setGlow(msg.data.bays || []);
           shelf.refresh();
         }
+        if (agent) KioskAgent.onMessage(msg);
       }
     });
   }

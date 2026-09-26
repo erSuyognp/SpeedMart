@@ -311,11 +311,198 @@
     body.kiosk-exit .kiosk-codes { --kiosk-cols: 1; }
     body.kiosk-exit .kiosk-code { max-width: min(78vw, 640px); }
 
+    /* --- kiosk agent (?k=<KIOSK_TOKEN>): step tracker, guide panel, shopper panel, Start overlay ---
+       Everything below only shows with body.kiosk-agent, so the public page above is unchanged. */
+
+    .kiosk-stage { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+    .k-steps, .k-agent, .k-shopper { display: none; }
+
+    body.kiosk-agent .kiosk-shell { grid-template-rows: auto auto auto 1fr auto auto; gap: clamp(8px, 1.3vh, 16px); }
+    body.kiosk-agent .kiosk-status {
+      padding: clamp(6px, 1vh, 12px) clamp(14px, 1.6vw, 22px);
+      font-size: clamp(18px, 2.6vh, 30px);
+    }
+    body.kiosk-agent .kiosk-stage {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+      gap: clamp(14px, 2vw, 30px);
+    }
+    body.kiosk-agent .kiosk-code .kiosk-caption { font-size: clamp(14px, 1.9vh, 22px); }
+    body.kiosk-agent .kiosk-shelf-head { font-size: clamp(14px, 1.9vh, 22px); }
+
+    /* Step tracker: 1 Join, 2 Enter, 3 Grab items, 4 Scan exit. The current step pulses, done steps show a check. */
+    body.kiosk-agent .k-steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: clamp(8px, 1.2vw, 16px);
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .k-step {
+      display: flex;
+      align-items: center;
+      gap: clamp(8px, 1vw, 14px);
+      padding: clamp(8px, 1.2vh, 14px) clamp(12px, 1.4vw, 20px);
+      border: 2px solid var(--k-line);
+      border-radius: 16px;
+      background: var(--k-panel);
+      color: var(--k-muted);
+      font-size: clamp(18px, 2.7vh, 32px);
+      font-weight: 800;
+      transition: border-color 0.4s ease, color 0.4s ease, background 0.4s ease;
+    }
+    .k-step .k-num {
+      flex: none;
+      width: clamp(30px, 4.2vh, 50px);
+      height: clamp(30px, 4.2vh, 50px);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--k-line);
+      color: var(--k-text);
+      font-size: clamp(16px, 2.3vh, 27px);
+    }
+    .k-step .k-check { display: none; width: 62%; height: 62%; }
+    .k-step.is-done { color: var(--k-text); border-color: rgba(47, 191, 98, 0.55); }
+    .k-step.is-done .k-num { background: var(--k-ok); }
+    .k-step.is-done .k-digit { display: none; }
+    .k-step.is-done .k-check { display: block; }
+    .k-step.is-current { color: var(--k-text); border-color: var(--brand, #1a56db); background: #16213a; }
+    .k-step.is-current .k-num { background: var(--brand, #1a56db); animation: k-step-pulse 1.6s ease-in-out infinite; }
+    @keyframes k-step-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(79, 131, 241, 0.65); }
+      50%      { box-shadow: 0 0 0 12px rgba(79, 131, 241, 0); }
+    }
+
+    /* Guide panel: the caption of every spoken line, the speaking orb, the tour button. */
+    body.kiosk-agent .k-agent {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: clamp(8px, 1.4vh, 16px);
+      padding: clamp(14px, 2vh, 24px);
+      border-radius: 20px;
+      border: 1px solid var(--k-line);
+      background: var(--k-panel);
+    }
+    .k-voice { display: flex; align-items: center; gap: 12px; font-size: clamp(14px, 1.9vh, 22px); color: var(--k-muted); }
+    .k-orb {
+      flex: none;
+      width: clamp(18px, 2.6vh, 30px);
+      height: clamp(18px, 2.6vh, 30px);
+      border-radius: 50%;
+      background: var(--k-line);
+      transition: background 0.3s ease;
+    }
+    .k-agent[data-mode="speaking"] .k-orb { background: var(--brand, #1a56db); animation: k-orb 0.9s ease-in-out infinite; }
+    .k-agent[data-mode="listening"] .k-orb { background: var(--k-ok); box-shadow: 0 0 0 6px rgba(47, 191, 98, 0.25); }
+    @keyframes k-orb { 50% { transform: scale(1.25); opacity: 0.7; } }
+    .k-caption {
+      margin: 0;
+      min-height: 0;
+      overflow: hidden;
+      align-self: center;
+      font-size: clamp(22px, 3.6vh, 42px);
+      font-weight: 700;
+      line-height: 1.25;
+      transition: opacity 0.6s ease;
+    }
+    .k-caption.is-old { opacity: 0.45; }
+    .k-caption.is-hint { color: var(--k-muted); font-weight: 600; }
+    .k-attract {
+      width: 100%;
+      min-height: 64px;
+      padding: clamp(10px, 1.6vh, 18px) 16px;
+      border: 2px solid var(--brand, #1a56db);
+      border-radius: 16px;
+      background: #16213a;
+      color: var(--k-text);
+      font: inherit;
+      font-size: clamp(18px, 2.6vh, 30px);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .k-attract.is-offer { animation: k-offer 1.2s ease-in-out infinite; }
+    @keyframes k-offer { 50% { background: var(--brand, #1a56db); } }
+    body.k-touring .k-attract, body.k-visit .k-attract { visibility: hidden; }
+
+    /* During a visit the JOIN and ENTER codes make way for the shopper panel and the EXIT code (gates on only:
+       k-has-exit). Hidden panels drop out of the grid, so the columns follow what is shown. */
+    .kiosk-code.k-exit-card { display: none; }
+    body.kiosk-agent.k-visit .kiosk-stage { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+    body.kiosk-agent.k-visit.k-has-shopper.k-has-exit .kiosk-stage {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 5fr);
+    }
+    body.kiosk-agent.k-visit .k-shopper { order: 1; }
+    body.kiosk-agent.k-visit .kiosk-codes { order: 2; --kiosk-cols: 1; }
+    body.kiosk-agent.k-visit .k-agent { order: 3; }
+    body.kiosk-agent.k-visit:not(.k-has-exit) .kiosk-codes { display: none; }
+    body.kiosk-agent.k-visit .kiosk-code:not(.k-exit-card) { display: none; }
+    body.kiosk-agent.k-visit .kiosk-code.k-exit-card { display: grid; }
+    body.kiosk-agent.k-visit.k-has-shopper .k-shopper { display: grid; }
+
+    /* Shopper panel: first name, budget left, cart total, item count. Nothing else, ever (no balance, no card). */
+    .k-shopper {
+      min-height: 0;
+      align-content: center;
+      gap: clamp(8px, 1.4vh, 16px);
+      padding: clamp(14px, 2vh, 24px);
+      border-radius: 20px;
+      border: 1px solid var(--k-line);
+      background: var(--k-panel);
+    }
+    .k-hello { font-size: clamp(26px, 4.2vh, 50px); font-weight: 800; line-height: 1.1; overflow-wrap: anywhere; }
+    .k-label { font-size: clamp(14px, 1.9vh, 22px); color: var(--k-muted); }
+    .k-big { font-size: clamp(34px, 6vh, 72px); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+    .k-bar { height: clamp(14px, 2vh, 22px); border-radius: 999px; background: var(--k-line); overflow: hidden; }
+    .k-bar span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--k-ok);
+                  transition: width 0.6s ease, background 0.4s ease; }
+    .k-bar.is-warn span { background: var(--k-amber); }
+    .k-bar.is-over span { background: #e5484d; }
+    .k-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: clamp(18px, 2.7vh, 32px);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .k-row .k-label { font-size: inherit; font-weight: 600; }
+
+    /* Start overlay: one tap per page load unlocks the speaker and asks for the microphone. */
+    .k-start:not([hidden]) {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 22px;
+      background: rgba(13, 16, 23, 0.94);
+      cursor: pointer;
+    }
+    .k-start-btn {
+      min-width: min(70vw, 560px);
+      min-height: 22vh;
+      border: 0;
+      border-radius: 28px;
+      background: var(--brand, #1a56db);
+      color: #fff;
+      font: inherit;
+      font-size: clamp(38px, 7vh, 80px);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .k-start-note { margin: 0; font-size: clamp(16px, 2.4vh, 28px); color: var(--k-muted); text-align: center; }
+
     @media (prefers-reduced-motion: reduce) {
       body.kiosk::before,
       .kiosk-status .lamp,
       .kiosk-code,
-      .kiosk-nfc .wave { animation: none; }
+      .kiosk-nfc .wave,
+      .k-step.is-current .k-num,
+      .k-agent[data-mode="speaking"] .k-orb,
+      .k-attract.is-offer { animation: none; }
     }
   </style>
 </head>
@@ -332,14 +519,43 @@
       </div>
     </header>
 
+    <!-- Kiosk agent only (hidden on the public page): 1 Join, 2 Enter, 3 Grab items, 4 Scan exit -->
+    <ol id="steps" class="k-steps" aria-label="How SpeedMart works">
+      <li class="k-step" data-step="1"><span class="k-num"><span class="k-digit">1</span><svg class="k-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span>Join</span></li>
+      <li class="k-step" data-step="2"><span class="k-num"><span class="k-digit">2</span><svg class="k-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span>Enter</span></li>
+      <li class="k-step" data-step="3"><span class="k-num"><span class="k-digit">3</span><svg class="k-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span>Grab items</span></li>
+      <li class="k-step" data-step="4"><span class="k-num"><span class="k-digit">4</span><svg class="k-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span>Scan exit</span></li>
+    </ol>
+
     <section id="status" class="kiosk-status is-offline" aria-live="polite">
       <span class="lamp" aria-hidden="true"></span>
       <span id="status-text">Connecting…</span>
       <span id="status-sub" class="kiosk-status-sub"></span>
     </section>
 
-    <section id="codes" class="kiosk-codes">
-      <!-- filled in by js/pages/kiosk.js: JOIN + ENTER, or the EXIT code on ?side=exit -->
+    <section id="stage" class="kiosk-stage">
+      <section id="codes" class="kiosk-codes">
+        <!-- filled in by js/pages/kiosk.js: JOIN + ENTER, or the EXIT code on ?side=exit -->
+      </section>
+
+      <!-- Kiosk agent only: the shopper in the store. First name, budget left, cart total and item count only. -->
+      <section id="shopper" class="k-shopper" aria-live="polite">
+        <div class="k-hello">Hi, <span id="shopper-name"></span></div>
+        <div>
+          <div class="k-label">Budget left</div>
+          <div id="shopper-remaining" class="k-big">$0.00</div>
+        </div>
+        <div id="shopper-bar" class="k-bar" aria-hidden="true"><span></span></div>
+        <div class="k-row"><span class="k-label">Cart total</span><span id="shopper-total">$0.00</span></div>
+        <div class="k-row"><span class="k-label">Items</span><span id="shopper-items">0</span></div>
+      </section>
+
+      <!-- Kiosk agent only: every spoken line is also shown here as a large caption. -->
+      <aside id="agent" class="k-agent" data-mode="idle">
+        <div class="k-voice"><span class="k-orb" aria-hidden="true"></span><span id="agent-state">SpeedMart guide</span></div>
+        <p id="caption" class="k-caption is-hint" aria-live="polite"></p>
+        <button id="tour-btn" class="k-attract" type="button">New here? Tap to learn how SpeedMart works</button>
+      </aside>
     </section>
 
     <section class="kiosk-shelf" aria-labelledby="shelf-head">
@@ -365,9 +581,16 @@
     </footer>
   </main>
 
+  <!-- Kiosk agent only: shown once per page load. The tap unlocks audio and asks for the microphone. -->
+  <div id="start" class="k-start" hidden>
+    <button id="start-btn" class="k-start-btn" type="button">Start kiosk</button>
+    <p class="k-start-note">One tap turns on the speaker and asks for the microphone.<br>Then the kiosk talks on its own.</p>
+  </div>
+
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
   <script src="/js/shelfmap.js"></script>
+  <script src="/js/kiosk_agent.js"></script>
   <script src="/js/pages/kiosk.js"></script>
 </body>
 </html>

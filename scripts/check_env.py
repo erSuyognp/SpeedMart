@@ -99,7 +99,37 @@ else:
     except Exception as e:
         record("LLM", "FAIL", repr(e))
 
-# 6. Local backend and public tunnel
+# 6. Kiosk agent: KIOSK_TOKEN turns the entrance tablet into the talking guide; without it the kiosk is the
+#    public page (QR codes, status, shelf map), which is fine, so an empty token is a WARN, not a FAIL.
+if not env.kiosk_token:
+    record("KIOSK_TOKEN", "WARN", "empty: the kiosk stays the public page (no voice, no shopper panel)")
+elif "change-me" in env.kiosk_token:
+    record("KIOSK_TOKEN", "FAIL", "still a placeholder")
+elif len(env.kiosk_token) < 16:
+    record("KIOSK_TOKEN", "WARN", f"only {len(env.kiosk_token)} chars; use a long random string")
+else:
+    record("KIOSK_TOKEN", "PASS", f"set ({len(env.kiosk_token)} chars); open /kiosk.html?k=<token> on the tablet")
+
+# 7. Kiosk voice (text to speech): the voice id must exist for this API key. GET /v1/voices/{voice_id} costs no
+#    characters. https://elevenlabs.io/docs/api-reference/voices/get
+if not settings.features.voice:
+    record("ELEVENLABS_VOICE_ID", "SKIP", "features.voice is false: the kiosk shows captions only")
+elif not env.elevenlabs_voice_id:
+    record("ELEVENLABS_VOICE_ID", "WARN", "empty: the kiosk shows captions only (no speech)")
+elif not env.elevenlabs_api_key:
+    record("ELEVENLABS_VOICE_ID", "WARN", "ELEVENLABS_API_KEY is empty: the kiosk shows captions only")
+else:
+    try:
+        r = httpx.get(f"https://api.elevenlabs.io/v1/voices/{env.elevenlabs_voice_id}", timeout=10,
+                      headers={"xi-api-key": env.elevenlabs_api_key})
+        if r.status_code == 200:
+            record("ELEVENLABS_VOICE_ID", "PASS", f"voice '{r.json().get('name', '?')}'")
+        else:
+            record("ELEVENLABS_VOICE_ID", "FAIL", f"HTTP {r.status_code}: unknown voice id or key without access")
+    except Exception as e:
+        record("ELEVENLABS_VOICE_ID", "FAIL", repr(e))
+
+# 8. Local backend and public tunnel
 for name, url in (("Local backend", "http://127.0.0.1:8000/api/health"),
                   ("Tunnel", f"{env.public_origin}/api/health")):
     try:

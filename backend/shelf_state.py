@@ -214,10 +214,14 @@ async def post_shelf(request: Request):
     except (ValueError, ValidationError) as e:
         return _error(422, "bad_snapshot", f"Snapshot body is invalid: {e}")
     changed = apply_snapshot(snap)
-    from backend import store  # local import: store imports this module
+    from backend import kiosk_agent, store  # local import: store imports this module
     if changed:
         store.on_shelf_change()
+    session = store.current_session()
+    try:  # kiosk agent: motion at the shelf while the store is free may offer the tour (public, no data)
+        kiosk_agent.note_shelf_motion(any(b.motion for b in snap.bays), occupied=session is not None)
+    except Exception as e:  # decoration; never let it cost a snapshot
+        eventlog.log("kiosk_error", where="shelf_activity", error=repr(e)[:300])
     # Cart disputes (8.13): the worker saves shelf crops for the shopping session named here, none when null.
-    session = store.current_session() if settings.features.disputes else None
-    evidence_for = session["id"] if session and session["state"] in store.SHOPPING_STATES else None
-    return {"ok": True, "changed": changed, "session_id": evidence_for}
+    shopping = settings.features.disputes and session is not None and session["state"] in store.SHOPPING_STATES
+    return {"ok": True, "changed": changed, "session_id": session["id"] if shopping else None}

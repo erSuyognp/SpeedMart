@@ -23,6 +23,8 @@ os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["ELEVENLABS_API_KEY"] = ""
 os.environ["ELEVENLABS_AGENT_ID"] = ""
+os.environ["ELEVENLABS_VOICE_ID"] = ""
+os.environ["KIOSK_TOKEN"] = ""
 
 import pytest  # noqa: E402
 import serial  # noqa: E402

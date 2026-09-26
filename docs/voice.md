@@ -176,3 +176,70 @@ The microphone needs a secure context, so use the https tunnel domain. Voice doe
    - Set `"voice": false` in `config.json` and restart: the button disappears and typing still works.
    - Remove the key from `.env` and restart: tapping Talk shows "Voice isn't available right now…" and the
      page scrolls to the text box.
+
+---
+
+# Kiosk agent (the entrance tablet)
+
+The tablet at the door is opened as `https://<domain>/kiosk.html?k=<KIOSK_TOKEN>` and guides shoppers, first
+timers especially, so they can use SpeedMart with no human help. Contract: spec 8.16. Code:
+`backend/kiosk.py` (routes), `backend/kiosk_agent.py` (what it says and when), `backend/tts.py` (speech),
+`web/js/kiosk_agent.js` (the screen).
+
+## Security and setup
+
+- `.env`: `KIOSK_TOKEN` (a long random string) and `ELEVENLABS_VOICE_ID` (the voice it speaks with; it uses the
+  existing `ELEVENLABS_API_KEY`). `python scripts\check_env.py` checks both (the voice id with
+  `GET /v1/voices/{voice_id}`, which costs no characters: https://elevenlabs.io/docs/api-reference/voices/get).
+- Every kiosk-only endpoint checks `?k=` in constant time. Without a valid token (or with `KIOSK_TOKEN` empty) the
+  tablet shows the public kiosk page exactly as before: QR codes, store status, shelf map, no voice and no shopper
+  data. A socket opened with `role=kiosk` and a wrong token is an ordinary public socket.
+- **Start kiosk:** a full screen button, once per page load. The tap unlocks audio playback (browsers block sound
+  until the page has been tapped) and asks for the microphone (only when `features.voice` is on). After that the
+  kiosk speaks on its own.
+- **Public screen privacy:** the shopper panel shows the first name, budget left, cart total and item count, and
+  nothing else: never the demo balance, the card or a receipt. It is cleared the moment the visit ends (paid, empty
+  exit, cancelled). The captions of spoken lines name products and prices the shopper can already see on the shelf.
+- The microphone needs a secure context: open the kiosk over the **https tunnel**, not `http://<laptop-ip>:8000`.
+
+## Phase 1: guided screen and spoken tour
+
+- **Step tracker** 1 Join, 2 Enter, 3 Grab items, 4 Scan exit. The current step pulses; done steps show a check.
+  Driven by `kiosk_visit` messages on the kiosk socket (spec 8.4): entered / sync → step 3, exit_pending → step 4,
+  paid → all four checked for 6 s, ended → back to step 1. While the store is free, step 1 is current.
+- **Captions:** every spoken line is shown as a large caption. When nothing is being said, the panel shows a hint
+  for the current step ("Scan a code with your phone camera to start.", "Grab what you want…", "Check your cart on
+  your phone and approve.").
+- **Attract mode:** "New here? Tap to learn how SpeedMart works" starts the tour: what SpeedMart is (the shelf camera
+  builds your cart and you approve with your phone), then each step, highlighting that step on screen. About 75
+  words, ~30 s. The wording follows the flags (Face ID or Confirm; exit code or the Checkout button; the demo
+  shopper when signup is off).
+- **Auto offer:** when the vision worker reports motion in any bay while the store is empty, the backend sends the
+  public `shelf_activity` message (no data, at most one per 30 s). The kiosk then says "Hi! New here? Tap the
+  screen, and I'll show you how SpeedMart works." and pulses the tour button, at most once every 2 minutes, and
+  only when it is idle. Motion is only reported with `features.motion_freeze` on.
+- During a visit the JOIN and ENTER codes make way for the shopper panel and (gates on) the EXIT code.
+
+### Kiosk voice: ElevenLabs text to speech
+
+Checked on 2026-09-26.
+
+- Endpoint: `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128` with the
+  `xi-api-key` header and body `{"text", "model_id"}`; the response body is the audio file:
+  https://elevenlabs.io/docs/api-reference/text-to-speech/convert
+- Model: `eleven_flash_v2_5`, the lowest latency model ("~75ms"), recommended for real-time use; the older
+  `eleven_turbo_v2_5` is deprecated in its favour: https://elevenlabs.io/docs/models
+- `backend/tts.py` never sends the key to the browser. The kiosk fetches audio from
+  `GET /api/kiosk/tts/{clip_id}?k=`, and a clip id only exists for text the backend registered, so the browser can
+  never make the kiosk say something else.
+- **Fixed phrases** (no digits: the tour, the offer, the exit reminder, first visit greetings) are generated once
+  and cached as files in `data/tts_cache/<hash>.mp3` (hash of voice id, model, format and text; `data/` is
+  gitignored). The tour and fixed phrases are warmed in the background when the kiosk starts. A cache hit never
+  calls ElevenLabs, even with the key removed.
+- **Dynamic lines** (with numbers: prices, totals, budgets) are generated on demand with a **4 s timeout** and kept
+  in memory only (the last 24).
+- **Fallback:** speech off (`features.voice` false, no key or no voice id), a timeout or any error → the route
+  answers 503 and the kiosk shows the line as a caption only, for reading time. The kiosk also gives up on a clip
+  that is not ready within 5 s. Events: `tts_generated`, `tts_error` (`reason`).
+- To use a new voice, change `ELEVENLABS_VOICE_ID` and restart: the cache key includes the voice id, so the old
+  files are simply not used (delete `data\tts_cache` to reclaim the space).

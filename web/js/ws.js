@@ -3,6 +3,7 @@
 //
 //   const sock = connectSocket({
 //     role: "admin",                 // optional; admin sockets also get shelf + log messages
+//     query: { k: "..." },            // optional extra query parameters (the kiosk sends role=kiosk and its token)
 //     onMessage(msg) {},             // {type, data}
 //     onStatus(connected) {},        // live dot
 //     onResync(current) {},          // result of GET /api/store/current after each (re)connect
@@ -20,7 +21,10 @@
 
     function url() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      return proto + "//" + location.host + "/ws" + (o.role ? "?role=" + encodeURIComponent(o.role) : "");
+      const q = new URLSearchParams(o.query || {});
+      if (o.role) q.set("role", o.role);
+      const qs = q.toString();
+      return proto + "//" + location.host + "/ws" + (qs ? "?" + qs : "");
     }
 
     function open() {

@@ -104,7 +104,8 @@
       ["Started", sess ? sess.started_at : "–"],
       ["Baseline", baseline],
       ["Demo balance", s.bank ? api.money(s.bank.available_usd) + " available · " + api.money(s.bank.balance_usd) + " current · " + s.bank.top_ups_used + " top ups" : "–"],
-      ["Sockets", "admin " + s.sockets.admin + " · member " + s.sockets.member + " · other " + s.sockets.anonymous],
+      ["Sockets", "admin " + s.sockets.admin + " · member " + s.sockets.member + " · kiosk " + (s.sockets.kiosk || 0) +
+        " · other " + s.sockets.anonymous],
     ]));
 
     const fd = $("force-decline");

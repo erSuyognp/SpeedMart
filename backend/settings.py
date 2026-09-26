@@ -82,6 +82,8 @@ class Env:
     review_model: str  # empty = that provider's model (ANTHROPIC_MODEL / OPENAI_MODEL)
     elevenlabs_api_key: str
     elevenlabs_agent_id: str
+    elevenlabs_voice_id: str = ""  # kiosk agent: the voice backend/tts.py speaks with (text to speech)
+    kiosk_token: str = ""  # kiosk agent: /kiosk.html?k=<token>; empty = the kiosk stays the public page
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,8 @@ def _load_env() -> Env:
         review_model=g("REVIEW_MODEL"),
         elevenlabs_api_key=g("ELEVENLABS_API_KEY"),
         elevenlabs_agent_id=g("ELEVENLABS_AGENT_ID"),
+        elevenlabs_voice_id=g("ELEVENLABS_VOICE_ID"),
+        kiosk_token=g("KIOSK_TOKEN"),
     )
     if not env.session_secret:
         raise SettingsError("SESSION_SECRET is not set. Copy .env.example to .env and fill it in.")

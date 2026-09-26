@@ -146,6 +146,9 @@ SpeedMart/
 │   ├── evidence.py              # F20 event clips: /internal/clips registration, lookups, files (8.14)
 │   ├── review.py                # F20 AI assisted dispute review + the human decision routes (8.14)
 │   ├── bank.py                  # Demo bank: the simulated account behind the demo card, ledger + top ups (8.15)
+│   ├── kiosk.py                 # Entrance kiosk: public QR codes + the kiosk agent's token-only routes (8.16)
+│   ├── kiosk_agent.py           # Kiosk agent: tour, visit steps, shelf activity, what the kiosk says (8.16)
+│   ├── tts.py                   # Kiosk speech: ElevenLabs text to speech + data/tts_cache/ (8.16)
 │   └── routes_api.py            # public API routes (catalog, session, gates, receipt, guardrails)
 │
 ├── vision/
@@ -184,6 +187,7 @@ SpeedMart/
 │   │   ├── guardrails.js        # "Your agent's permissions" card (8.10)
 │   │   ├── dispute.js           # F20 dispute sheet: recheck, before/now photos, keep / remove anyway
 │   │   ├── bank.js              # Demo bank card (home page) and the compact header line (store), live (8.15)
+│   │   ├── kiosk_agent.js       # Kiosk agent on kiosk.html?k=: Start tap, steps, speech queue + captions (8.16)
 │   │   └── pages/*.js           # one small script per page
 │   └── css/styles.css
 │
@@ -240,6 +244,15 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # AI assisted dispute review (F20, 8.14). Empty = reuse LLM_PROVIDER and that provider's key, base URL and model.
 REVIEW_PROVIDER=
 REVIEW_MODEL=
+
+# Voice store agent (F19, docs/voice.md). Server side only.
+ELEVENLABS_API_KEY=
+ELEVENLABS_AGENT_ID=
+
+# Kiosk agent (8.16). The entrance tablet opens /kiosk.html?k=<KIOSK_TOKEN>; empty = the public kiosk page only.
+KIOSK_TOKEN=
+# The voice the kiosk speaks with (ElevenLabs text to speech). Empty = captions only.
+ELEVENLABS_VOICE_ID=
 ```
 
 ### 5.2 `config.json`
@@ -706,7 +719,16 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
                                        // top up, reset. A signed-in member's socket gets it among its first messages
 {"type":"shelf","data":{...}}          // admin sockets only
 {"type":"log","data":{...}}            // admin sockets only
+{"type":"shelf_activity","data":{}}    // 8.16, public and empty: motion at the shelf while the store is free
+                                       // (at most one per 30 s); the kiosk may offer its tour
+{"type":"kiosk_visit","data":{"event":"entered"|"sync"|"exit_pending"|"resumed"|"paid"|"ended","step":3|4|null}}
+                                       // 8.16, kiosk sockets only: drives the step tracker (1 Join, 2 Enter,
+                                       // 3 Grab items, 4 Scan exit). "sync" is sent to a (re)connecting kiosk
 ```
+
+A kiosk socket is `/ws?role=kiosk&k=<KIOSK_TOKEN>` (8.16). With a valid token it gets the public messages plus
+the `kiosk_*` ones and never a member's `cart`, `bank` or `gate` message; with a missing or wrong token it is an
+ordinary public socket.
 
 Clients reconnect with exponential backoff (0.5 s → 4 s max) and call `GET /api/store/current` on reconnect.
 
@@ -1079,6 +1101,28 @@ are the newest 20. Every balance view on a screen says "Demo balance · not a re
 `bank_opened`, `bank_backfill`, `bank_charge`, `bank_refund`, `bank_insufficient_funds`, `bank_topup`,
 `bank_topup_limit`, `bank_reset`. The receipt carries `bank.balance_after_usd`: the posted balance right after
 the charge row. `POST /admin/bank/reset` (8.3) puts every member back to the opening balance.
+
+### 8.16 Kiosk agent (`backend/kiosk.py`, `backend/kiosk_agent.py`, `backend/tts.py`)
+
+The entrance tablet is opened as `/kiosk.html?k=<KIOSK_TOKEN>` and guides shoppers, first timers especially, with a
+step tracker, a spoken tour, spoken lines about the cart and (with `voice` on) an ElevenLabs conversation. Details,
+wording and the ElevenLabs calls: `docs/voice.md`, "Kiosk agent".
+
+**Token.** Every route below needs `?k=<KIOSK_TOKEN>`, compared in constant time (`secrets.compare_digest`).
+Missing, wrong, or `KIOSK_TOKEN` unset: `403 {"error":"kiosk_only"}` (logged as `kiosk_bad_token` with the path,
+never the token). Without it the tablet shows the public kiosk page (QR codes, store status, shelf map) with no
+voice and no shopper data. `GET /api/kiosk/qr/{which}` stays public.
+
+| Method | Path | Returns | Notes |
+|---|---|---|---|
+| GET | `/api/kiosk/phrases?k=` | `{"speech":bool,"voice":bool,"tour":[Say + "step"],"phrases":{"offer":Say,"exit_reminder":Say}}` | The ~30 s tour (step 0 intro, then 1 to 4) and the fixed lines, worded for the flags. Warms the TTS file cache in the background |
+| GET | `/api/kiosk/tts/{clip_id}?k=` | `audio/mpeg` | Audio of a line the backend registered. 404 `unknown_clip` (the browser can never choose the text), 503 `tts_unavailable` (speech off, ElevenLabs error or over 4 s): the kiosk shows the caption only |
+
+`Say` = `{"kind": str, "text": str, "audio_url": "/api/kiosk/tts/<clip_id>" | null}`. Every spoken line is also
+shown as a caption. Fixed lines (no digits) are generated once and cached as files under `data/tts_cache/`;
+lines with numbers are generated on demand with a 4 s timeout and kept in memory only. Speech needs `voice` on,
+`ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`; without them `audio_url` is null and the kiosk is captions only.
+Events: `tts_generated`, `tts_error` (`reason`), `tts_cache_error`, `shelf_activity`, `kiosk_bad_token`.
 
 ---
 
