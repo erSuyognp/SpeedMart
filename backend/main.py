@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import db, eventlog, shelf_state, store
+from backend import db, eventlog, routes_api, shelf_state, store
 from backend.settings import WEB_DIR, settings
 
 
@@ -29,6 +29,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="SpeedMart", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, same_site="lax", https_only=False)
 app.include_router(shelf_state.router)
+
+
+@app.exception_handler(store.StoreError)
+async def store_error_handler(request: Request, e: store.StoreError):
+    return routes_api.store_error_response(e)
+
+
+@app.exception_handler(routes_api.ApiError)
+async def api_error_handler(request: Request, e: routes_api.ApiError):
+    return routes_api.error_response(e.status, e.code, e.message)
 
 
 @app.get("/api/health")

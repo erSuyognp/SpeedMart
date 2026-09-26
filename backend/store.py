@@ -19,6 +19,7 @@ CLOSED = "CLOSED"
 CANCELLED = "CANCELLED"
 ACTIVE_STATES = (IN_STORE, CHECKOUT_PENDING)
 TIMEOUT_CHECK_SECONDS = 30
+VISION_MAX_AGE_MS = 2000  # entry is refused when the last shelf snapshot is older than this
 
 
 class StoreError(Exception):
@@ -32,6 +33,11 @@ class StoreOccupied(StoreError):
     def __init__(self, occupant_first_name: str):
         super().__init__("store_occupied", "Someone is already shopping. Please wait a moment.")
         self.occupant_first_name = occupant_first_name
+
+
+class VisionUnavailable(StoreError):
+    def __init__(self):
+        super().__init__("vision_unavailable", "The shelf camera is offline. Please wait a moment.")
 
 
 class InvalidTransition(StoreError):
@@ -193,11 +199,18 @@ def apply_override(sku: str, delta: int) -> dict[str, Any]:
 
 
 def start_session(member_id: str) -> dict[str, Any]:
-    """(none) -> IN_STORE. Baseline = what is on the shelf right now. Raises StoreOccupied."""
+    """(none) -> IN_STORE. Baseline = what is on the shelf right now.
+
+    Raises StoreOccupied, or VisionUnavailable when there is no fresh snapshot to take the baseline from.
+    """
     with _lock:
         conn = db.connect()
         try:
             member = _member(conn, member_id)
+            age_ms = shelf_state.last_snapshot_age_ms()
+            if not shelf_state.has_snapshot() or age_ms > VISION_MAX_AGE_MS:
+                eventlog.log("vision_unavailable", member_id=member_id, vision_age_ms=age_ms)
+                raise VisionUnavailable()
             occupant = _active_row(conn)
             if occupant is not None:
                 other = _member(conn, occupant["member_id"])

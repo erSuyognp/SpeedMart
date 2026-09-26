@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,7 +18,7 @@ os.environ["INTERNAL_TOKEN"] = "test-internal-token"
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend import cart, db, eventlog, shelf_state, store  # noqa: E402
+from backend import cart, db, eventlog, routes_api, shelf_state, store  # noqa: E402
 from backend.main import app  # noqa: E402
 
 TOKEN = "test-internal-token"
@@ -286,3 +287,31 @@ def test_timeout_cancels_stale_session(shopping):
     assert store.expire_stale_sessions(now=later) == [shopping["id"]]
     assert store.get_session(shopping["id"])["state"] == store.CANCELLED
     assert store.current_session() is None
+
+
+def test_entry_refused_without_any_snapshot(member_id):
+    assert shelf_state.has_snapshot() is False
+    with pytest.raises(store.VisionUnavailable) as err:
+        store.start_session(member_id)
+    assert err.value.code == "vision_unavailable"
+    assert err.value.message == "The shelf camera is offline. Please wait a moment."
+    assert store.current_session() is None
+    assert events("vision_unavailable")[-1]["vision_age_ms"] == -1
+
+    r = routes_api.store_error_response(err.value)
+    assert r.status_code == 503
+    assert json.loads(r.body) == {"error": "vision_unavailable",
+                                  "message": "The shelf camera is offline. Please wait a moment."}
+
+
+def test_entry_refused_with_stale_snapshot(member_id, monkeypatch):
+    shelf_state.apply_snapshot(snap(FULL))
+    monkeypatch.setattr(shelf_state, "_last_snapshot_at", time.monotonic() - 2.5)
+    assert shelf_state.last_snapshot_age_ms() > store.VISION_MAX_AGE_MS
+    with pytest.raises(store.VisionUnavailable):
+        store.start_session(member_id)
+    assert store.current_session() is None
+    assert events("vision_unavailable")[-1]["vision_age_ms"] >= 2500
+
+    shelf_state.apply_snapshot(snap(FULL, frame_id=2))  # camera back: entry works again
+    assert store.start_session(member_id)["state"] == store.IN_STORE
