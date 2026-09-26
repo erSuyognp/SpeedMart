@@ -35,6 +35,7 @@ _lock = threading.Lock()
 _bay_units: dict[int, set[int]] = {}
 _bay_yolo: dict[int, dict[str, int]] = {}
 _loose_units: list[int] = []
+_bay_status: dict[int, dict[str, bool]] = {}  # latest report per bay, stable or not (admin view only)
 _last_snapshot_at: float | None = None  # time.monotonic() of the last accepted snapshot
 _last_frame_id: int | None = None
 
@@ -49,6 +50,7 @@ def reset() -> None:
             _bay_units[b.id] = set()
             _bay_yolo[b.id] = {}
         _loose_units.clear()
+        _bay_status.clear()
         _last_snapshot_at = None
         _last_frame_id = None
 
@@ -92,6 +94,8 @@ def apply_snapshot(snapshot: dict[str, Any] | ShelfSnapshot) -> bool:
     with _lock:
         before = (_counts_locked(), _misplaced_locked())
         for report in snap.bays:
+            if report.bay in _bay_units:
+                _bay_status[report.bay] = {"stable": report.stable, "motion": report.motion}
             if report.bay not in _bay_units or not report.stable:
                 continue
             units = {t for t in report.units if t in settings.units}  # ignore unknown tag ids (9.1)
@@ -141,6 +145,7 @@ def state() -> dict[str, Any]:
     with _lock:
         return {
             "bays": {b: sorted(u) for b, u in _bay_units.items()},
+            "bay_status": {b: dict(_bay_status.get(b, {"stable": None, "motion": None})) for b in _bay_units},
             "yolo_counts": {b: dict(y) for b, y in _bay_yolo.items()},
             "loose_units": list(_loose_units),
             "counts": _counts_locked(),

@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend import cart, db, eventlog, shelf_state
+from backend import cart, db, eventlog, shelf_state, ws
 from backend.settings import settings
 
 IN_STORE = "IN_STORE"
@@ -47,9 +47,13 @@ class InvalidTransition(StoreError):
 
 # Guards every state change. The DB check inside it is the second half of the store lock (7.1).
 _lock = threading.Lock()
-# Admin manual adjustments per SKU for the active session (8.3). In memory; cleared on start/end/reset.
+# Admin manual adjustments per SKU for one session (8.3). Mirrored to data/overrides.json so a backend
+# restart mid-session recomputes the same cart (7.3). Cleared on start/end/reset.
 _overrides: dict[str, int] = {}
+_overrides_session: str | None = None  # session id _overrides belongs to
 _last_cart_key: tuple | None = None
+# gate event (8.4) announced when a session moves into each state
+GATE_EVENTS = {IN_STORE: "entered", CHECKOUT_PENDING: "exit_pending", PAID: "paid", CANCELLED: "cancelled"}
 
 
 def _row_to_session(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -104,14 +108,48 @@ def is_occupied() -> bool:
     return current_session() is not None
 
 
-def get_overrides() -> dict[str, int]:
+def _overrides_path():
+    return db.DATA_DIR / "overrides.json"
+
+
+def _load_overrides_locked(session_id: str) -> None:
+    global _overrides_session
+    if _overrides_session == session_id:
+        return
+    _overrides.clear()
+    try:
+        saved = json.loads(_overrides_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    if saved.get("session_id") == session_id:
+        _overrides.update({k: int(v) for k, v in saved.get("overrides", {}).items() if k in settings.skus})
+    _overrides_session = session_id
+
+
+def _save_overrides_locked() -> None:
+    path = _overrides_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"session_id": _overrides_session, "overrides": _overrides}), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _reset_overrides_locked(session_id: str | None = None) -> None:
+    global _overrides_session
+    _overrides.clear()
+    _overrides_session = session_id
+    _overrides_path().unlink(missing_ok=True)
+
+
+def get_overrides(session_id: str) -> dict[str, int]:
     with _lock:
+        _load_overrides_locked(session_id)
         return dict(_overrides)
 
 
 def clear_overrides() -> None:
     with _lock:
-        _overrides.clear()
+        _reset_overrides_locked()
 
 
 def _live_shelf_counts(session: dict[str, Any]) -> dict[str, int]:
@@ -129,7 +167,7 @@ def compute_live_cart(session: dict[str, Any], member: dict[str, Any] | None = N
             member = _member(conn, session["member_id"])
         finally:
             conn.close()
-    return cart.compute_cart(session, _live_shelf_counts(session), get_overrides(), member,
+    return cart.compute_cart(session, _live_shelf_counts(session), get_overrides(session["id"]), member,
                              misplaced=shelf_state.misplaced())
 
 
@@ -169,8 +207,23 @@ def current_cart(source: str = "recompute") -> dict[str, Any] | None:
 
 
 def on_shelf_change() -> dict[str, Any] | None:
-    """Called after a snapshot changed the shelf. S1.3 adds the WebSocket broadcast."""
-    return current_cart(source="vision")
+    """Called after a snapshot changed the shelf: recompute, then push to the shopper and admins."""
+    ws.broadcast_admin({"type": "shelf", "data": shelf_state.state()})
+    session = current_session()
+    if session is None:
+        return None
+    snapshot = cart_for(session)
+    _log_cart_if_changed(snapshot, "vision")
+    ws.broadcast_cart(session["member_id"], snapshot)
+    return snapshot
+
+
+def _announce(session: dict[str, Any], gate_event: str | None) -> None:
+    """Push a state change: gate event, the session's cart (with its new state), store lock status."""
+    if gate_event:
+        ws.broadcast_gate(session["member_id"], gate_event)
+    ws.broadcast_cart(session["member_id"], cart_for(session))
+    ws.broadcast_store_status(session["state"] in ACTIVE_STATES)
 
 
 def apply_override(sku: str, delta: int) -> dict[str, Any]:
@@ -186,15 +239,18 @@ def apply_override(sku: str, delta: int) -> dict[str, Any]:
     base = session["baseline"].get(sku, 0)
     shelf = _live_shelf_counts(session).get(sku, 0)
     with _lock:
+        _load_overrides_locked(session["id"])
         before = _overrides.get(sku, 0)
         unclamped = base - shelf  # cart qty with no override, before clamping
         target = max(0, min(base, unclamped + before + int(delta)))
         _overrides[sku] = target - unclamped
         after = _overrides[sku]
+        _save_overrides_locked()
     eventlog.log("override", source="override", session_id=session["id"], sku=sku, delta=int(delta),
                  override_before=before, override_after=after)
     snapshot = cart_for(session)
     _log_cart_if_changed(snapshot, "override")
+    ws.broadcast_cart(session["member_id"], snapshot)
     return snapshot
 
 
@@ -222,7 +278,7 @@ def start_session(member_id: str) -> dict[str, Any]:
                 "INSERT INTO store_sessions (id, member_id, state, baseline_json, started_at) VALUES (?, ?, ?, ?, ?)",
                 (session_id, member_id, IN_STORE, json.dumps(baseline), db.now_iso()))
             conn.commit()
-            _overrides.clear()
+            _reset_overrides_locked(session_id)
             session = _row_to_session(conn.execute("SELECT * FROM store_sessions WHERE id = ?",
                                                    (session_id,)).fetchone())
         finally:
@@ -231,6 +287,7 @@ def start_session(member_id: str) -> dict[str, Any]:
                  baseline=baseline)
     snapshot = compute_live_cart(session, member)
     _log_cart_if_changed(snapshot, "session_start")
+    _announce(session, GATE_EVENTS[IN_STORE])
     return session
 
 
@@ -255,7 +312,7 @@ def _transition(allowed_from: tuple[str, ...], target: str, *, session_id: str |
             conn.execute(f"UPDATE store_sessions SET {', '.join(sets)} WHERE id = ?", (*args, row["id"]))
             conn.commit()
             if end:
-                _overrides.clear()
+                _reset_overrides_locked()
             session = _row_to_session(conn.execute("SELECT * FROM store_sessions WHERE id = ?",
                                                    (row["id"],)).fetchone())
         finally:
@@ -263,6 +320,8 @@ def _transition(allowed_from: tuple[str, ...], target: str, *, session_id: str |
     fields = {"reason": reason} if reason else {}
     eventlog.log("session_state", session_id=session["id"], member_id=session["member_id"],
                  **{"from": row["state"]}, to=target, **fields)
+    # Back to IN_STORE from checkout is a cancelled exit, not a new entry: no gate event for it.
+    _announce(session, GATE_EVENTS.get(target) if target != IN_STORE else None)
     return session
 
 

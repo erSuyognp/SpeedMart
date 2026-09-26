@@ -1,1 +1,66 @@
-<!-- Live cart while shopping. Filled in by S1.3. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · Cart</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <h1>SpeedMart</h1>
+      <div class="session-tag">
+        <span id="session-id" class="mono"></span>
+        <span id="live-dot" class="dot" title="Disconnected" aria-label="Disconnected"></span>
+      </div>
+    </header>
+
+    <section id="loading" class="card notice muted">Loading…</section>
+
+    <section id="outside" class="card notice" hidden>
+      <h2 id="outside-title">You're not in the store</h2>
+      <p id="outside-text" class="muted"></p>
+      <div id="start-wrap" class="stack" style="margin-top:16px" hidden>
+        <button id="start-btn" class="primary block">Start shopping</button>
+      </div>
+    </section>
+
+    <div id="shopping" class="stack" hidden>
+      <section id="agent" class="card agent-card" aria-live="polite" hidden></section>
+
+      <section id="warnings" class="strip warn" aria-live="polite" hidden></section>
+
+      <section id="checkout-state" class="strip warn" hidden></section>
+
+      <section class="card">
+        <h2>Your cart</h2>
+        <ul id="cart" class="cart-list"></ul>
+        <p id="cart-empty" class="empty-cart">Nothing yet. Pick something off the shelf.</p>
+      </section>
+
+      <section class="card">
+        <div class="totals">
+          <span class="muted">Subtotal</span><span id="subtotal">$0.00</span>
+          <span class="muted">Tax</span><span id="tax">$0.00</span>
+          <span class="grand">Total</span><span id="total" class="grand">$0.00</span>
+        </div>
+        <div class="budget">
+          <div class="budget-label"><span>Budget</span><span id="budget-text"></span></div>
+          <div id="budget-bar" class="bar" role="progressbar" aria-label="Budget used"><span></span></div>
+        </div>
+      </section>
+
+      <p id="exit-hint" class="hint" hidden>When you're done, scan the EXIT code.</p>
+      <button id="checkout-btn" class="primary block" hidden>Checkout</button>
+    </div>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ws.js"></script>
+  <script src="/js/pages/store.js"></script>
+</body>
+</html>

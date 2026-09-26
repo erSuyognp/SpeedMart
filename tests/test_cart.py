@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 # Set before backend.settings is imported; load_dotenv never overrides existing variables.
 os.environ["SESSION_SECRET"] = "test-session-secret"
 os.environ["INTERNAL_TOKEN"] = "test-internal-token"
+os.environ["ADMIN_PASSWORD"] = "test-admin-password"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -56,7 +57,8 @@ def events(event_type: str) -> list[dict]:
 def simulate_restart() -> None:
     """Drop everything held in memory; the DB survives, like a uvicorn restart."""
     shelf_state.reset()
-    store.clear_overrides()
+    store._overrides.clear()  # memory only: data/overrides.json survives like the DB
+    store._overrides_session = None
     store._last_cart_key = None
 
 

@@ -1,1 +1,90 @@
-<!-- Team-only control panel. Filled in by S1.3. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>SpeedMart · Admin</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main class="wide">
+    <header class="topbar">
+      <h1>SpeedMart admin</h1>
+      <span id="live-dot" class="dot" title="Disconnected" aria-label="Disconnected"></span>
+    </header>
+
+    <form id="login" class="card stack" hidden>
+      <h2>Team login</h2>
+      <input id="password" type="password" autocomplete="current-password" placeholder="Admin password" required>
+      <button class="primary block" type="submit">Log in</button>
+    </form>
+
+    <div id="panel" class="stack" hidden>
+      <div class="badges" aria-live="polite">
+        <span id="b-vision" class="badge">Vision –</span>
+        <span id="b-serial" class="badge">Serial –</span>
+        <span id="b-stripe" class="badge">Stripe –</span>
+        <span id="b-llm" class="badge">LLM –</span>
+        <span id="b-lock" class="badge">Store –</span>
+      </div>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Store and session</h2>
+          <dl id="session" class="kv"></dl>
+          <div class="row" style="margin-top:14px">
+            <button id="demo-login" class="grow">Demo login</button>
+            <a class="button grow" href="/store.html" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none">Open cart page</a>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button id="force-exit" class="danger grow">Force exit</button>
+            <button id="reset" class="danger grow">Reset</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button id="force-decline" class="grow" aria-pressed="false">Force decline: off</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Cart</h2>
+          <div id="cart" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Overrides</h2>
+          <div id="overrides"></div>
+        </section>
+
+        <section class="card">
+          <h2>Shelf</h2>
+          <div id="bays" class="bays"></div>
+          <p id="loose" class="muted small"></p>
+        </section>
+
+        <section class="card">
+          <h2>LED test</h2>
+          <p class="muted small">Logged only until the serial bridge (S1.4).</p>
+          <div id="leds" class="row"></div>
+        </section>
+
+        <section class="card">
+          <h2>Event log</h2>
+          <div id="log" class="log"></div>
+        </section>
+      </div>
+
+      <details class="card">
+        <summary style="min-height:48px;display:flex;align-items:center;cursor:pointer">Raw state JSON</summary>
+        <pre id="state-json" class="json"></pre>
+      </details>
+    </div>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ws.js"></script>
+  <script src="/js/pages/admin.js"></script>
+</body>
+</html>
