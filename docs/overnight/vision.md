@@ -53,6 +53,42 @@ the `vision` and `camera` keys of `config.json`, their tests, and this file.
 9. **Snapshot `yolo_counts`** stays `{}` when YOLO is off (the existing S2.2 test expects the key present;
    the backend defaults it to `{}` anyway).
 
+## Task 2: YOLO data tooling (Section 14)
+
+### What was built
+
+- `training/capture.py` (`python -m training.capture`): same `open_camera(config)` as the worker (locked
+  exposure), frames resized to config size like the worker. `space` toggles auto save every 0.5 s
+  (`--interval`), `s` saves one, `q` quits. Saves JPEG q95 into `training/raw/<YYYYmmdd-HHMMSS>/`,
+  file names prefixed with the run name so several runs can be uploaded together. Preview overlay (bay
+  boxes, saved count vs 250 to 400 target, AUTO indicator) is never written into the images.
+- `training/check_dataset.py` (`python -m training.check_dataset <folder>`): validates a Roboflow YOLOv8
+  export: data.yaml names vs catalog `yolo_class`, nc, label files present and well formed, orphans,
+  boxes and images per class per split, warning under 100 boxes per class. Exit 1 on errors.
+- `training/train_colab.ipynb`: GPU check, `pip install ultralytics>=8.3`, upload + unzip the Roboflow
+  zip, rewrite data.yaml paths, class name check, `YOLO("yolo11n.pt").train(epochs=80, imgsz=640,
+  batch=16, patience=20)`, results.png, per class P / R / mAP50 / mAP50-95 table with PASS at 0.90,
+  sample predictions, download as `speedmart_yolo.pt`.
+- `training/TRAINING.md`: the morning procedure, Windows commands.
+- `training/data.yaml`: reference copy with the three class names (the real one comes in the export).
+
+### Decisions
+
+1. **No-tag counter in capture.** The capture tool runs the ArUco detector on each frame and counts saved
+   frames with no tag visible, shown as `no tags visible: N/M (want >= 50%)`. It enforces the "at least
+   half without tags" rule from the task without extra steps.
+2. **Model file name** follows `config.json` `vision.yolo_model` = `models/speedmart_yolo.pt` (the spec
+   text says `aisle_yolo.pt`; the project was renamed, config wins).
+3. **Class order** does not matter anywhere: fusion maps by class *name*. data.yaml uses Roboflow's
+   alphabetical order.
+4. **Gitignore for images**: `training/raw/.gitignore` and `training/dataset/.gitignore` (both `*`),
+   since the root `.gitignore` is outside this session's scope.
+5. **PyYAML optional** in check_dataset: uses it if installed (it is, via uvicorn[standard] and
+   ultralytics), else a small fallback parser for `names` / `nc`.
+6. **Colab dataset input**: file upload of the zip (no API key in the notebook). The Roboflow download
+   snippet is mentioned as an alternative with a warning not to share a notebook with the key in it.
+7. **Missing label file** = warning (Ultralytics treats it as background), not an error.
+
 ## Morning checklist
 
 (Filled in below as tasks complete.)
