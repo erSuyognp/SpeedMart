@@ -177,11 +177,13 @@ def test_ready_resyncs_bay_leds(tmp_data, monkeypatch):
     use_board(monkeypatch, board)
     with TestClient(app) as client:
         client.post("/internal/shelf", json=snap(with_bays(b2=[])), headers=HEADERS)
-        expected = ["LED,0,ON", "LED,1,ON", "LED,2,OFF"]
-        assert wait_for(lambda: serial_bridge.is_connected() and board.port.written[-3:] == expected)
+        leds = ["LED,0,ON", "LED,1,ON", "LED,2,OFF"]
+        assert wait_for(lambda: serial_bridge.is_connected() and "LED,2,OFF" in board.port.written)
         time.sleep(0.1)  # let the connect-time sync finish
         board.port.written.clear()
         board.port.feed("READY")
+        # Full resync: bay LEDs, then the current screen, then highlights (none).
+        expected = [*leds, "DISP,IDLE", "HILITE,ALL,OFF"]
         assert wait_for(lambda: board.port.written == expected), board.port.written
 
 
