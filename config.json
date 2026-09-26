@@ -45,7 +45,7 @@
     {"id": 2, "roi": [720, 200, 1000, 620], "sku": "bar", "led_index": 2}
   ],
   "serial": {
-    "port": "/dev/ttyUSB0",
+    "port": "COM4",
     "baud": 115200,
     "gate_led_index": 3
   }
