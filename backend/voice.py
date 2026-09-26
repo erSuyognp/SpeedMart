@@ -83,12 +83,13 @@ def voice_session(request: Request):
 
 @router.get("/api/voice/catalog")
 def voice_catalog(request: Request):
-    """What get_catalog tells the agent: products with price, tags and the bay they sit in."""
+    """What get_catalog tells the agent: products with price, tags and the bay they sit in. Bays are the numbers
+    on the printed shelf cards (bay id 0 is card 1), so the agent says what the shopper can see."""
     require_voice()
     require_member(request)
     bays: dict[str, list[int]] = {}
     for b in settings.bays:
-        bays.setdefault(b.sku, []).append(b.id)
+        bays.setdefault(b.sku, []).append(b.id + 1)
     return {"products": [
         {"sku": s.sku, "name": s.name, "price_usd": to_usd(to_cents(s.price_usd)),
          "tags": [t for t in s.tags if not t.startswith("complements:")],

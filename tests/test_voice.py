@@ -151,10 +151,10 @@ def test_voice_catalog_has_bays_and_tags():
     by_sku = {p["sku"]: p for p in products}
     assert set(by_sku) == set(voice.settings.skus)
     for b in voice.settings.bays:
-        assert b.id in by_sku[b.sku]["bays"]
+        assert b.id + 1 in by_sku[b.sku]["bays"]  # printed card numbers, 1-based
     elx = by_sku["elx"]
     assert elx == {"sku": "elx", "name": "Electrolyte tabs", "price_usd": 8.0, "tags": ["recovery"],
-                   "pairs_with": [], "bays": [0]}
+                   "pairs_with": [], "bays": [1]}
     assert by_sku["rec"]["pairs_with"] == ["elx"] and "complements:elx" not in by_sku["rec"]["tags"]
     assert client_for(None).get("/api/voice/catalog").status_code == 401
 
@@ -164,7 +164,7 @@ def test_voice_catalog_has_bays_and_tags():
 
 def test_catalog_endpoint_unchanged():
     body = client_for(None).get("/api/catalog").json()
-    assert list(body) == ["skus"]
+    assert list(body) == ["skus", "bays"]  # bays: added for the shelf map, skus as before
     assert all(set(s) == {"sku", "name", "price_usd"} for s in body["skus"])
 
 

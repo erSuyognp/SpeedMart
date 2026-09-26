@@ -1,4 +1,4 @@
-"""F18 "Tell the store what you need": shopper goal -> plan from the catalog, lit bays, cart vs plan at exit.
+"""F18 "Tell the store what you need": shopper goal -> plan from the catalog, glowing bays, cart vs plan at exit.
 
 The LLM proposes a plan; this module validates it strictly and falls back to a keyword rules planner, so a
 returned plan always uses real SKUs, real stock limits and fits the budget. All money math in integer cents.
@@ -17,7 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend import db, eventlog
+from backend import db, eventlog, ws
 from backend.cart import tax_cents, to_cents, to_usd
 from backend.settings import settings
 
@@ -336,21 +336,36 @@ def make_plan(text: str, member: dict[str, Any]) -> tuple[dict[str, Any], str | 
     return build_plan(*rules_plan(text, member), source="rules"), fallback_reason
 
 
-# --- shelf highlights (F12). serial_bridge.highlight / clear_highlights may not exist yet: skip if missing. ---
+# --- where to look: the plan's bays glow on every shelf map (plan_bays over /ws) and the gate screen shows
+# "Find bay 2 and 4" (DISP,FIND, only with hardware_leds on). There are no bay LEDs. ---
 
-def _serial(name: str, *args: Any) -> bool:
-    if not settings.features.hardware_leds:
-        return False
+_shown_bays: list[int] = []  # bays glowing on the shelf maps right now; guarded by _lock
+
+
+def shown_bays() -> list[int]:
+    with _lock:
+        return list(_shown_bays)
+
+
+def _set_shown_bays(bays: list[int]) -> None:
+    """Remember and broadcast the glowing bays. Only a change goes out, so idle sockets stay quiet."""
+    global _shown_bays
+    bays = sorted(set(bays))
+    with _lock:
+        if bays == _shown_bays:
+            return
+        _shown_bays = bays
+    ws.broadcast_plan_bays(bays)
+
+
+def _show_find(bays: list[int]) -> None:
+    if not settings.features.hardware_leds or not bays:
+        return
     try:
         from backend import serial_bridge
-        fn = getattr(serial_bridge, name, None)
-        if not callable(fn):
-            return False
-        fn(*args)
-        return True
-    except Exception as e:  # LEDs are decoration; never break planning
-        eventlog.log("intent_highlight_error", helper=name, error=repr(e))
-        return False
+        serial_bridge.show_find(bays)
+    except Exception as e:  # the gate screen is decoration; never break planning
+        eventlog.log("intent_find_error", error=repr(e))
 
 
 def _someone_else_inside(member_id: str) -> bool:
@@ -362,27 +377,27 @@ def _someone_else_inside(member_id: str) -> bool:
     return session is not None and session["member_id"] != member_id
 
 
-def show_highlights(plan: dict[str, Any], member_id: str) -> None:
+def show_on_shelf(plan: dict[str, Any], member_id: str) -> None:
     if _someone_else_inside(member_id):
-        return  # never blink bays for a shopper who is not the one in the store
-    _serial("clear_highlights")
-    for bay in plan["bays"]:
-        _serial("highlight", bay, True)
+        return  # never point at bays for a shopper who is not the one in the store
+    _set_shown_bays(plan["bays"])
+    _show_find(plan["bays"])
 
 
-def clear_highlights() -> None:
-    _serial("clear_highlights")
+def clear_shelf() -> None:
+    _set_shown_bays([])
 
 
 def _on_event(entry: dict[str, Any]) -> None:
-    """eventlog subscriber: session ended -> lights off; fresh entry -> forget the previous visit's plan."""
+    """eventlog subscriber: session ended -> bays stop glowing; fresh entry -> forget the previous visit's plan."""
     if entry.get("type") != "session_state":
         return
     if entry.get("to") in ENDED_STATES:
-        clear_highlights()
+        clear_shelf()
     elif entry.get("to") == "IN_STORE" and entry.get("from") is None and entry.get("member_id"):
         with _lock:
             _plans.pop(entry["member_id"], None)
+        clear_shelf()  # a plan made while the store was empty belongs to someone else
 
 
 _subscribed = False
@@ -486,7 +501,7 @@ def post_intent(body: IntentIn, request: Request):
     eventlog.log("intent_plan", member_id=member_id, text=text, plan_id=plan["plan_id"], source=plan["source"],
                  fallback_reason=fallback_reason, items={i["sku"]: i["qty"] for i in plan["items"]},
                  est_total_usd=plan["est_total_usd"], budget_usd=plan["budget_usd"], bays=plan["bays"])
-    show_highlights(plan, member_id)
+    show_on_shelf(plan, member_id)
     return plan
 
 
@@ -508,5 +523,5 @@ def delete_intent(request: Request):
     if plan is not None:
         eventlog.log("intent_cleared", member_id=member_id, plan_id=plan["plan_id"])
         if not _someone_else_inside(member_id):
-            clear_highlights()
+            clear_shelf()
     return {"ok": True}

@@ -1,4 +1,4 @@
-"""F18 tests: intent planner, validation, rules fallback, highlights, cart vs plan. No network, no board."""
+"""F18 tests: intent planner, validation, rules fallback, shelf map + gate FIND, cart vs plan. No network, no board."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def tmp_data(tmp_path, monkeypatch):
     monkeypatch.setattr(eventlog, "EVENTS_PATH", tmp_path / "events.log.jsonl")
     db.init_db()
     intent._plans.clear()
+    monkeypatch.setattr(intent, "_shown_bays", [])
     yield tmp_path
     intent._plans.clear()
 
@@ -323,46 +324,57 @@ def test_plans_are_per_member(tmp_data, llm_off):
     assert b.get("/api/intent/current").json() is None
 
 
-# --- highlights ---
+# --- where to look: plan_bays for the shelf maps, DISP,FIND on the gate screen (no bay LEDs) ---
 
 
-def test_highlight_helpers_missing_does_not_crash(tmp_data, llm_off, monkeypatch):
-    set_features(monkeypatch, hardware_leds=True)
-    monkeypatch.delattr(serial_bridge, "highlight", raising=False)
-    monkeypatch.delattr(serial_bridge, "clear_highlights", raising=False)
-    c = logged_in_client(add_member())
-    assert c.post("/api/intent", json={"text": "snack"}).status_code == 200
-    assert c.delete("/api/intent").status_code == 200
-    eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "IN_STORE"}, to="CANCELLED")
-
-
-def fake_helpers(monkeypatch):
+def fake_outputs(monkeypatch):
     calls = []
-    monkeypatch.setattr(serial_bridge, "highlight", lambda bay, on: calls.append(("highlight", bay, on)),
-                        raising=False)
-    monkeypatch.setattr(serial_bridge, "clear_highlights", lambda: calls.append(("clear",)), raising=False)
+    monkeypatch.setattr(intent.ws, "broadcast_plan_bays", lambda bays: calls.append(("plan_bays", list(bays))))
+    monkeypatch.setattr(serial_bridge, "show_find", lambda bays: calls.append(("find", list(bays))) or True)
     return calls
 
 
-def test_highlights_called_when_present(tmp_data, llm_off, monkeypatch):
+def test_plan_glows_bays_and_shows_find(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=True)
-    calls = fake_helpers(monkeypatch)
+    calls = fake_outputs(monkeypatch)
     c = logged_in_client(add_member())
-    c.post("/api/intent", json={"text": "Post run recovery under $15"})
-    assert calls == [("clear",), ("highlight", 0, True), ("highlight", 1, True)]
+    plan = c.post("/api/intent", json={"text": "Post run recovery under $15"}).json()
+    assert plan["bays"] == [0, 1]
+    assert calls == [("plan_bays", [0, 1]), ("find", [0, 1])]
+    assert intent.shown_bays() == [0, 1]
+    calls.clear()
+    c.post("/api/intent", json={"text": "Post run recovery under $15"})  # same bays: no re-broadcast
+    assert calls == [("find", [0, 1])]
     calls.clear()
     c.delete("/api/intent")
-    assert calls == [("clear",)]
+    assert calls == [("plan_bays", [])] and intent.shown_bays() == []
+    calls.clear()
+    c.delete("/api/intent")  # nothing glowing: nothing to say
+    assert calls == []
 
 
-def test_highlights_cleared_on_session_end(tmp_data, monkeypatch):
+def test_empty_plan_points_nowhere(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=True)
-    calls = fake_helpers(monkeypatch)
-    eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "CHECKOUT_PENDING"}, to="PAID")
-    assert calls == [("clear",)]
+    calls = fake_outputs(monkeypatch)
+    plan = logged_in_client(add_member()).post("/api/intent", json={"text": "a hammer"}).json()
+    assert plan["items"] == [] and plan["bays"] == []
+    assert calls == []
+
+
+def test_shelf_cleared_on_session_end_and_new_entry(tmp_data, llm_off, monkeypatch):
+    set_features(monkeypatch, hardware_leds=True)
+    calls = fake_outputs(monkeypatch)
+    logged_in_client(add_member()).post("/api/intent", json={"text": "Post run recovery under $15"})
     calls.clear()
     eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "IN_STORE"}, to="CHECKOUT_PENDING")
     assert calls == []
+    eventlog.log("session_state", session_id="ses_x", member_id="m", **{"from": "CHECKOUT_PENDING"}, to="PAID")
+    assert calls == [("plan_bays", [])]
+
+    logged_in_client(add_member()).post("/api/intent", json={"text": "Post run recovery under $15"})
+    calls.clear()
+    eventlog.log("session_state", session_id="ses_y", member_id="m2", **{"from": None}, to="IN_STORE")
+    assert calls == [("plan_bays", [])]  # someone else's plan stops glowing when a new shopper enters
 
 
 def test_new_entry_forgets_old_plan(tmp_data, llm_off):
@@ -373,24 +385,36 @@ def test_new_entry_forgets_old_plan(tmp_data, llm_off):
     assert c.get("/api/intent/current").json() is None
 
 
-def test_highlight_helper_error_is_swallowed(tmp_data, llm_off, monkeypatch):
+def test_someone_else_inside_sees_no_glow(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=True)
+    calls = fake_outputs(monkeypatch)
+    from backend import store
+    monkeypatch.setattr(store, "current_session", lambda: {"member_id": "mem_someone_else"})
+    c = logged_in_client(add_member())
+    assert c.post("/api/intent", json={"text": "Post run recovery under $15"}).status_code == 200
+    c.delete("/api/intent")
+    assert calls == [] and intent.shown_bays() == []
+
+
+def test_find_error_is_swallowed(tmp_data, llm_off, monkeypatch):
+    set_features(monkeypatch, hardware_leds=True)
+    calls = fake_outputs(monkeypatch)
 
     def broken(*args):
         raise RuntimeError("port gone")
-    monkeypatch.setattr(serial_bridge, "highlight", broken, raising=False)
-    monkeypatch.setattr(serial_bridge, "clear_highlights", broken, raising=False)
+    monkeypatch.setattr(serial_bridge, "show_find", broken)
     assert logged_in_client(add_member()).post("/api/intent", json={"text": "snack"}).status_code == 200
-    assert events("intent_highlight_error")
+    assert events("intent_find_error")
+    assert calls and calls[0][0] == "plan_bays"  # the shelf maps still glow
 
 
-def test_leds_off_never_calls_helpers(tmp_data, llm_off, monkeypatch):
+def test_gate_screen_off_still_glows_the_maps(tmp_data, llm_off, monkeypatch):
     set_features(monkeypatch, hardware_leds=False)
-    calls = fake_helpers(monkeypatch)
+    calls = fake_outputs(monkeypatch)
     c = logged_in_client(add_member())
-    c.post("/api/intent", json={"text": "snack"})
+    c.post("/api/intent", json={"text": "Post run recovery under $15"})
     c.delete("/api/intent")
-    assert calls == []
+    assert calls == [("plan_bays", [0, 1]), ("plan_bays", [])]  # never ("find", ...)
 
 
 # --- compare_cart_to_plan ---

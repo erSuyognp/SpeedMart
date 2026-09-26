@@ -38,8 +38,8 @@ SYSTEM_PROMPT = (
 )
 
 TEMPLATES = {
-    "empty": "Cart's empty. Grab anything from a lit bay.",
-    "misplaced": "{name} is in the wrong bay. Please return it to its lit slot.",
+    "empty": "Cart's empty. Grab anything from the shelf.",
+    "misplaced": "{name} is in the wrong bay. Please return it to bay {return_to_bay}.",
     "over_budget": "You're ${over_by} over budget. Putting back the {put_back_name} fixes it.",
     "suggest": "{cart_item} added. {sku_name} pairs well at ${price} and keeps you under budget.",
     "ok": "Looking good. ${remaining} left in your budget.",
@@ -82,7 +82,10 @@ def policy(cart: dict[str, Any], member: dict[str, Any] | None = None) -> dict[s
     if misplaced:
         w = misplaced[0]
         name = w.get("name") or (settings.skus[w["sku"]].name if w.get("sku") in settings.skus else w.get("sku"))
-        return {"kind": "misplaced", "sku": w.get("sku"), "bay": w.get("bay"), "name": name}
+        # return_to_bay is the number on the printed shelf card (bay id 0 is card 1), not the bay id.
+        home = next((b.id for b in settings.bays if b.sku == w.get("sku")), None)
+        return {"kind": "misplaced", "sku": w.get("sku"), "bay": w.get("bay"), "name": name,
+                "return_to_bay": home + 1 if home is not None else "its own"}
 
     if total > budget:
         # most expensive SKU in the cart by unit price; ties go to catalog/cart order

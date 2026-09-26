@@ -126,7 +126,15 @@ def config_public():
 
 @app.get("/api/catalog")
 def catalog():
-    return {"skus": [{"sku": s.sku, "name": s.name, "price_usd": s.price_usd} for s in settings.skus.values()]}
+    """SKUs with prices, plus the shelf map's bays: the printed card number (bay id 0 is card 1), the product
+    and how many of it are on the shelf now (null before the first vision snapshot)."""
+    counts = shelf_state.shelf_counts() if shelf_state.has_snapshot() else None
+    return {
+        "skus": [{"sku": s.sku, "name": s.name, "price_usd": s.price_usd} for s in settings.skus.values()],
+        "bays": [{"bay": b.id, "card": b.id + 1, "sku": b.sku, "name": settings.skus[b.sku].name,
+                  "on_shelf": counts.get(b.sku, 0) if counts is not None else None}
+                 for b in sorted(settings.bays, key=lambda b: b.id)],
+    }
 
 
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

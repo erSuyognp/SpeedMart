@@ -2,12 +2,14 @@
 
 One background thread owns the port: it opens serial.port, writes queued commands, reads incoming lines,
 and on any failure closes the port and retries every 3 s. Nothing here ever raises into the backend, so a
-missing or unplugged board only shows up as serial:false in /api/health. Runs only when hardware_leds is on.
+missing or unplugged board only shows up as serial:false in /api/health. Runs only when hardware_leds is on
+(the flag name predates the LED-free build; it now means "the gate screen is connected").
 
-The board's LCD is the store's gate display (DISP,<screen>,...) and bay LEDs can blink for the intent feature
-(HILITE,<bay>,ON|OFF). The bridge remembers the current screen and highlights and resends them, with the bay
-LEDs, on every (re)connect and READY. DisplayDirector maps backend.eventlog events to screens, so no other
-module has to call the display; docs/overnight/display.md lists the exact mapping.
+The board's LCD is the store's gate display (DISP,<screen>,...) and the only thing the backend drives. There
+are no bay or status LEDs: the backend never sends LED, SHELF, GATE or HILITE (the firmware still accepts
+them, harmlessly). The bridge remembers the current screen and resends it on every (re)connect and READY.
+DisplayDirector maps backend.eventlog events to screens, so no other module has to call the display;
+docs/overnight/display.md lists the exact mapping. show_find() puts up "Find bay 2 and 4" for a new plan.
 
     python -m backend.serial_bridge --list-ports     print serial ports, to set config.json serial.port
 """
@@ -26,12 +28,13 @@ from serial.tools import list_ports
 RETRY_S = 3.0
 READ_TIMEOUT_S = 0.1
 
-DISP_SCREENS = ("IDLE", "WELCOME", "TOTAL", "PAID", "DECLINED", "OCCUPIED")
+DISP_SCREENS = ("IDLE", "WELCOME", "TOTAL", "PAID", "DECLINED", "OCCUPIED", "FIND")
 DISP_ARG_MAX = 20
 IDLE_AFTER_S = 3.0       # CLOSED / CANCELLED -> IDLE after this long
 WELCOME_HOLD_S = 3.0     # WELCOME stays up this long before the live TOTAL takes over
 OCCUPIED_HOLD_S = 3.0    # "<name> is shopping" overlay, then back to the shopper's screen
 DECLINED_HOLD_S = 4.0    # DECLINED overlay, then back to TOTAL (the session stays CHECKOUT_PENDING, 7.1)
+FIND_HOLD_S = 6.0        # "Find bay 2 and 4" after a plan, then back to TOTAL (the firmware also reverts at 6 s)
 
 
 def open_port(port: str, baud: int, **kwargs: Any) -> Any:
@@ -54,11 +57,8 @@ class SerialBridge:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._connected = False
-        self._timers: dict[str, threading.Timer] = {}
-        self._timers_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._display_cmd = "DISP,IDLE"  # the board boots into IDLE
-        self._highlights: set[int] = set()
 
     @property
     def connected(self) -> bool:
@@ -67,11 +67,6 @@ class SerialBridge:
     @property
     def display_cmd(self) -> str:
         return self._display_cmd
-
-    @property
-    def highlights(self) -> set[int]:
-        with self._state_lock:
-            return set(self._highlights)
 
     def start(self) -> None:
         if self._thread is not None:
@@ -82,10 +77,6 @@ class SerialBridge:
 
     def stop(self) -> None:
         self._stop.set()
-        with self._timers_lock:
-            for t in self._timers.values():
-                t.cancel()
-            self._timers.clear()
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
@@ -95,20 +86,6 @@ class SerialBridge:
         """Queue one command (no newline). Never blocks; dropped on reconnect if the board was away."""
         self._out.put(cmd.strip())
 
-    def send_timed(self, cmd: str, reset_cmd: str, seconds: float) -> None:
-        """Send cmd now and reset_cmd after `seconds`, without blocking. A newer timed effect on the same
-        target (the part before the first comma, e.g. SHELF) replaces a pending reset."""
-        key = cmd.split(",", 1)[0]
-        timer = threading.Timer(seconds, self._fire_reset, (key, reset_cmd))
-        timer.daemon = True
-        with self._timers_lock:
-            old = self._timers.pop(key, None)
-            if old is not None:
-                old.cancel()
-            self._timers[key] = timer
-        self.send(cmd)
-        timer.start()
-
     def set_display(self, cmd: str) -> None:
         """Show a DISP command. The same screen again is not resent (the board would ignore it anyway)."""
         with self._state_lock:
@@ -116,26 +93,6 @@ class SerialBridge:
                 return
             self._display_cmd = cmd
         self.send(cmd)
-
-    def set_highlight(self, bay: int, on: bool) -> None:
-        with self._state_lock:
-            if on:
-                self._highlights.add(bay)
-            else:
-                self._highlights.discard(bay)
-        self.send(f"HILITE,{bay},{'ON' if on else 'OFF'}")
-
-    def clear_highlights(self) -> None:
-        with self._state_lock:
-            self._highlights.clear()
-        self.send("HILITE,ALL,OFF")
-
-    def _fire_reset(self, key: str, reset_cmd: str) -> None:
-        with self._timers_lock:
-            if self._timers.get(key) is not threading.current_thread():
-                return  # replaced by a newer effect
-            del self._timers[key]
-        self.send(reset_cmd)
 
     # --- thread ---
 
@@ -187,7 +144,7 @@ class SerialBridge:
 
     def _handle_line(self, line: str) -> None:
         _log("serial_in", line=line)
-        if line == "READY":  # board rebooted: every bay lit, screen IDLE, no highlights
+        if line == "READY":  # board rebooted: screen IDLE
             self.send_current_state()
         elif line == "BTN,0":
             from backend import admin  # lazy: admin imports this module
@@ -197,19 +154,11 @@ class SerialBridge:
             except Exception as e:
                 _log("serial_button_error", error=repr(e))
 
-    def send_led_state(self) -> None:
-        for cmd in bay_led_commands():
-            self.send(cmd)
-
     def send_current_state(self) -> None:
-        """Full resync after connect or READY: bay LEDs, the current screen, then highlights."""
-        self.send_led_state()
+        """Resync after connect or READY: the current screen."""
         with self._state_lock:
-            display_cmd, highlights = self._display_cmd, sorted(self._highlights)
+            display_cmd = self._display_cmd
         self.send(display_cmd)
-        self.send("HILITE,ALL,OFF")
-        for bay in highlights:
-            self.send(f"HILITE,{bay},ON")
 
 
 def _drain(q: queue.Queue) -> None:
@@ -261,28 +210,6 @@ def send(cmd: str) -> bool:
     return True
 
 
-def send_timed(cmd: str, reset_cmd: str, seconds: float) -> bool:
-    """E.g. send_timed("SHELF,GREEN", "SHELF,IDLE", 3)."""
-    if bridge is None:
-        return False
-    bridge.send_timed(cmd, reset_cmd, seconds)
-    return True
-
-
-def bay_led_commands() -> list[str]:
-    """LED,<bay>,ON for every bay holding at least one unit, else LED,<bay>,OFF."""
-    from backend import shelf_state
-
-    return [f"LED,{bay_id},{'ON' if occupied else 'OFF'}"
-            for bay_id, occupied in sorted(shelf_state.bay_occupancy().items())]
-
-
-def send_bay_leds() -> None:
-    """Called after every shelf change."""
-    if bridge is not None:
-        bridge.send_led_state()
-
-
 def sanitize_arg(value: Any) -> str:
     """One DISP argument: ASCII only (the board's font), no commas or newlines, at most DISP_ARG_MAX chars."""
     text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
@@ -306,18 +233,19 @@ def display(screen: str, *args: Any) -> bool:
     return True
 
 
-def highlight(bay: int, on: bool) -> bool:
-    """Blink bay `bay`'s LED at 2 Hz (on), or return it to its LED,<bay> state (off)."""
-    if bridge is None:
-        return False
-    bridge.set_highlight(int(bay), bool(on))
-    return True
+def bay_cards(bays: Any) -> str:
+    """Bay ids as the printed shelf cards show them (bay 0 is card "1"): [1, 3] -> "2 and 4"."""
+    cards = [str(int(b) + 1) for b in sorted({int(b) for b in bays})]
+    if len(cards) <= 1:
+        return "".join(cards)
+    return " ".join(cards[:-1]) + " and " + cards[-1]  # no commas: DISP arguments cannot hold them
 
 
-def clear_highlights() -> bool:
+def show_find(bays: Any) -> bool:
+    """Gate screen "Find bay 2 and 4" for FIND_HOLD_S, then back. False while hardware_leds is off."""
     if bridge is None:
         return False
-    bridge.clear_highlights()
+    director.find(bays)
     return True
 
 
@@ -452,7 +380,6 @@ class DisplayDirector:
             if self._screen[0] != "PAID":  # no payment event seen (yet): still say approved
                 self._show("PAID", self._total, "")
         elif to in ("CLOSED", "CANCELLED"):
-            clear_highlights()
             self._cancel()
             self._later(IDLE_AFTER_S, lambda: self._show("IDLE"))
 
@@ -460,7 +387,7 @@ class DisplayDirector:
         self._set_cart(e)
         if e.get("state") not in ("IN_STORE", "CHECKOUT_PENDING"):
             return
-        if self._screen[0] in ("WELCOME", "OCCUPIED", "DECLINED", "PAID"):
+        if self._screen[0] in ("WELCOME", "OCCUPIED", "DECLINED", "PAID", "FIND"):
             return  # a timed screen is up; it hands over to TOTAL with the latest numbers
         self._show_total()
 
@@ -468,10 +395,23 @@ class DisplayDirector:
         name = _occupant_first_name(e.get("occupant_session_id"))
         back = self._screen
         self._show("OCCUPIED", name)
-        if back[0] in ("TOTAL", "WELCOME", "OCCUPIED"):
+        if back[0] in ("TOTAL", "WELCOME", "OCCUPIED", "FIND"):
             self._later(OCCUPIED_HOLD_S, self._show_total)
         else:
             self._later(OCCUPIED_HOLD_S, lambda: self._show(*back))
+
+    def find(self, bays: Any) -> None:
+        """FIND overlay for a new plan; afterwards the live TOTAL (in a session) or the screen it covered."""
+        text = bay_cards(bays)
+        if not text:
+            return
+        with self._lock:
+            back = self._screen
+            self._show("FIND", text)
+            if back[0] in ("TOTAL", "WELCOME", "OCCUPIED", "FIND", "DECLINED"):
+                self._later(FIND_HOLD_S, self._show_total)
+            else:
+                self._later(FIND_HOLD_S, lambda: self._show(*back))
 
     def _on_payment(self, e: dict[str, Any]) -> None:
         # "payment" carries status, amount_usd and auth_code (payments.py record_payment).

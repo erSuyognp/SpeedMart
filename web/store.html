@@ -50,6 +50,12 @@
       <!-- F18 entry point: the shopper describes a goal and the store plans it (web/intent.html). -->
       <a class="button secondary block" href="/intent.html">Tell us what you need</a>
 
+      <section class="card stack" aria-labelledby="shelf-title">
+        <h2 id="shelf-title">The shelf</h2>
+        <div id="shelf-map"></div>
+        <p id="find-note" class="muted small" style="margin:0" aria-live="polite" hidden></p>
+      </section>
+
       <section class="card">
         <h2>Your cart</h2>
         <ul id="cart" class="cart-list"></ul>
@@ -81,6 +87,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
+  <script src="/js/shelfmap.js"></script>
   <script src="/js/pages/store.js"></script>
 </body>
 </html>

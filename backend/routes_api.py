@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend import eventlog, payments, serial_bridge, shelf_state, store, ws
+from backend import eventlog, payments, shelf_state, store, ws
 from backend.settings import settings
 
 # HTTP status for each StoreError code. Unlisted codes are 400.
@@ -23,9 +23,6 @@ STORE_ERROR_STATUS = {
     "unknown_member": 404,
     "unknown_sku": 400,
 }
-GATE_OPEN_S = 3  # 9.7: gate LED green this long after a successful entry
-SHELF_GREEN_S = 3  # 9.7: whole shelf green after an authorized payment
-SHELF_RED_S = 2  # 9.7: whole shelf red after a decline
 
 
 class ApiError(Exception):
@@ -147,7 +144,6 @@ def gate_enter(body: GateBody, request: Request):
         raise store.VisionUnavailable()
     auth_passkeys.consume_fresh_verification(request, member["id"])
     session = store.start_session(member["id"])  # re-checks the lock under store._lock
-    serial_bridge.send_timed("GATE,OPEN", "GATE,IDLE", GATE_OPEN_S)
     eventlog.log("gate_enter", member_id=member["id"], session_id=session["id"])
     return {"session": public_session(session), "cart": store.cart_for(session)}
 
@@ -239,9 +235,7 @@ def gate_exit_approve(request: Request):
             payments.forget_instruction(session["id"])
 
     if payment["status"] == payments.AUTHORIZED:
-        serial_bridge.send_timed("SHELF,GREEN", "SHELF,IDLE", SHELF_GREEN_S)
         return {"payment": payment}
-    serial_bridge.send_timed("SHELF,RED", "SHELF,IDLE", SHELF_RED_S)
     ws.broadcast_gate(member["id"], "declined")
     return {"payment": payment, "message": result.get("message") or "The card was declined."}
 

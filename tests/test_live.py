@@ -16,7 +16,9 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from itsdangerous import TimestampSigner  # noqa: E402
 
-from backend import routes_api, store  # noqa: E402
+from identity_helpers import set_features  # noqa: E402
+
+from backend import intent, routes_api, store  # noqa: E402
 from backend.main import app  # noqa: E402
 from test_cart import (BAY_IDS, FULL, TOKEN, member_id, qty,  # noqa: E402,F401
                        simulate_restart, snap, tmp_data, with_bays)
@@ -220,3 +222,35 @@ def test_dev_routes_work_for_members_when_gates_off(tmp_data, monkeypatch, membe
         client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
         r = client.post("/api/dev/checkout")
         assert r.status_code == 200 and r.json()["cart"]["state"] == "CHECKOUT_PENDING"
+
+
+# --- shelf map: /api/catalog bays and the public plan_bays message ---
+
+def test_catalog_lists_bays_with_card_numbers_and_counts(tmp_data):
+    with TestClient(app) as client:
+        bays = client.get("/api/catalog").json()["bays"]
+        assert [b["bay"] for b in bays] == sorted(BAY_IDS)
+        assert [b["card"] for b in bays] == [b + 1 for b in sorted(BAY_IDS)]  # bay id 0 is card "1"
+        assert all(b["on_shelf"] is None for b in bays)  # no snapshot yet: unknown, not zero
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1])), headers=HEADERS)
+        by_bay = {b["bay"]: b for b in client.get("/api/catalog").json()["bays"]}
+        assert by_bay[0] == {"bay": 0, "card": 1, "sku": "elx", "name": "Electrolyte tabs", "on_shelf": 1}
+        assert by_bay[1]["on_shelf"] == 2
+
+
+def test_plan_bays_reaches_every_socket_with_bay_numbers_only(tmp_data, monkeypatch):
+    set_features(monkeypatch, llm=False)  # keyword planner: recovery -> bays 0 and 1
+    with TestClient(app) as shopper, TestClient(app) as kiosk:
+        enter_store(shopper)
+        with kiosk.websocket_connect("/ws") as sock:  # the kiosk: not signed in
+            assert sock.receive_json() == {"type": "store_status", "data": {"occupied": True}}
+            plan = shopper.post("/api/intent", json={"text": "Post run recovery under $15"}).json()
+            assert plan["bays"] == [0, 1]
+            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 1]}}
+        # A kiosk that (re)connects while the plan is up is told straight away.
+        with kiosk.websocket_connect("/ws") as sock:
+            assert sock.receive_json()["type"] == "store_status"
+            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": [0, 1]}}
+            assert shopper.delete("/api/intent").json() == {"ok": True}
+            assert sock.receive_json() == {"type": "plan_bays", "data": {"bays": []}}
+        assert intent.shown_bays() == []

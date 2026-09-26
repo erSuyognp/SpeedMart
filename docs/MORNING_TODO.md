@@ -74,14 +74,20 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
 
 ---
 
-## 3. ESP32 board: gate display and bay highlight (30 min)
+## 3. Gate screen and bay number cards (30 min)
 
-Nothing here was run on hardware overnight — no board was attached.
+There are **no bay LEDs and no status RGB LED** (no soldering, no breadboard). The only board is the LilyGO
+T-Display-S3 at the gate: USB powered, **nothing wired to it**. Shoppers find their bays by the printed number
+cards and the glowing shelf map on their phone and the kiosk. Nothing here was run on hardware overnight.
 
-- [ ] **Wire bays 3 and 4** before flashing (they are new): bay 3 LED anode to **GPIO 17**, bay 4 LED anode to
-      **GPIO 21**, each through its own **150 Ω** resistor, both cathodes to any **GND** pin. Same as bays 0 to 2
-      (GPIO 1, 2, 18). On a **touch** T-Display-S3, 17 and 21 belong to the touch controller — this board is the
-      plain one, so they are free.
+- [ ] **Print the bay number cards:**
+      ```powershell
+      .venv\Scripts\python.exe scripts\gen_bay_cards.py
+      ```
+      Open `tags\bay_cards.pdf`, print at 100% ("fit to page" off). Cut out cards **1 to 5** (big number, product
+      name underneath) and **tape them to the shelf front**, left to right, each under its product: card 1 under
+      bay id 0 (Electrolyte tabs) … card 5 under bay id 4 (Vegan trail mix). The same numbers show on every
+      shelf map, so a mismatch sends shoppers to the wrong bay. Keep the cards out of the camera's bay ROIs.
 - [ ] Find the port: `.venv\Scripts\python.exe -m backend.serial_bridge --list-ports`.
 - [ ] Flash (`pio` is not on PATH on this machine):
       ```powershell
@@ -103,16 +109,16 @@ Nothing here was run on hardware overnight — no board was attached.
       `DISP,WELCOME,Maya` · `DISP,TOTAL,$12.96,3` · `DISP,TOTAL,$8.64,1` (reads "1 item") ·
       `DISP,PAID,$12.96,A1B2C3` · `DISP,DECLINED` · `DISP,OCCUPIED,Maya` ·
       `DISP,WELCOME,Bartholomew Jones` (shrinks to fit) · `DISP,IDLE`.
-- [ ] **All five bays:** `LED,0,ON` … `LED,4,ON` light bays 0 to 4 in order left to right, `LED,<n>,OFF`
-      turns each back off. Bays **3 and 4 are new** — if either stays dark, check its resistor and GND first.
-- [ ] **Highlight:** `LED,1,ON` then `HILITE,1,ON` → bay 1 blinks about twice a second. `HILITE,1,OFF` →
-      steady on again. `LED,1,OFF` + `HILITE,1,ON` → blinks. `HILITE,ALL,OFF` → stays off. Repeat for bay 4.
-- [ ] While the screen animates, confirm the **other LEDs, the RGB breathing and the button** still work
-      (hold GPIO 14 for 1 s → prints `BTN,0`).
+- [ ] **Find screen (new):** type `DISP,TOTAL,$8.64,1` then `DISP,FIND,2 and 4` → "Find bay" and a big orange
+      **"2 and 4"**, "Look for the number cards" underneath. After **6 s** it returns to "$8.64 / 1 item" on its
+      own. `DISP,FIND,1 2 3 4 and 5` shrinks to fit. From `DISP,IDLE`, a FIND returns to the idle screen.
+- [ ] While the screen animates, confirm the **button** still works (hold GPIO 14 for 1 s → prints `BTN,0`).
 - [ ] End to end: close the monitor, start the backend, admin demo-login, start a session. The LCD shows
       "Welcome, Demo", then "$0.00 / 0 items" after 3 s. Pick an item → the total updates in about 1 s.
       Admin reset → "SpeedMart" idle after 3 s.
-- [ ] **Unplug and replug USB**: the screen and LEDs come back to the current state (resync on `READY`).
+- [ ] With a session running, make a plan on the phone (`intent.html`, "Post run recovery under $15") → the LCD
+      shows "Find bay 1 and 2" for 6 s, then the total again.
+- [ ] **Unplug and replug USB**: the screen comes back to the current state (resync on `READY`).
 
 ---
 
@@ -193,8 +199,7 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
 
 `gates: true`, `passkeys: true`, shelf feed running. Watch the **LCD** during this section too.
 
-- [ ] Scan **QR 2** → **Enter with Face ID** → Face ID. Expect "Welcome in, `<name>`", the gate LED green for
-      3 s, the LCD showing "Welcome, `<name>`" then the total, and the cart page with a green live dot.
+- [ ] Scan **QR 2** → **Enter with Face ID** → Face ID. Expect "Welcome in, `<name>`", the LCD showing "Welcome, `<name>`" then the total, and the cart page with a green live dot.
 - [ ] **Second phone** (or a desktop signed in as another member) scans QR 2 while the first shopper is inside.
       Expect "Someone is shopping right now. Try again in a minute." and `<name> is shopping` on the LCD for 3 s.
 - [ ] Take one electrolyte off the shelf → row "Electrolyte tabs × 1 $8.00", total **$8.64**, LCD total updates.
@@ -203,9 +208,9 @@ offline") unless a shelf snapshot arrived in the last 2 s, so keep the worker ru
       expiry, intent "Pay $8.64 to SpeedMart #01 for 1 item", sandbox label). Button **Approve $8.64 with Face ID**.
 - [ ] Tap **Keep shopping** → back on the cart page, cart live again. Scan QR 3 again.
 - [ ] Admin page → turn **force-decline on**. Tap Approve → Face ID. Expect red "Declined: Card declined
-      (sandbox: forced by staff). You can try again.", shelf LEDs red for 2 s, **LCD `DECLINED` for 4 s then
+      (sandbox: forced by staff). You can try again.", **LCD `DECLINED` for 4 s then
       back to the total**, button "Try again with Face ID".
-- [ ] Turn force-decline **off** → **Try again with Face ID** → Face ID. Expect shelf green 3 s, **LCD
+- [ ] Turn force-decline **off** → **Try again with Face ID** → Face ID. Expect **LCD
       `APPROVED` with the auth code**, and the receipt page: green check, "Paid $8.64", card label, auth code,
       "+8 points · 8 total", "Show payment record" JSON. `data\payments.log.jsonl` has a DECLINED and an
       AUTHORIZED line.
@@ -262,8 +267,11 @@ With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
 - [ ] On the cart page, tap **Tell us what you need** → `intent.html`. Tap the chip "Post run recovery under $15".
       Expect Electrolyte tabs + Recovery drink, est. total $12.96, budget $15.00, and "Planned by the store AI…"
       (or "…by keyword match" if the LLM is off or slow).
-- [ ] **Blinking bays** (needs `hardware_leds: true` and the board from section 3): the planned bays blink after
-      a plan is made, and stop on **Start over** and when the session ends.
+- [ ] **Glowing bays:** under the plan cards a shelf map shows bays 1 to 5 with product names and counts; the
+      planned bays glow and pulse, and the strip says "Look for bay 1 and bay 2, they're glowing on your
+      screen." The cart page's small shelf map glows the same bays. They stop on **Start over** and when the
+      session ends. With **Reduce motion** on (iPhone: Settings → Accessibility → Motion) the glow stays but
+      does not pulse. With `hardware_leds: true` the gate screen also shows "Find bay 1 and 2" (section 3).
 - [ ] **Phone mic.** Android Chrome: the mic button appears; tap it, say "something to drink", and the plan
       appears when you stop talking. iPhone Safari: works only on iOS 14.5+ **over the tunnel**. If the button
       is missing it hides itself — that is expected, not a bug. *(Speech was never tested overnight — no microphone.)*
@@ -288,6 +296,11 @@ With a real `ANTHROPIC_API_KEY` in `.env` and `features.llm: true`:
 - [ ] **Read the status banner from where the judges will queue** (about 2 m). "Open" / "Someone is shopping"
       is ~42 px tall on the Venue's 1280×800 panel.
 - [ ] Scan the on-screen codes with a phone from that same distance.
+- [ ] **Shelf map** at the bottom: five bays with the card numbers 1 to 5, product names and "2 on shelf",
+      readable from about 2 m. Take an item off the shelf → its count drops within ~5 s. Make a plan on a phone
+      (store occupied by that shopper, or empty) → the planned bays glow **immediately** and the hint reads
+      "Glowing: bay 1 and bay 2 are on a shopper's list." **Start over** on the phone → the glow stops. No name
+      ever appears on this screen.
 - [ ] Start a session → the banner goes amber. Kill the backend → grey "Reconnecting…" **and the QR codes stay
       on screen**. Restart → green "Open" with no reload.
 - [ ] **Decide about the NFC hint.** "Tap your phone here" is printed text with an animated glyph — there is

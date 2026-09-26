@@ -94,12 +94,11 @@ def state():
 
 
 def do_reset(source: str = "admin") -> dict:
-    """Cancel the active session, clear overrides, free the lock, LEDs idle. Also the board's BTN,0."""
+    """Cancel the active session, clear overrides, free the lock. Also the board's BTN,0. The gate screen
+    goes back to IDLE on its own (serial_bridge.DisplayDirector sees the CANCELLED session)."""
     cancelled = store.cancel(reason="admin_reset")
     store.clear_overrides()
     eventlog.log("admin_reset", source=source, cancelled_session_id=cancelled["id"] if cancelled else None)
-    serial_bridge.send("SHELF,IDLE")
-    serial_bridge.send("GATE,IDLE")
     return {"ok": True, "cancelled_session_id": cancelled["id"] if cancelled else None}
 
 
@@ -138,7 +137,7 @@ def demo_login(request: Request):
 def led(body: LedBody):
     cmd = body.cmd.strip()
     if not cmd or not cmd.isascii() or not cmd.isprintable():  # one line, no control chars
-        raise ApiError(400, "bad_command", "Command must be one line of ASCII, e.g. LED,0,OFF.")
+        raise ApiError(400, "bad_command", "Command must be one line of ASCII, e.g. DISP,IDLE.")
     if not serial_bridge.send(cmd):
         raise ApiError(409, "hardware_leds_off", "hardware_leds is off in config.json.")
     eventlog.log("admin_led", cmd=cmd, connected=serial_bridge.is_connected())

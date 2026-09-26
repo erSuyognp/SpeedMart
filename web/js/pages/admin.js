@@ -5,7 +5,9 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const VISION_MAX_AGE_MS = 2000;
-  const LED_COMMANDS = ["LED,0,OFF", "LED,0,ON", "SHELF,GREEN", "SHELF,RED", "SHELF,IDLE", "GATE,OPEN", "GATE,CLOSED", "GATE,IDLE", "PING"];
+  // Gate screen tests (raw serial). There are no bay or status LEDs any more, so no LED/SHELF/GATE/HILITE.
+  const LED_COMMANDS = ["DISP,IDLE", "DISP,WELCOME,Maya", "DISP,TOTAL,$8.64,1", "DISP,FIND,2 and 4",
+    "DISP,PAID,$8.64,A1B2C3", "DISP,DECLINED", "DISP,OCCUPIED,Maya", "PING"];
   const STRIPE_LABELS = { test: "Test mode", no_key: "No key", off: "Off" };
   let state = null;
   let events = [];

@@ -61,7 +61,7 @@
       height: 100vh;
       max-width: none;
       display: grid;
-      grid-template-rows: auto auto 1fr auto;
+      grid-template-rows: auto auto 1fr auto auto;
       gap: clamp(10px, 1.6vh, 22px);
       padding: clamp(14px, 2.2vh, 30px) clamp(20px, 3vw, 46px);
     }
@@ -242,6 +242,29 @@
       line-height: 1.25;
     }
 
+    /* --- shelf map: the kiosk's dark skin for web/js/shelfmap.js --- */
+    .kiosk-shelf { display: grid; gap: clamp(6px, 1vh, 12px); }
+    .kiosk-shelf-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: clamp(15px, 2.1vh, 26px);
+      font-weight: 700;
+    }
+    .kiosk-shelf-hint { font-weight: 500; color: var(--k-muted); transition: color 0.4s ease; }
+    .kiosk-shelf-hint.is-glow { color: #fbbf24; }
+    body.kiosk .shelf-map {
+      --sm-frame: #4a3826;
+      --sm-back: var(--k-panel);
+      --sm-unit: #3b4558;
+      --sm-unit-edge: #5d6a82;
+      --sm-text: var(--k-text);
+      --sm-muted: var(--k-muted);
+      --sm-glow: #fbbf24;
+      --sm-glow-soft: rgba(251, 191, 36, 0.45);
+    }
+
     /* --- footer: NFC hint + sandbox note --- */
 
     .kiosk-foot {
@@ -319,6 +342,15 @@
       <!-- filled in by js/pages/kiosk.js: JOIN + ENTER, or the EXIT code on ?side=exit -->
     </section>
 
+    <section class="kiosk-shelf" aria-labelledby="shelf-head">
+      <div class="kiosk-shelf-head">
+        <span id="shelf-head">The shelf</span>
+        <span id="shelf-hint" class="kiosk-shelf-hint" aria-live="polite">Every bay has a number card on the shelf front.</span>
+      </div>
+      <!-- web/js/shelfmap.js draws the bays; plan_bays on /ws makes them glow (bay numbers only) -->
+      <div id="shelf-map"></div>
+    </section>
+
     <footer class="kiosk-foot">
       <div class="kiosk-nfc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -335,6 +367,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/ws.js"></script>
+  <script src="/js/shelfmap.js"></script>
   <script src="/js/pages/kiosk.js"></script>
 </body>
 </html>

@@ -111,7 +111,7 @@ def test_policy_empty_beats_misplaced():
 
 def test_policy_misplaced():
     d = agent.policy(make_cart({"elx": 1}, misplaced=misplaced_bar()), MEMBER)
-    assert d == {"kind": "misplaced", "sku": "bar", "bay": 0, "name": "Protein bar"}
+    assert d == {"kind": "misplaced", "sku": "bar", "bay": 0, "name": "Protein bar", "return_to_bay": 3}
 
 
 def test_policy_misplaced_beats_over_budget():
@@ -159,8 +159,8 @@ def test_policy_uses_member_budget():
 # --- templates ---
 
 @pytest.mark.parametrize("picked, misplaced, expected", [
-    ({}, None, "Cart's empty. Grab anything from a lit bay."),
-    ({"elx": 1}, misplaced_bar(), "Protein bar is in the wrong bay. Please return it to its lit slot."),
+    ({}, None, "Cart's empty. Grab anything from the shelf."),
+    ({"elx": 1}, misplaced_bar(), "Protein bar is in the wrong bay. Please return it to bay 3."),
     ({"elx": 2, "bar": 1}, None, "You're $1.06 over budget. Putting back the Electrolyte tabs fixes it."),
     ({"elx": 1}, None, "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."),
     ({"bar": 1}, None, "Looking good. $16.22 left in your budget."),

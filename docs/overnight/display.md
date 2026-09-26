@@ -1,5 +1,12 @@
 # Overnight: gate display + bay highlight (F12)
 
+> **Superseded (design change): no bay LEDs, no status LED.** The board is now only the gate screen, USB
+> powered with nothing wired to it. The backend no longer sends `LED`, `SHELF`, `GATE` or `HILITE` (the firmware
+> still accepts them); resync on connect / `READY` is just the current `DISP` line; `highlight()`,
+> `clear_highlights()`, `send_bay_leds()` and `send_timed()` are gone. A new plan shows `DISP,FIND,<cards>`
+> ("Find bay 2 and 4", cards = bay id + 1) via `serial_bridge.show_find()` and the shelf maps glow via the
+> `plan_bays` WebSocket message. The mapping table below is kept current; the rest is the overnight record.
+
 Branch `claude/speedmart-display-bay-highlight-5d8c21`. Files touched: `firmware/shelf_esp32/platformio.ini`,
 `firmware/shelf_esp32/src/main.cpp`, `backend/serial_bridge.py`, `tests/test_serial.py` (one test updated),
 `tests/test_serial_display.py` (new), this file. Nothing else was edited.
@@ -81,12 +88,13 @@ New API. Every function is a no-op that returns `False` while `features.hardware
 | `session_state` | `to=IN_STORE`, `from` null | `WELCOME,<first name of member_id>` for 3 s, then `TOTAL` with the latest cart |
 | `session_state` | `to=IN_STORE`, `from=CHECKOUT_PENDING` (exit cancelled) | `TOTAL` |
 | `session_state` | `to=PAID` and PAID not already shown | `PAID,<last total>,` (empty auth; fallback if no payment event arrives) |
-| `session_state` | `to=CLOSED` or `CANCELLED` | `HILITE,ALL,OFF` at once, then `IDLE` after 3 s (cancelled if another screen comes first) |
+| `session_state` | `to=CLOSED` or `CANCELLED` | `IDLE` after 3 s (cancelled if another screen comes first) |
 | `cart_changed` (store.py: `session_id, state, items{sku:qty}, total_usd, warnings, source`) | `state` IN_STORE or CHECKOUT_PENDING | `TOTAL,$<total_usd 2dp>,<sum of qty>`. While WELCOME/OCCUPIED/DECLINED/PAID is up the numbers are only stored; that screen hands over to TOTAL |
 | `store_occupied` (store.py: `member_id, occupant_session_id`) | someone tries to enter while occupied | `OCCUPIED,<occupant first name>` for 3 s, then back to `TOTAL` |
 | `payment` (payments.py: `status`, `amount_usd`, `auth_code`) | `status=AUTHORIZED` | `PAID,<amount_usd>,<auth_code>` |
 | `payment` | `status=DECLINED` | `DECLINED` for 4 s, then `TOTAL` (the session stays CHECKOUT_PENDING per 7.1) |
 | payment with `status=ERROR` or any other status | | ignored |
+| (direct call) `show_find(bays)` from `backend/intent.py` | a new plan with bays, and nobody else in the store | `FIND,<cards>` for 6 s (`FIND_HOLD_S`), then `TOTAL` (or the screen it covered, e.g. `IDLE`). Cart changes meanwhile only update the stored numbers |
 
 The amount is `amount_usd`, falling back to the last cart total; the auth code comes from `auth_code`.
 Any other status (including `ERROR`) is ignored, and so is any other event name.

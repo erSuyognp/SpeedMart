@@ -29,13 +29,13 @@ The full design lives in [SpeedMart_BUILD_SPEC.md](SpeedMart_BUILD_SPEC.md). The
  │ cart.py          cart = baseline − shelf now (+ admin override), integer cents, tax            │
  │ agent.py         deterministic policy → template → optional LLM phrasing (1.2 s debounce)       │
  │ ws.py            /ws pushes cart, agent, gate and store status messages                        │
- │ serial_bridge.py USB serial to the shelf controller (bay LEDs, gate/shelf status)              │
- │ admin.py         team control panel: reset, overrides, demo login, LED tests                   │
+ │ serial_bridge.py USB serial to the gate screen (DISP screens only, no LEDs)                    │
+ │ admin.py         team control panel: reset, overrides, demo login, gate screen tests           │
  │ eventlog.py      everything important → data/events.log.jsonl                                  │
  └──────────────────────────────────────────────────────────────────────────────────────────────────┘
         │ WebSocket + JSON API                                  │ USB serial (COM port)
         ▼                                                       ▼
- phone browser (web/, plain HTML + JS)                 ESP32 shelf controller (firmware/)
+ phone browser (web/, plain HTML + JS)                 T-Display-S3 gate screen (firmware/)
 ```
 
 Key ideas:
@@ -103,8 +103,12 @@ Then set up the hardware side:
 2. **Camera:** set `camera.index` in `config.json` (the overhead camera is `1` on the dev laptop). Mount it
    50 to 80 cm above the shelf, pointing straight down.
 3. **Calibrate bays:** `python -m vision.calibrate`. Drag one rectangle per bay in order, `s` to save.
-4. **Shelf controller:** flash `firmware/shelf_esp32` with PlatformIO (`pio run -t upload`). Find its port in
-   Device Manager → Ports (COM & LPT) and set `serial.port` in `config.json` (e.g. `"COM4"`).
+4. **Gate screen:** flash `firmware/shelf_esp32` to the LilyGO T-Display-S3 with PlatformIO
+   (`pio run -t upload`). It is USB powered with nothing wired to it; there are no bay or status LEDs. Find its
+   port in Device Manager → Ports (COM & LPT) and set `serial.port` in `config.json` (e.g. `"COM4"`).
+5. **Bay cards:** `python scripts/gen_bay_cards.py` writes `tags/bay_cards.pdf`. Print at 100% and tape cards
+   1 to 5 to the shelf front, left to right (card 1 is bay id 0). Shoppers find bays by these numbers and the
+   glowing shelf map on their phone and the kiosk.
 
 Run the tests:
 
@@ -114,12 +118,14 @@ python -m pytest -q
 
 ## Run
 
-On Windows, `scriptsun_all.ps1` starts the backend (uvicorn on `0.0.0.0:8000`), the ngrok tunnel when
+On Windows, `scripts
+un_all.ps1` starts the backend (uvicorn on `0.0.0.0:8000`), the ngrok tunnel when
 `features.https_tunnel` is on, and the vision worker. Output is prefixed `[api]` / `[tunnel]` / `[vision]`,
 and Ctrl+C stops all three. Extra arguments go to the worker (e.g. `--no-window`); `-NoTunnel` skips ngrok.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scriptsun_all.ps1
+powershell -ExecutionPolicy Bypass -File scripts
+un_all.ps1
 ```
 
 `scripts/run_all.sh` is the same thing for Git Bash / macOS / Linux:
@@ -169,21 +175,21 @@ demo tools) have no flag and can't be turned off.
 | `gates` | F8: QR entry/exit gates, one-shopper lock | `false` on this machine for now | "Start shopping" / "Checkout" buttons on the store page |
 | `stripe` | F10: Stripe test-mode charge | `true` | Mock payment provider only |
 | `llm` | F11: LLM phrasing of the agent line, and F18: the intent planner | `true` | Template agent lines and a keyword intent planner (also the case when no API key is set) |
-| `hardware_leds` | F12: shelf controller over USB serial | `true` | No serial; overlay + phone only |
+| `hardware_leds` | F12: the gate screen over USB serial (the name predates the LED-free build) | `true` | No serial; the shelf maps still glow |
 | `yolo` | F13: YOLO detection fused with tags | `false` | Tags only |
 | `https_tunnel` | F14: ngrok static domain | `true` | LAN http only (needs `passkeys` off) |
 | `loyalty` | F15: points on the receipt | `true` | No points |
 | `load_cells` | F16: HX711 load cells | `false` | Default |
 
 Cut order if behind (cut from the top first): load cells → YOLO → loyalty → Stripe → passkeys → LLM (templates
-stay) → LEDs.
+stay) → gate screen.
 
 ## Reset the demo
 
 Do this before every judge:
 
 1. Open `admin.html`, log in, press **Reset**. This cancels the active session, clears overrides, frees the
-   store lock and sets the LEDs to idle. Holding the controller's button for 1 s does the same.
+   store lock; the gate screen goes back to idle. Holding the board's button for 1 s does the same.
 2. Put every item back in its home bay and check the overlay: all bays green, every tag ID visible.
 3. Check the admin badges: vision age under 500 ms, serial connected.
 
@@ -207,6 +213,6 @@ The full pre-judge checklist is in [docs/DEMO.md](docs/DEMO.md).
 
 | Role | Owns | Name |
 |---|---|---|
-| HW: hardware / firmware | shelf, camera mount, shelf controller, LEDs | _TBD_ |
+| HW: hardware / firmware | shelf, camera mount, gate screen, bay cards | _TBD_ |
 | VA: vision + API | vision worker, backend, passkeys, Stripe | _TBD_ |
 | APP: app + story | phone pages, agent, demo script, Devpost | _TBD_ |

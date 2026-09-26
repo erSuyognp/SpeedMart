@@ -1,4 +1,5 @@
-"""S4.1: instruction (8.6), mock payment (9.9), approve, receipt (11.5), loyalty (9.10), LEDs, force-decline."""
+"""S4.1: instruction (8.6), mock payment (9.9), approve, receipt (11.5), loyalty (9.10), force-decline.
+No LEDs: approve and decline send nothing raw over serial (the gate screen follows the event log)."""
 
 from __future__ import annotations
 
@@ -31,8 +32,9 @@ def setup(monkeypatch):
 
 @pytest.fixture
 def leds(monkeypatch):
-    sent: list[tuple] = []
-    monkeypatch.setattr(serial_bridge, "send_timed", lambda *a: sent.append(a) or True)
+    """Raw serial commands. The build has no LEDs, so every test expects this to stay empty."""
+    sent: list[str] = []
+    monkeypatch.setattr(serial_bridge, "send", lambda cmd: sent.append(cmd) or True)
     return sent
 
 
@@ -123,7 +125,7 @@ def test_approve_charges_mock_and_pays(member_id, leds, gate_events):
 
         session = store.get_session(q["cart"]["session_id"])
         assert session["state"] == "PAID" and store.current_session() is None  # lock free
-        assert ("SHELF,GREEN", "SHELF,IDLE", 3) in leds
+        assert leds == []  # no SHELF,GREEN: there is no shelf LED
         assert (member_id, "paid") in gate_events
         assert points_of(member_id) == 8
 
@@ -170,7 +172,7 @@ def test_force_decline_then_retry(member_id, leds, gate_events, monkeypatch):
         assert body["payment"]["status"] == "DECLINED" and body["payment"]["auth_code"] is None
         assert body["payment"]["points_earned"] == 0
         assert body["message"] == "Card declined (sandbox: forced by staff)"
-        assert ("SHELF,RED", "SHELF,IDLE", 2) in leds and (member_id, "declined") in gate_events
+        assert leds == [] and (member_id, "declined") in gate_events  # no SHELF,RED
         assert store.current_session()["state"] == "CHECKOUT_PENDING" and points_of(member_id) == 0
 
         # Retry needs a new Face ID; with force-decline off it goes through.

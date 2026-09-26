@@ -96,6 +96,11 @@ def broadcast_store_status(occupied: bool) -> None:
     manager.publish({"type": "store_status", "data": {"occupied": occupied}}, everyone=True)
 
 
+def broadcast_plan_bays(bays: list[int]) -> None:
+    """Public: the bays the current plan points at ([] when cleared). Bay ids only, never who asked."""
+    manager.publish({"type": "plan_bays", "data": {"bays": list(bays)}}, everyone=True)
+
+
 def broadcast_admin(msg: dict[str, Any]) -> None:
     manager.publish(msg, admin=True)
 
@@ -112,7 +117,7 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    from backend import shelf_state, store  # local import: store imports this module
+    from backend import intent, shelf_state, store  # local import: store imports this module
 
     await websocket.accept()
     session = websocket.session
@@ -128,4 +133,7 @@ async def websocket_endpoint(websocket: WebSocket):
         initial.append({"type": "cart", "data": await asyncio.to_thread(store.cart_for, current)})
     if tag == ADMIN:
         initial.append({"type": "shelf", "data": shelf_state.state()})
+    glowing = intent.shown_bays()
+    if glowing:  # clients start with nothing glowing, so an empty list needs no message
+        initial.append({"type": "plan_bays", "data": {"bays": glowing}})
     await manager.serve(websocket, tag, initial)

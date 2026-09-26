@@ -128,7 +128,7 @@ def misplaced() -> list[dict[str, Any]]:
 
 
 def bay_occupancy() -> dict[int, bool]:
-    """bay id -> True if its last stable contents hold at least one unit (drives the bay LEDs, 9.7)."""
+    """bay id -> True if its last stable contents hold at least one unit."""
     with _lock:
         return {b: bool(u) or (settings.features.yolo and any(_bay_yolo.get(b, {}).values()))
                 for b, u in _bay_units.items()}
@@ -180,7 +180,6 @@ async def post_shelf(request: Request):
         return _error(422, "bad_snapshot", f"Snapshot body is invalid: {e}")
     changed = apply_snapshot(snap)
     if changed:
-        from backend import serial_bridge, store  # local import: store imports this module
+        from backend import store  # local import: store imports this module
         store.on_shelf_change()
-        serial_bridge.send_bay_leds()
     return {"ok": True, "changed": changed}

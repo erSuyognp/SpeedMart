@@ -3,9 +3,10 @@
 //   /kiosk.html              JOIN + ENTER codes side by side (entrance side)
 //   /kiosk.html?side=exit    the EXIT code on its own (exit side)
 //
-// Renders three things and nothing else: the store name from /api/config/public, the public
-// store_status message from /ws (8.4), and QR PNGs from /api/kiosk/qr/{which}. It never asks for
-// /api/me and never reads a name out of a message, so no personal data can reach this screen.
+// Renders four things and nothing else: the store name from /api/config/public, the public
+// store_status and plan_bays messages from /ws (8.4), QR PNGs from /api/kiosk/qr/{which}, and the shelf
+// map from /api/catalog. It never asks for /api/me and never reads a name out of a message, so no
+// personal data can reach this screen: plan_bays carries bay numbers only.
 
 (function () {
   var SIDE = new URLSearchParams(location.search).get("side") === "exit" ? "exit" : "entrance";
@@ -43,6 +44,8 @@
   var statusText = document.getElementById("status-text");
   var statusSub = document.getElementById("status-sub");
   var codesEl = document.getElementById("codes");
+  var SHELF_POLL_MS = 5000; // unit counts: the kiosk gets no cart messages, so it re-reads the catalog
+  var shelf = null;
 
   // --- QR cards ---
 
@@ -85,6 +88,18 @@
     statusSub.textContent = s[SIDE].sub;
   }
 
+  // --- shelf map ---
+
+  function setGlow(bays) {
+    shelf.setGlow(bays);
+    var hint = document.getElementById("shelf-hint");
+    var on = bays.length > 0;
+    hint.classList.toggle("is-glow", on);
+    hint.textContent = on
+      ? "Glowing: " + ShelfMap.baysText(bays) + (bays.length > 1 ? " are" : " is") + " on a shopper's list."
+      : "Every bay has a number card on the shelf front.";
+  }
+
   // --- clock ---
 
   function tickClock() {
@@ -107,6 +122,8 @@
     }
 
     buildCards();
+    shelf = ShelfMap.create(document.getElementById("shelf-map"), { size: "large" });
+    setInterval(function () { shelf.refresh(); }, SHELF_POLL_MS);
     setStatus("offline");
     tickClock();
 
@@ -120,10 +137,15 @@
 
     // ws.js reconnects on its own with 0.5 s -> 4 s backoff and resyncs after each connect.
     connectSocket({
-      onStatus: function (connected) { if (!connected) setStatus("offline"); },
+      // On (re)connect nothing glows until the server says so: it sends plan_bays first thing if a plan is up.
+      onStatus: function (connected) { if (connected) setGlow([]); else setStatus("offline"); },
       onMessage: function (msg) {
         if (msg && msg.type === "store_status" && msg.data) {
           setStatus(msg.data.occupied ? "busy" : "open");
+          shelf.refresh();
+        } else if (msg && msg.type === "plan_bays" && msg.data) {
+          setGlow(msg.data.bays || []);
+          shelf.refresh();
         }
       }
     });

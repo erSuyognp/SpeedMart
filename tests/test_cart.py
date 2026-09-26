@@ -19,7 +19,7 @@ os.environ["ADMIN_PASSWORD"] = "test-admin-password"
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend import cart, db, eventlog, routes_api, shelf_state, store  # noqa: E402
+from backend import cart, db, eventlog, intent, routes_api, shelf_state, store  # noqa: E402
 from backend.main import app  # noqa: E402
 
 TOKEN = "test-internal-token"
@@ -83,6 +83,8 @@ def simulate_restart() -> None:
     store._overrides.clear()  # memory only: data/overrides.json survives like the DB
     store._overrides_session = None
     store._last_cart_key = None
+    intent._plans.clear()  # plans live in memory only (8.8)
+    intent._shown_bays = []
 
 
 @pytest.fixture(autouse=True)

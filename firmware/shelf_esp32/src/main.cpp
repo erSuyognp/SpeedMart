@@ -1,11 +1,13 @@
-// Shelf controller (F12) for the LilyGO T-Display-S3. Section 12.3 adapted to discrete LEDs.
+// Gate screen (F12) for the LilyGO T-Display-S3: USB powered, nothing wired to it. Section 12.3 adapted.
 // A dumb display and button hat: no cart logic. Protocol (9.7), newline-terminated ASCII:
-//   in:  LED,<bay>,ON|OFF   SHELF,GREEN|RED|IDLE   GATE,OPEN|CLOSED|IDLE   PING
-//        DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
+//   in:  DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
 //        DISP,DECLINED | DISP,OCCUPIED,<name>          onboard LCD as the store's gate display
-//        HILITE,<bay>,ON|OFF   HILITE,ALL,OFF          blink a bay LED at 2 Hz (intent feature)
+//        DISP,FIND,<bays>                              "Find bay 2 and 4" for a new plan, 6 s, then back
+//        PING
+//   legacy, still accepted but no longer sent (the build has no bay or status LEDs):
+//        LED,<bay>,ON|OFF   SHELF,GREEN|RED|IDLE   GATE,OPEN|CLOSED|IDLE   HILITE,<bay>,ON|OFF|ALL,OFF
 //   out: READY (boot)   PONG   BTN,0 (GPIO 14 button held 1 s)
-// Timed effects (green for 3 s) are the backend's job: it sends SHELF,IDLE afterward.
+// Timed screens are the backend's job, except FIND, which also reverts here so a lost line can't strand it.
 // DISP arguments never contain commas (the backend strips them).
 
 #include <Arduino.h>
@@ -68,6 +70,10 @@ String dispKey;       // the last DISP command drawn; the same command again is 
 String dispScreen;    // IDLE, WELCOME, ... (drives the idle animation)
 unsigned long lastAnimAt = 0;
 uint16_t dotColor[5];
+#define FIND_HOLD_MS 6000
+String totalKey;      // the last DISP,TOTAL drawn since IDLE: where FIND returns to
+String findBackKey;   // the screen FIND covered, used when there is no TOTAL yet (e.g. IDLE)
+unsigned long findAt = 0;
 
 enum ShelfMode { SHELF_IDLE, SHELF_GREEN, SHELF_RED };
 enum GateMode  { GATE_IDLE, GATE_OPEN, GATE_CLOSED };
@@ -191,6 +197,13 @@ void drawOccupied(const String& name) {
   drawCentered("Please wait", 0, SCR_W, 104, 4, C_AMBER);
 }
 
+void drawFind(const String& bays) {
+  gfx->fillRect(0, 0, SCR_W, 10, C_ACCENT);
+  drawCentered("Find bay", 0, SCR_W, 26, 4, C_TEXT);
+  drawFit(bays, 0, SCR_W, 70, 7, C_ACCENT);  // "2 and 4" at size 7; "1 2 3 4 and 5" shrinks to fit
+  drawCentered("Look for the number cards", 0, SCR_W, 140, 2, C_DIM);
+}
+
 // cmd is the whole line, e.g. "DISP,TOTAL,$12.96,3". Redraws only when it differs from the last one.
 void handleDisp(const String& cmd) {
   if (cmd == dispKey) return;
@@ -204,7 +217,13 @@ void handleDisp(const String& cmd) {
   }
   const String& screen = parts[0];
   if (screen != "IDLE" && screen != "WELCOME" && screen != "TOTAL" && screen != "PAID" &&
-      screen != "DECLINED" && screen != "OCCUPIED") return;  // unknown screen: keep what is shown
+      screen != "DECLINED" && screen != "OCCUPIED" && screen != "FIND") return;  // unknown: keep what is shown
+  if (screen == "FIND") {
+    if (dispScreen != "FIND") findBackKey = dispKey;
+    findAt = millis();
+  }
+  if (screen == "TOTAL") totalKey = cmd;
+  else if (screen == "IDLE") totalKey = "";
   dispKey = cmd;
   dispScreen = screen;
   if (!displayOk) return;
@@ -215,6 +234,15 @@ void handleDisp(const String& cmd) {
   else if (screen == "PAID")     drawPaid(parts[1], parts[2]);
   else if (screen == "DECLINED") drawDeclined();
   else if (screen == "OCCUPIED") drawOccupied(parts[1]);
+  else if (screen == "FIND")     drawFind(parts[1]);
+}
+
+// FIND_HOLD_MS after a FIND: back to the cart total (or whatever FIND covered). The backend sends the same
+// TOTAL at the same moment; handleDisp ignores whichever arrives second.
+void pollFind() {
+  if (dispScreen != "FIND" || millis() - findAt < FIND_HOLD_MS) return;
+  String back = totalKey.length() ? totalKey : findBackKey;
+  handleDisp(back.length() ? back : String("DISP,IDLE"));
 }
 
 void renderDisplay() {
@@ -320,6 +348,7 @@ void setup() {
 void loop() {
   pollSerial();
   pollButton();
+  pollFind();
   render();
   delay(10);
 }

@@ -27,9 +27,9 @@ def gates_on(monkeypatch):
 
 @pytest.fixture
 def leds(monkeypatch):
-    sent: list[tuple] = []
-    monkeypatch.setattr(serial_bridge, "send_timed", lambda *a: sent.append(a) or True)
-    monkeypatch.setattr(serial_bridge, "send", lambda cmd: sent.append((cmd,)) or True)
+    """Raw serial commands. The build has no LEDs, so every test expects this to stay empty."""
+    sent: list[str] = []
+    monkeypatch.setattr(serial_bridge, "send", lambda cmd: sent.append(cmd) or True)
     return sent
 
 
@@ -85,7 +85,7 @@ def test_enter_with_face_id_opens_gate(member_id, leds):
         body = r.json()
         assert body["session"]["state"] == "IN_STORE" and body["session"]["member_id"] == member_id
         assert body["cart"]["items"] == [] and body["session"]["baseline"] == full_baseline()
-        assert ("GATE,OPEN", "GATE,IDLE", 3) in leds
+        assert leds == []  # no GATE,OPEN: there is no gate LED
 
         # Scanning again while inside is harmless and needs no new Face ID.
         again = client.post("/api/gate/enter", json=ENTRY)

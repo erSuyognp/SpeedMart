@@ -4,6 +4,7 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   let busy = false;
+  let shelf = null; // ShelfMap, drawn once the page knows the shopper is signed in
 
   function show(which) {
     ["signin", "ask", "loading", "plan"].forEach((id) => { $(id).hidden = !which.includes(id); });
@@ -41,7 +42,12 @@
     $("plan-source").textContent = plan.source === "llm"
       ? "Planned by the store AI from today's shelf."
       : "Planned from today's shelf by keyword match.";
-    $("blink-note").hidden = empty || !plan.bays || plan.bays.length === 0;
+    const bays = empty ? [] : plan.bays || [];
+    $("find-note").textContent = ShelfMap.lookFor(bays);
+    $("find-note").hidden = bays.length === 0;
+    if (!shelf) shelf = ShelfMap.create($("shelf-map"), { size: "regular" });
+    shelf.setGlow(bays);
+    shelf.refresh();
     show(["plan"]);
   }
 

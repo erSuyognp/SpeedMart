@@ -107,14 +107,16 @@ const clientTools = {
   async make_plan({ goal_text } = {}) {
     try {
       const plan = await api.post("/api/intent", { text: String(goal_text || "").slice(0, 300) });
-      page().renderPlan(plan); // same cards as the text flow; the backend already lit the bays
+      page().renderPlan(plan); // same cards and shelf map as the text flow
+      const bays = plan.items.length > 0 ? plan.bays : [];
       return JSON.stringify({
         goal_summary: plan.goal_summary,
         items: plan.items.map((i) => ({ name: i.name, qty: i.qty, unit_price_usd: i.unit_price_usd, reason: i.reason })),
         est_total_usd: plan.est_total_usd,
         budget_usd: plan.budget_usd,
         fits_budget: plan.fits_budget,
-        blinking_on_shelf: plan.items.length > 0 && plan.bays.length > 0,
+        bays_to_find: [...new Set(bays)].sort((a, b) => a - b).map(ShelfMap.cardOf), // printed card numbers
+        where_to_look: ShelfMap.lookFor(bays),
       });
     } catch (e) { return toolError(e); }
   },

@@ -7,6 +7,7 @@
   let gates = true;
   let current = null; // last CartSnapshot rendered
   let paidSession = null; // session id once PAID, so CLOSED afterwards still says "Paid"
+  let shelf = null; // compact ShelfMap; glows while this shopper has a plan
 
   function show(which) {
     $("loading").hidden = which !== "loading";
@@ -113,11 +114,13 @@
     $("warnings").innerHTML = "";
     warnings.forEach((w) => {
       const p = document.createElement("p");
-      p.textContent = w.message + ". Please return it to its lit slot.";
+      const card = shelf && shelf.cardForSku(w.sku);
+      p.textContent = w.message + ". Please return it to " + (card ? "bay " + card : "its own bay") + ".";
       $("warnings").appendChild(p);
     });
 
     renderRows(snap.items);
+    if (shelf) shelf.refresh(); // a cart change is a shelf change: update the unit counts
     $("subtotal").textContent = api.money(snap.subtotal_usd);
     $("tax").textContent = api.money(snap.tax_usd);
     $("total").textContent = api.money(snap.total_usd);
@@ -136,6 +139,19 @@
   async function resync(res) {
     try { gates = !!(await api.config()).features.gates; } catch (e) { /* keep the last known value */ }
     renderCurrent(res);
+    loadPlan();
+  }
+
+  // Glow the bays of this shopper's own plan. plan_bays on the socket is only the cue to re-read it.
+  async function loadPlan() {
+    let bays = [];
+    try {
+      const plan = await api.get("/api/intent/current");
+      if (plan && plan.items.length) bays = plan.bays;
+    } catch (e) { /* signed out or offline: nothing glows */ }
+    shelf.setGlow(bays);
+    $("find-note").textContent = ShelfMap.lookFor(bays);
+    $("find-note").hidden = bays.length === 0;
   }
 
   function renderCurrent(res) {
@@ -165,6 +181,8 @@
       paidSession = current.session_id;
     } else if (msg.type === "gate" && msg.data.event === "cancelled") {
       api.toast("Your session was ended by staff.");
+    } else if (msg.type === "plan_bays") {
+      loadPlan();
     }
   }
 
@@ -172,6 +190,7 @@
     $("start-btn").addEventListener("click", (e) => action(e.currentTarget, "/api/dev/start"));
     // Gates off: the exit page does the quote (/api/dev/checkout), approval and receipt.
     $("checkout-btn").addEventListener("click", () => { location.href = "/exit.html"; });
+    shelf = ShelfMap.create($("shelf-map"), { size: "compact" });
     try {
       const cfg = await api.config();
       gates = !!cfg.features.gates;

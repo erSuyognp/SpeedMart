@@ -20,7 +20,7 @@
     .plan-item .name { font-weight: 600; }
     .plan-item .price { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
     .plan-item .reason { grid-column: 1 / -1; color: var(--muted); font-size: 0.9rem; }
-    .blink-note { background: var(--ok-bg); color: var(--ok); }
+    .find-note { background: var(--ok-bg); color: var(--ok); }
     .spinner { display: inline-block; width: 18px; height: 18px; border: 3px solid var(--line);
                border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite;
                vertical-align: middle; margin-right: 8px; }
@@ -111,7 +111,12 @@
         <p id="plan-source" class="muted small" style="margin:10px 0 0"></p>
       </section>
 
-      <section id="blink-note" class="strip blink-note">Your items are blinking on the shelf</section>
+      <section id="shelf" class="card stack" aria-labelledby="shelf-title">
+        <h2 id="shelf-title">Where to find it</h2>
+        <div id="shelf-map"></div>
+      </section>
+
+      <section id="find-note" class="strip find-note" aria-live="polite"></section>
 
       <div class="row">
         <button id="restart-btn" type="button" class="grow">Start over</button>
@@ -124,6 +129,7 @@
   <footer class="site-footer">Sandbox demo · no real payments</footer>
 
   <script src="/js/api.js"></script>
+  <script src="/js/shelfmap.js"></script>
   <script src="/js/pages/intent.js"></script>
   <script type="module" src="/js/pages/voice.js"></script>
 </body>

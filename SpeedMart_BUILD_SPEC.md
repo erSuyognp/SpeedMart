@@ -447,7 +447,7 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 |---|---|---|---|---|
 | GET | `/api/health` | — | `{"ok":true,"vision_age_ms":int,"serial":bool}` | `vision_age_ms` = ms since last shelf snapshot |
 | GET | `/api/config/public` | — | features, store name, currency | Frontend reads flags from here |
-| GET | `/api/catalog` | — | SKUs with prices | |
+| GET | `/api/catalog` | — | `{"skus":[{sku,name,price_usd}],"bays":[{bay,card,sku,name,on_shelf}]}` | `bays` feeds the shelf map: `card` is the printed number (bay id 0 is card 1), `on_shelf` the SKU's units on the shelf now (`null` before the first snapshot) |
 | POST | `/api/members/signup` | `{"name":str,"budget_usd"?:num,"dietary"?:str}` | `{"member":{...}}` | Creates member, logs in via cookie. If F10 on, creates Stripe customer + attaches `pm_card_visa` |
 | GET | `/api/me` | — | member + `has_passkey` + active session id | 401 if not logged in |
 | POST | `/api/logout` | — | `{"ok":true}` | |
@@ -464,7 +464,7 @@ All JSON. Errors are `{"error": "<code>", "message": "<human text>"}` with a pro
 | WS | `/ws` | — | stream of messages (8.4) | Identifies member by cookie |
 | POST | `/api/intent` | `{"text":str}` (≤ 300 chars) | `Plan` (8.8) | F18. Logged-in member. 401 `not_logged_in`, 400 `empty_text` / `text_too_long`, 404 `unknown_member` |
 | GET | `/api/intent/current` | — | `Plan` (8.8) or `null` | F18. 401 if not logged in |
-| DELETE | `/api/intent` | — | `{"ok":true}` | F18. Clears the plan and any bay highlights |
+| DELETE | `/api/intent` | — | `{"ok":true}` | F18. Clears the plan; its bays stop glowing (`plan_bays` with `[]`) |
 
 ### 8.2 Internal (vision worker → backend)
 
@@ -496,7 +496,7 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 | POST | `/admin/force-exit` | — | Cancel active session only |
 | POST | `/admin/override` | `{"sku":"elx","delta":1}` | Adjust cart qty for that SKU by delta (manual fallback). Logged as `source:"override"` |
 | POST | `/admin/demo-login` | — | Logs this browser in as the demo member |
-| POST | `/admin/led` | `{"cmd":"LED,ALL,GREEN"}` | Raw serial command |
+| POST | `/admin/led` | `{"cmd":"DISP,IDLE"}` | Raw serial command (gate screen test) |
 | POST | `/admin/force-decline` | `{"on":bool}` | Next charge returns DECLINED (for Q&A demos) |
 
 ### 8.4 WebSocket messages (server → client)
@@ -506,11 +506,17 @@ Protected by admin cookie set via `POST /admin/login {"password":...}`.
 {"type":"agent","data":{"line":"Electrolytes added. A recovery drink is $4 and keeps you under $20."}}
 {"type":"gate","data":{"event":"entered"|"exit_pending"|"paid"|"declined"|"cancelled"}}
 {"type":"store_status","data":{"occupied":true}}
+{"type":"plan_bays","data":{"bays":[0,1]}}   // public: bays the current plan points at, [] when cleared
 {"type":"shelf","data":{...}}          // admin sockets only
 {"type":"log","data":{...}}            // admin sockets only
 ```
 
 Clients reconnect with exponential backoff (0.5 s → 4 s max) and call `GET /api/store/current` on reconnect.
+
+`plan_bays` goes to every socket (the kiosk is not signed in) and carries bay ids only, never who made the
+plan. It is sent when a plan is created (unless someone else is in the store) and with `[]` when it is cleared,
+when the session ends, or when a new shopper enters. Only changes are sent; a socket that connects while bays
+are glowing gets it among its first messages.
 
 ### 8.5 CartSnapshot
 
@@ -605,7 +611,8 @@ Plans live in memory, one per member, and are lost on a backend restart.
 `est_total_usd` includes tax, like `CartSnapshot.total_usd`, so a plan and a cart compare like for like.
 `budget_usd` is the **lowest** of the member's budget, any dollar amount in the text ("under $15") and the
 LLM's own override — an override may only lower it. `source` is `"llm"` or `"rules"`. `bays` are the bays
-holding the planned SKUs; with F12 on they are highlighted (`HILITE,<bay>,ON`) while the plan is current.
+holding the planned SKUs; they glow on every shelf map (`plan_bays`, 8.4) while the plan is current, and with
+F12 on the gate screen shows `DISP,FIND,<cards>` ("Find bay 2 and 4") for 6 s. There are no bay LEDs.
 An empty `items` list is a valid rules plan ("nothing on our shelf matches that yet"); an empty list from
 the LLM is invalid and falls back to rules.
 
@@ -728,12 +735,14 @@ ok:          "Looking good. ${remaining} left in your budget."
 
 Background thread. Opens the port; on failure retries every 3 s and reports `serial:false` in `/api/health`. Never crash the backend if the ESP32 is missing.
 
-Outgoing (PC → ESP32), newline-terminated ASCII:
+Outgoing (PC → ESP32), newline-terminated ASCII. **Design change:** the build has no bay LEDs and no status
+LED; the board is only the gate screen. The backend sends DISP commands only; the firmware still accepts the
+old LED, GATE, SHELF and HILITE lines and ignores them harmlessly.
 
 ```
-LED,<bay>,ON | LED,<bay>,OFF      bay LED (ON = bay has at least one item)
-GATE,OPEN | GATE,CLOSED | GATE,IDLE   gate LED green / red / dim white
-SHELF,GREEN | SHELF,RED | SHELF,IDLE  whole shelf flash (payment result / error / idle breathing)
+DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
+DISP,DECLINED | DISP,OCCUPIED,<name>
+DISP,FIND,<cards>                     "Find bay 2 and 4" (cards as printed, "2 and 4"), 6 s, then back to TOTAL
 PING
 ```
 
@@ -746,7 +755,9 @@ BTN,0              onboard button pressed (maps to admin reset)
 W,<bay>,<grams>    load cell reading, F16 only
 ```
 
-Backend sends: bay LEDs after every shelf change; `GATE,OPEN` for 3 s on enter; `SHELF,GREEN` for 3 s on AUTHORIZED; `SHELF,RED` 2 s on DECLINED; `SHELF,IDLE` otherwise.
+Backend sends: the screen for each store event (WELCOME on enter, TOTAL on cart changes, PAID / DECLINED on
+payment, IDLE after the session) and FIND when a plan is made. Bays are found by printed number cards 1 to 5
+on the shelf front (`scripts/gen_bay_cards.py`).
 
 ### 9.8 Passkeys (`backend/auth_passkeys.py`, F7)
 

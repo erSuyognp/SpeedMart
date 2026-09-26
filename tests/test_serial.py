@@ -1,4 +1,5 @@
-"""S1.4 tests: serial bridge with a fake port. No board needed."""
+"""S1.4 tests: serial bridge with a fake port. No board needed. The build has no bay or status LEDs: the
+bridge only ever drives the gate screen (DISP), so no test here expects LED, SHELF, GATE or HILITE."""
 
 from __future__ import annotations
 
@@ -12,14 +13,16 @@ from fastapi.testclient import TestClient
 from backend import serial_bridge, shelf_state, store
 from backend.main import app
 from backend.settings import settings
-from test_cart import BAY_IDS, FULL, TOKEN, events, snap, tmp_data, with_bays  # noqa: F401
-N = len(BAY_IDS)
-
-
-def leds(**state: bool) -> list[str]:
-    """The LED line for every bay, all ON unless named otherwise: leds(b0=False) turns bay 0 off."""
-    return [f"LED,{b},{'OFF' if state.get(f'b{b}') is False else 'ON'}" for b in BAY_IDS]
+from test_cart import FULL, TOKEN, events, snap, tmp_data, with_bays  # noqa: F401
+from identity_helpers import set_features
 from test_live import admin_login, enter_store
+
+LEGACY = ("LED", "SHELF", "GATE", "HILITE")
+
+
+def legacy(written: list[str]) -> list[str]:
+    """Commands for the LEDs that no longer exist. The backend must never send any."""
+    return [c for c in written if c.split(",", 1)[0] in LEGACY]
 
 HEADERS = {"X-Internal-Token": TOKEN}
 
@@ -108,7 +111,7 @@ def test_missing_board_never_crashes_and_reports_false(tmp_data):
         admin_login(client)
         assert client.get("/admin/state").json()["health"]["serial"] is False
         # /admin/led still answers: queued, board just is not there.
-        r = client.post("/admin/led", json={"cmd": "LED,0,OFF"})
+        r = client.post("/admin/led", json={"cmd": "DISP,IDLE"})
         assert r.status_code == 200 and r.json() == {"ok": True, "connected": False}
 
 
@@ -120,11 +123,12 @@ def test_connect_health_and_admin_led(tmp_data, monkeypatch):
         assert client.get("/api/health").json()["serial"] is True
         admin_login(client)
         assert client.get("/admin/state").json()["health"]["serial"] is True
-        # On connect the bridge syncs every bay LED (shelf empty so far).
-        assert wait_for(lambda: board.port.written[:3] == ["LED,0,OFF", "LED,1,OFF", "LED,2,OFF"])
-        assert client.post("/admin/led", json={"cmd": "SHELF,GREEN"}).json()["connected"] is True
-        assert wait_for(lambda: "SHELF,GREEN" in board.port.written)
-        r = client.post("/admin/led", json={"cmd": "LED,0,OFF\nPING"})
+        # On connect the bridge syncs the gate screen, and nothing else.
+        assert wait_for(lambda: board.port.written[:1] == ["DISP,IDLE"])
+        assert client.post("/admin/led", json={"cmd": "DISP,FIND,2 and 4"}).json()["connected"] is True
+        assert wait_for(lambda: "DISP,FIND,2 and 4" in board.port.written)
+        assert legacy(board.port.written) == []
+        r = client.post("/admin/led", json={"cmd": "DISP,IDLE\nPING"})
         assert r.status_code == 400 and r.json()["error"] == "bad_command"
 
 
@@ -141,25 +145,23 @@ def test_unplug_flips_serial_false_then_replug_recovers(tmp_data, monkeypatch):
         assert len(board.ports) == 2
 
 
-def test_shelf_change_drives_bay_leds(tmp_data, monkeypatch):
+def test_shopping_sends_no_led_commands(tmp_data, monkeypatch):
+    """Shelf changes, entry, a pick, checkout, payment and reset: only DISP lines reach the board."""
+    set_features(monkeypatch, gates=False, passkeys=False, stripe=False)  # approve without Face ID
     board = Board()
     use_board(monkeypatch, board)
     with TestClient(app) as client:
         assert wait_for(lambda: serial_bridge.is_connected())
-        client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-N:] == leds())
-        client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-N:] == leds())
+        enter_store(client)
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)  # pick elx
         client.post("/internal/shelf", json=snap(with_bays(b0=[]), frame_id=3), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-N:] == leds(b0=False))
-        client.post("/internal/shelf", json=snap(FULL, frame_id=4), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-N:] == leds())
-        # An unstable empty bay keeps its last stable contents, so its LED stays on.
-        n = len(board.port.written)
-        client.post("/internal/shelf", json=snap(with_bays(b0=[]), unstable=(0,), frame_id=5), headers=HEADERS)
-        time.sleep(0.1)
-        assert len(board.port.written) == n
-        assert shelf_state.bay_occupancy() == {b: True for b in BAY_IDS}
+        assert client.post("/api/dev/checkout").status_code == 200
+        assert client.post("/api/gate/exit/approve").json()["payment"]["status"] == "AUTHORIZED"
+        assert wait_for(lambda: any(c.startswith("DISP,PAID") for c in board.port.written)), board.port.written
+        assert client.post("/admin/reset").status_code == 200
+        time.sleep(0.2)
+        assert legacy(board.port.written) == [], board.port.written
+        assert all(c.startswith("DISP,") for c in board.port.written), board.port.written
 
 
 def test_incoming_lines_logged_and_button_resets(tmp_data, monkeypatch):
@@ -175,37 +177,21 @@ def test_incoming_lines_logged_and_button_resets(tmp_data, monkeypatch):
         assert store.current_session() is None
         reset = events("admin_reset")[-1]
         assert reset["source"] == "button" and reset["cancelled_session_id"] == started["session"]["id"]
-        assert wait_for(lambda: "SHELF,IDLE" in board.port.written and "GATE,IDLE" in board.port.written)
+        time.sleep(0.1)
+        assert legacy(board.port.written) == []
 
 
-def test_ready_resyncs_bay_leds(tmp_data, monkeypatch):
+def test_ready_resyncs_the_screen(tmp_data, monkeypatch):
     board = Board()
     use_board(monkeypatch, board)
     with TestClient(app) as client:
         client.post("/internal/shelf", json=snap(with_bays(b2=[])), headers=HEADERS)
-        expected_leds = leds(b2=False)
-        assert wait_for(lambda: serial_bridge.is_connected() and "LED,2,OFF" in board.port.written)
+        assert wait_for(lambda: serial_bridge.is_connected() and "DISP,IDLE" in board.port.written)
         time.sleep(0.1)  # let the connect-time sync finish
         board.port.written.clear()
         board.port.feed("READY")
-        # Full resync: bay LEDs, then the current screen, then highlights (none).
-        expected = [*expected_leds, "DISP,IDLE", "HILITE,ALL,OFF"]
-        assert wait_for(lambda: board.port.written == expected), board.port.written
-
-
-def test_timed_effect_does_not_block_and_latest_wins(monkeypatch):
-    bridge = serial_bridge.SerialBridge("FAKE", 115200, opener=Board())
-    sent: list[str] = []
-    monkeypatch.setattr(bridge, "send", sent.append)
-    t0 = time.monotonic()
-    bridge.send_timed("SHELF,GREEN", "SHELF,IDLE", 0.2)
-    assert time.monotonic() - t0 < 0.05 and sent == ["SHELF,GREEN"]
-    bridge.send_timed("SHELF,RED", "SHELF,IDLE", 0.4)  # replaces the pending reset
-    time.sleep(0.3)
-    assert sent == ["SHELF,GREEN", "SHELF,RED"]
-    assert wait_for(lambda: sent == ["SHELF,GREEN", "SHELF,RED", "SHELF,IDLE"])
-    time.sleep(0.1)
-    assert sent.count("SHELF,IDLE") == 1
+        # Resync is the current screen only.
+        assert wait_for(lambda: board.port.written == ["DISP,IDLE"]), board.port.written
 
 
 def test_hardware_leds_off_means_no_bridge(tmp_data, monkeypatch):
@@ -218,7 +204,7 @@ def test_hardware_leds_off_means_no_bridge(tmp_data, monkeypatch):
         assert serial_bridge.bridge is None and opened == []
         assert client.get("/api/health").json()["serial"] is False
         admin_login(client)
-        r = client.post("/admin/led", json={"cmd": "LED,0,OFF"})
+        r = client.post("/admin/led", json={"cmd": "DISP,IDLE"})
         assert r.status_code == 409 and r.json()["error"] == "hardware_leds_off"
         client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)  # shelf changes still fine
         assert client.post("/admin/reset").status_code == 200
