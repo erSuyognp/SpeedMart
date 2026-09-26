@@ -69,7 +69,12 @@ New API. Every function is a no-op that returns `False` while `features.hardware
 - `start()` subscribes `DisplayDirector` to `backend.eventlog` once (the same pattern as `ws.py`). If a session is
   already active (backend restarted mid-session), it primes the screen with that session's TOTAL.
 
-### Event → screen mapping (fix the payment rows in the morning if payments.py uses other names)
+### Event → screen mapping
+
+> Resolved at integration: `backend/payments.py` logs `payment` with `status`, `amount_usd` and
+> `auth_code`, so the GUESS rows below were replaced by the real event. `PAYMENT_EVENTS` is now
+> `("payment",)` and `_on_payment` reads those fields. `cart_changed` and `store_occupied` already
+> matched `backend/store.py`.
 
 | Event (`type`) | Condition | Screen |
 |---|---|---|
@@ -79,15 +84,12 @@ New API. Every function is a no-op that returns `False` while `features.hardware
 | `session_state` | `to=CLOSED` or `CANCELLED` | `HILITE,ALL,OFF` at once, then `IDLE` after 3 s (cancelled if another screen comes first) |
 | `cart_changed` (store.py: `session_id, state, items{sku:qty}, total_usd, warnings, source`) | `state` IN_STORE or CHECKOUT_PENDING | `TOTAL,$<total_usd 2dp>,<sum of qty>`. While WELCOME/OCCUPIED/DECLINED/PAID is up the numbers are only stored; that screen hands over to TOTAL |
 | `store_occupied` (store.py: `member_id, occupant_session_id`) | someone tries to enter while occupied | `OCCUPIED,<occupant first name>` for 3 s, then back to `TOTAL` |
-| **GUESS** `payment` / `payment_result` with `status` | `AUTHORIZED` | `PAID,<amount>,<auth_code>` |
-| **GUESS** `payment_authorized` | always | `PAID,<amount>,<auth_code>` |
-| **GUESS** `payment` / `payment_result` with `status` | `DECLINED` | `DECLINED` for 4 s, then `TOTAL` (the session stays CHECKOUT_PENDING per 7.1) |
-| **GUESS** `payment_declined` | always | same as above |
+| `payment` (payments.py: `status`, `amount_usd`, `auth_code`) | `status=AUTHORIZED` | `PAID,<amount_usd>,<auth_code>` |
+| `payment` | `status=DECLINED` | `DECLINED` for 4 s, then `TOTAL` (the session stays CHECKOUT_PENDING per 7.1) |
 | payment with `status=ERROR` or any other status | | ignored |
 
-The amount is the first valid value of `amount_usd`, `total_usd`, `amount_cents / 100` (int), and falls back to the last cart total.
-The auth code comes from `auth_code`. To adapt to the real names, edit `PAYMENT_EVENTS` and `DisplayDirector._on_payment`
-in `backend/serial_bridge.py`, then update `test_payment_*` in `tests/test_serial_display.py`.
+The amount is `amount_usd`, falling back to the last cart total; the auth code comes from `auth_code`.
+Any other status (including `ERROR`) is ignored, and so is any other event name.
 
 Timings live in module constants: `WELCOME_HOLD_S=3`, `IDLE_AFTER_S=3`, `OCCUPIED_HOLD_S=3`, `DECLINED_HOLD_S=4`.
 A generation counter makes every newer screen cancel any pending timed step, so a stale timer never overwrites the screen.
@@ -128,4 +130,6 @@ A generation counter makes every newer screen cancel any pending timed step, so 
 6. End to end with the backend: run `.venv\Scripts\python -m uvicorn backend.main:app`, admin demo-login, start a session.
    The LCD should show "Welcome, Demo", then "$0.00 / 0 items" after 3 s. Pick an item: the total updates in about 1 s.
    Admin reset: "SpeedMart" idle after 3 s. Unplug and replug USB: the screen and LEDs come back to the current state.
-7. When payments land: check the real payment event name and fields in `data\events.log.jsonl` and fix the GUESS rows above.
+7. ~~When payments land: check the real payment event name and fields and fix the GUESS rows above.~~
+   Done at integration. On the board, confirm a real approval shows `APPROVED` with the auth code and a
+   decline shows `DECLINED` for 4 s before returning to the total.

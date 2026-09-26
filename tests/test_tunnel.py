@@ -41,3 +41,60 @@ def test_run_all_has_proxy_headers_and_guarded_tunnel():
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
 def test_run_all_parses():
     assert subprocess.run(["bash", "-n", str(RUN_ALL)], capture_output=True).returncode == 0
+
+
+# --- PlainHttpCookieFix: the tunnel keeps Secure, LAN/localhost clients stay logged in ---------------
+
+RUN_ALL_PS1 = Path(__file__).resolve().parent.parent / "scripts" / "run_all.ps1"
+
+
+def _cookie_over(scheme: str) -> str:
+    """Set-Cookie the wrapped app emits for a request arriving with this scheme."""
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    async def login(request):
+        r = PlainTextResponse("ok")
+        r.set_cookie("session", "abc", httponly=True, samesite="lax", secure=True)
+        return r
+
+    app = main.PlainHttpCookieFix(Starlette(routes=[Route("/login", login)]))
+    with TestClient(app, base_url=f"{scheme}://testserver") as client:
+        return client.get("/login").headers["set-cookie"]
+
+
+def test_secure_is_kept_for_https_requests():
+    assert "secure" in _cookie_over("https").lower()
+
+
+def test_secure_is_dropped_for_plain_http_requests():
+    cookie = _cookie_over("http")
+    assert "secure" not in cookie.lower()
+    # Nothing else about the cookie changes.
+    assert cookie.startswith("session=abc") and "httponly" in cookie.lower() and "samesite=lax" in cookie.lower()
+
+
+def test_only_the_session_cookie_is_touched():
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    async def handler(request):
+        r = PlainTextResponse("ok")
+        r.set_cookie("other", "1", secure=True)
+        return r
+
+    app = main.PlainHttpCookieFix(Starlette(routes=[Route("/x", handler)]))
+    with TestClient(app, base_url="http://testserver") as client:
+        assert "secure" in client.get("/x").headers["set-cookie"].lower()
+
+
+def test_run_all_ps1_starts_and_stops_all_three():
+    text = RUN_ALL_PS1.read_text(encoding="utf-8")
+    assert "--proxy-headers" in text and "--forwarded-allow-ips" in text
+    assert "uvicorn" in text and "vision.worker" in text and "ngrok" in text
+    assert "https_tunnel" in text and "PUBLIC_ORIGIN" in text
+    assert "taskkill.exe" in text and "Stop-Children" in text  # every child stopped on Ctrl+C

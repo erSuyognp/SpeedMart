@@ -40,8 +40,47 @@ def session_https_only(s=settings) -> bool:
 
 
 SESSION_HTTPS_ONLY = session_https_only()
+
+
+class PlainHttpCookieFix:
+    """Drop "Secure" from the session cookie on requests that arrived over plain http.
+
+    SessionMiddleware's https_only is one global flag, but the demo is reached two ways at once: phones
+    come through the https tunnel, while the admin page, the kiosk tablet and scripts/e2e_sim.py talk to
+    http://localhost:8000 or http://<laptop-ip>:8000 over the LAN. With https_only on, those plain-http
+    clients are handed a Secure cookie that no client will ever send back, so they log in and are
+    immediately logged out again.
+
+    Deciding per request keeps the tunnel's cookie Secure (uvicorn --proxy-headers turns the tunnel's
+    X-Forwarded-Proto into scheme "https") and only relaxes the LAN clients, which were never protected
+    by the flag in the first place.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("scheme") == "https":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = []
+                for key, value in message["headers"]:
+                    if key.lower() == b"set-cookie" and value.lower().startswith(b"session="):
+                        value = b"; ".join(p for p in value.split(b"; ") if p.lower() != b"secure")
+                    headers.append((key, value))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
 app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, same_site="lax",
                    https_only=SESSION_HTTPS_ONLY)
+if SESSION_HTTPS_ONLY:  # added last, so it wraps SessionMiddleware and sees the cookie on the way out
+    app.add_middleware(PlainHttpCookieFix)
 app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
 app.include_router(members.router)
