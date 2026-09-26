@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import admin, db, eventlog, routes_api, shelf_state, store, ws
+from backend import admin, db, eventlog, routes_api, serial_bridge, shelf_state, store, ws
 from backend.settings import WEB_DIR, settings
 
 
@@ -21,7 +21,9 @@ async def lifespan(app: FastAPI):
     ws.manager.bind(asyncio.get_running_loop())
     eventlog.log("startup", features=settings.features.as_dict())
     timeout_task = asyncio.create_task(store.timeout_task())
+    serial_bridge.start()  # no-op unless hardware_leds is on
     yield
+    serial_bridge.stop()
     timeout_task.cancel()
     with suppress(asyncio.CancelledError):
         await timeout_task
@@ -56,8 +58,8 @@ async def validation_error_handler(request: Request, e: RequestValidationError):
 
 @app.get("/api/health")
 def health():
-    # vision_age_ms is -1 until the first snapshot arrives; serial is false until S1.4.
-    return {"ok": True, "vision_age_ms": shelf_state.last_snapshot_age_ms(), "serial": False}
+    # vision_age_ms is -1 until the first snapshot arrives; serial is the real port state.
+    return {"ok": True, "vision_age_ms": shelf_state.last_snapshot_age_ms(), "serial": serial_bridge.is_connected()}
 
 
 @app.get("/api/config/public")

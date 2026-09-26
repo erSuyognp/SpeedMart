@@ -4,7 +4,7 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const VISION_MAX_AGE_MS = 2000;
-  const LED_COMMANDS = ["SHELF,GREEN", "SHELF,RED", "SHELF,IDLE", "GATE,OPEN", "GATE,CLOSED", "PING"];
+  const LED_COMMANDS = ["LED,0,OFF", "LED,0,ON", "SHELF,GREEN", "SHELF,RED", "SHELF,IDLE", "GATE,OPEN", "GATE,CLOSED", "GATE,IDLE", "PING"];
   let state = null;
   let events = [];
   let refreshTimer = null;

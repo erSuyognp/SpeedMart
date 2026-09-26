@@ -1,4 +1,4 @@
-"""Admin routes (8.3): login, state, reset, force-exit, overrides, demo-login, LED and force-decline stubs."""
+"""Admin routes (8.3): login, state, reset, force-exit, overrides, demo-login, LED, force-decline stub."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import secrets
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from backend import db, eventlog, shelf_state, store, ws
+from backend import db, eventlog, serial_bridge, shelf_state, store, ws
 from backend.routes_api import ApiError, public_session
 from backend.settings import settings
 
@@ -58,7 +58,7 @@ def _health() -> dict:
     stripe_key = settings.env.stripe_secret_key
     return {
         "vision_age_ms": shelf_state.last_snapshot_age_ms(),
-        "serial": False,  # serial bridge arrives in S1.4
+        "serial": serial_bridge.is_connected(),
         "stripe": ("test" if stripe_key.startswith("sk_test_") else "no_key") if settings.features.stripe else "off",
         "llm": settings.features.llm and bool(settings.env.anthropic_api_key or settings.env.openai_api_key),
     }
@@ -93,14 +93,19 @@ def state():
     }
 
 
-@router.post("/admin/reset")
-def reset():
-    """Cancel the active session, clear overrides, free the lock, LEDs idle."""
+def do_reset(source: str = "admin") -> dict:
+    """Cancel the active session, clear overrides, free the lock, LEDs idle. Also the board's BTN,0."""
     cancelled = store.cancel(reason="admin_reset")
     store.clear_overrides()
-    eventlog.log("admin_reset", cancelled_session_id=cancelled["id"] if cancelled else None)
-    eventlog.log("led_stub", cmd="SHELF,IDLE")  # serial bridge arrives in S1.4
+    eventlog.log("admin_reset", source=source, cancelled_session_id=cancelled["id"] if cancelled else None)
+    serial_bridge.send("SHELF,IDLE")
+    serial_bridge.send("GATE,IDLE")
     return {"ok": True, "cancelled_session_id": cancelled["id"] if cancelled else None}
+
+
+@router.post("/admin/reset")
+def reset():
+    return do_reset()
 
 
 @router.post("/admin/force-exit")
@@ -131,8 +136,13 @@ def demo_login(request: Request):
 
 @router.post("/admin/led")
 def led(body: LedBody):
-    eventlog.log("led_stub", cmd=body.cmd)  # stub until the serial bridge (S1.4)
-    return {"ok": True}
+    cmd = body.cmd.strip()
+    if not cmd or not cmd.isascii() or not cmd.isprintable():  # one line, no control chars
+        raise ApiError(400, "bad_command", "Command must be one line of ASCII, e.g. LED,0,OFF.")
+    if not serial_bridge.send(cmd):
+        raise ApiError(409, "hardware_leds_off", "hardware_leds is off in config.json.")
+    eventlog.log("admin_led", cmd=cmd, connected=serial_bridge.is_connected())
+    return {"ok": True, "connected": serial_bridge.is_connected()}
 
 
 @router.post("/admin/force-decline")
