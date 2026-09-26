@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import admin, db, eventlog, routes_api, serial_bridge, shelf_state, store, ws
+from backend import admin, db, eventlog, members, routes_api, serial_bridge, shelf_state, store, ws
 from backend.settings import WEB_DIR, settings
 
 
@@ -43,6 +43,7 @@ app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, sa
                    https_only=SESSION_HTTPS_ONLY)
 app.include_router(shelf_state.router)
 app.include_router(routes_api.router)
+app.include_router(members.router)
 app.include_router(admin.public)
 app.include_router(admin.router)
 app.include_router(ws.router)

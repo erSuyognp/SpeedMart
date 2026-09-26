@@ -1,1 +1,76 @@
-<!-- Landing / signup. Filled in by S3.2. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>SpeedMart · Join</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <h1>SpeedMart</h1>
+      <p class="muted">Grab and go, with a yes you control.</p>
+    </header>
+
+    <section id="loading" class="card notice muted">Loading…</section>
+
+    <section id="join" class="card" hidden>
+      <form id="join-form" class="stack" novalidate>
+        <label class="field">
+          <span>First name</span>
+          <input id="name" type="text" autocomplete="given-name" autocapitalize="words" maxlength="40" required>
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Budget</span><output id="budget-out" for="budget">$20</output></span>
+          <input id="budget" type="range" min="10" max="50" step="1" value="20" aria-describedby="budget-out">
+        </label>
+        <label class="field">
+          <span>Dietary preference</span>
+          <select id="dietary">
+            <option value="none">None</option>
+            <option value="vegetarian">Vegetarian</option>
+            <option value="vegan">Vegan</option>
+            <option value="gluten_free">Gluten free</option>
+          </select>
+        </label>
+        <button id="join-btn" class="primary block" type="submit">Join with Face ID</button>
+      </form>
+    </section>
+
+    <section id="signup-off" class="card notice" hidden>
+      <h2>Joining is closed for this demo</h2>
+      <p class="muted">Ask a team member to sign you in as the Demo Shopper.</p>
+    </section>
+
+    <section id="signin" hidden>
+      <button id="signin-btn" class="link-button block" type="button">Already a member? Sign in with Face ID</button>
+    </section>
+
+    <section id="member" class="card notice" hidden>
+      <div id="member-icon" class="big-icon ok" aria-hidden="true">✓</div>
+      <h2 id="member-title">You're a member.</h2>
+      <p id="card-line" class="lead" hidden></p>
+      <p id="next-line" class="muted"></p>
+
+      <div id="passkey-setup" class="stack" hidden>
+        <button id="setup-btn" class="primary block" type="button">Set up Face ID</button>
+      </div>
+
+      <div class="stack">
+        <a id="cart-link" class="button primary block" href="/store.html" hidden>Go to your cart</a>
+        <button id="logout-btn" class="link-button block" type="button">Not you? Sign out</button>
+      </div>
+    </section>
+
+    <section id="error" class="strip bad" role="alert" hidden></section>
+  </main>
+
+  <footer class="site-footer">Sandbox demo · no real payments</footer>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/passkey.js"></script>
+  <script src="/js/pages/index.js"></script>
+</body>
+</html>

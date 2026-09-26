@@ -8,6 +8,7 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
 | Step | Status |
 |---|---|
 | S3.1 tunnel | done |
+| S3.2 signup, members, demo account | done |
 
 ## Decisions
 
@@ -32,6 +33,26 @@ Decisions, and everything that needs a phone, the tunnel, Stripe, or a human is 
   it (bash reports errors like `command not found` for every line ending in CR). After merging, refresh the
   old CRLF copies once, PowerShell from the repo root: `Remove-Item scripts\*.sh; git checkout -- scripts`.
 - ngrok was **not** started. `ngrok` is not on the Git Bash PATH on this machine.
+
+### S3.2 signup, members, demo account
+
+- **`GET /api/me` shape:** `{"member": {...}, "has_passkey": bool, "active_session_id": str|null}`.
+  `active_session_id` is set only when the active store session belongs to this member. The public member
+  object never includes Stripe ids; it adds `first_name` for the UI.
+- **Validation:** name 1 to 40 characters (whitespace collapsed); budget $10 to $50 (the slider range), default
+  `store.default_budget_usd`; dietary `none | vegetarian | vegan | gluten_free`, stored as `null`, `vegetarian`,
+  `vegan`, `gluten free` (the agent reads it). Bad input: 422 with `bad_name`, `bad_budget` or `bad_dietary`.
+- **`signup: false`:** `POST /api/members/signup` answers 404 `signup_off`; `index.html` shows "Joining is closed
+  for this demo, ask a team member to sign you in as the Demo Shopper" (the admin demo-login path).
+- **Card label** `Visa •••• 4242 (test)` is stored at signup for every member. With Stripe on, S4.2 also attaches
+  `pm_card_visa`; with Stripe off, the mock provider uses the same test label.
+- **Changing member clears verification.** Signing in as a different member (signup, passkey login) drops
+  `verified_at` / `verified_member` / `verified_purpose`, so one member's fresh Face ID can never open the gate
+  for another. Admin rights in the same cookie are kept.
+- **Demo account:** the seeded Demo Shopper (db.py) is reached via admin demo-login, as before. When a signed-in
+  member (including the Demo Shopper on a team phone) has no passkey and passkeys are on, `index.html` shows
+  "Set up Face ID", so the team phone can register one for the demo account.
+- A deleted member's cookie (e.g. DB wiped) gets 401 and the member keys are cleared.
 
 ## Morning checklist
 
