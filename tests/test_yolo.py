@@ -22,10 +22,34 @@ from vision.worker import StabilityTracker, build_snapshot, start_yolo
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
-BAYS = CONFIG["bays"]  # 0: [80,200,360,620] elx, 1: [400,200,680,620] rec, 2: [720,200,1000,620] bar
+BAYS = CONFIG["bays"]  # one bay per entry in config.json; ROIs move whenever calibrate.py runs
+ROI = {int(b["id"]): [int(v) for v in b["roi"]] for b in BAYS}
+BAY_IDS = sorted(ROI)
+NO_COUNTS = {b: {} for b in BAY_IDS}  # per_bay of a frame in which YOLO saw nothing
 CLASS_SKU = yd.class_to_sku(CATALOG)
 UNIT_SKU = fusion.unit_skus(CATALOG)
 FRAME = np.zeros((720, 1280, 3), np.uint8)
+
+
+def at(bay: int, fx: float = 0.5, fy: float = 0.5) -> tuple[float, float]:
+    """A point inside a bay, as a fraction of its ROI, so the tests survive recalibration."""
+    x1, y1, x2, y2 = ROI[bay]
+    return x1 + (x2 - x1) * fx, y1 + (y2 - y1) * fy
+
+
+def in_gap(left: int, right: int) -> tuple[float, float]:
+    """A point in the gap between two neighbouring bays, belonging to neither."""
+    return (ROI[left][2] + ROI[right][0]) / 2, (ROI[left][1] + ROI[left][3]) / 2
+
+
+def above_shelf() -> tuple[float, float]:
+    """A point above every ROI: an item in a hand."""
+    return ROI[BAY_IDS[-1]][2], min(r[1] for r in ROI.values()) - 50
+
+
+def counts(**per_bay: dict) -> dict[int, dict[str, int]]:
+    """Expected per-bay counts: the named bays, every other bay empty."""
+    return {**NO_COUNTS, **{int(b[1:]): c for b, c in per_bay.items()}}
 
 
 def box(cls: str, conf: float, cx: float, cy: float, half: float = 30) -> yd.RawBox:
@@ -55,24 +79,26 @@ def detector(predict, every_n: int = 3, conf: float = 0.55) -> yd.YoloDetector:
 
 
 def test_class_to_sku_from_catalog():
-    assert CLASS_SKU == {"electrolytes": "elx", "recovery_drink": "rec", "protein_bar": "bar"}
+    assert CLASS_SKU == {s["yolo_class"]: s["sku"] for s in CATALOG["skus"] if s.get("yolo_class")}
+    assert len(CLASS_SKU) == len(CATALOG["skus"])  # every SKU has its own distinct yolo_class
 
 
 def test_assign_boxes_by_center_conf_and_class():
+    gx, gy = in_gap(0, 1)
     raw = [
-        box("electrolytes", 0.9, 200, 400),
-        box("electrolytes", 0.7, 300, 300),
-        box("electrolytes", 0.5, 250, 400),  # below conf
-        box("protein_bar", 0.8, 500, 400),  # misplaced: in bay 1
-        box("recovery_drink", 0.95, 1200, 100),  # outside every bay (in a hand)
-        box("banana", 0.99, 800, 400),  # not in the catalog
-        ("protein_bar", 0.9, (340, 300, 420, 360)),  # box spans bays 0 and 1, center x = 380 is in the gap
+        box("electrolytes", 0.9, *at(0, 0.3, 0.5)),
+        box("electrolytes", 0.7, *at(0, 0.7, 0.3)),
+        box("electrolytes", 0.5, *at(0, 0.5, 0.7)),  # below conf
+        box("protein_bar", 0.8, *at(1)),  # misplaced: in bay 1
+        box("recovery_drink", 0.95, *above_shelf()),  # outside every bay (in a hand)
+        box("banana", 0.99, *at(2)),  # not in the catalog
+        box("protein_bar", 0.9, gx, gy, half=40),  # spans bays 0 and 1, its center is in the gap
     ]
     result = yd.assign_boxes(raw, BAYS, CLASS_SKU, 0.55)
-    assert result.per_bay == {0: {"elx": 2}, 1: {"bar": 1}, 2: {}}
+    assert result.per_bay == counts(b0={"elx": 2}, b1={"bar": 1})
     assert len(result.boxes) == 6  # everything above conf is kept for drawing
     by_cls = {(b.cls_name, b.bay) for b in result.boxes}
-    assert ("recovery_drink", None) in by_cls and ("banana", 2) in by_cls
+    assert ("recovery_drink", None) in by_cls and ("banana", 2) in by_cls  # the loose one, the unknown class
     assert next(b for b in result.boxes if b.cls_name == "banana").sku is None
 
 
@@ -86,13 +112,13 @@ def test_center_on_shared_edge_uses_half_open_rule():
 
 
 def test_runs_every_n_frames_and_caches():
-    fake = FakePredictor([box("electrolytes", 0.9, 200, 400)], [], [box("protein_bar", 0.9, 800, 400)] * 2)
+    fake = FakePredictor([box("electrolytes", 0.9, *at(0))], [], [box("protein_bar", 0.9, *at(2))] * 2)
     det = detector(fake, every_n=3)
     results = [det.update(FRAME) for _ in range(7)]
     assert fake.calls == 3  # frames 0, 3, 6
     assert [r.frame_index for r in results] == [0, 0, 0, 3, 3, 3, 6]
     assert results[2].per_bay[0] == {"elx": 1}  # cached
-    assert results[4].per_bay == {0: {}, 1: {}, 2: {}}
+    assert results[4].per_bay == NO_COUNTS
     assert results[6].per_bay[2] == {"bar": 2}
     assert det.last is results[6]
 
@@ -106,20 +132,20 @@ def test_every_n_one_runs_each_frame_and_zero_is_clamped():
 
 
 def test_inference_error_never_raises_and_clears_counts(caplog):
-    fake = FakePredictor([box("electrolytes", 0.9, 200, 400)], RuntimeError("CUDA out of memory"),
-                         RuntimeError("again"), [box("electrolytes", 0.9, 200, 400)])
+    fake = FakePredictor([box("electrolytes", 0.9, *at(0))], RuntimeError("CUDA out of memory"),
+                         RuntimeError("again"), [box("electrolytes", 0.9, *at(0))])
     det = detector(fake, every_n=1)
     assert det.update(FRAME).per_bay[0] == {"elx": 1}
     with caplog.at_level(logging.WARNING, logger="vision.yolo"):
         r1, r2 = det.update(FRAME), det.update(FRAME)
-    assert not r1.ok and r1.per_bay == {0: {}, 1: {}, 2: {}}  # no stale counts kept
+    assert not r1.ok and r1.per_bay == NO_COUNTS  # no stale counts kept
     assert not r2.ok
     assert sum("inference failed" in r.message for r in caplog.records) == 1  # rate limited
     assert det.update(FRAME).ok
 
 
 def test_unknown_class_warned_once(caplog):
-    det = detector(FakePredictor([box("banana", 0.9, 200, 400)]), every_n=1)
+    det = detector(FakePredictor([box("banana", 0.9, *at(0))]), every_n=1)
     with caplog.at_level(logging.WARNING, logger="vision.yolo"):
         for _ in range(3):
             det.update(FRAME)
@@ -195,8 +221,10 @@ class FakeModel:
 
     def predict(self, frame, **kwargs):
         self.calls.append(kwargs)
+        (ex, ey), (bx, by) = at(BAY_IDS[0]), at(BAY_IDS[1])  # one electrolyte in the first bay, one bar in the second
         r = types.SimpleNamespace(names=self.names,
-                                  boxes=_Boxes([[170, 370, 230, 430], [470, 370, 530, 430]], [0.91, 0.66], [0, 1]))
+                                  boxes=_Boxes([[ex - 30, ey - 30, ex + 30, ey + 30],
+                                                [bx - 30, by - 30, bx + 30, by + 30]], [0.91, 0.66], [0, 1]))
         return [r, types.SimpleNamespace(names=self.names, boxes=None)]
 
 
@@ -209,7 +237,7 @@ def test_load_with_fake_ultralytics_builds_working_detector(tmp_path, monkeypatc
     det = yd.load_yolo(_config_with_model("m.pt"), CATALOG, root=tmp_path)
     assert det is not None and det.every_n == CONFIG["vision"]["yolo_every_n_frames"]
     result = det.update(FRAME)
-    assert result.per_bay == {0: {"elx": 1}, 1: {"bar": 1}, 2: {}}
+    assert result.per_bay == counts(b0={"elx": 1}, b1={"bar": 1})
     assert [(b.cls_name, round(b.conf, 2)) for b in result.boxes] == [("electrolytes", 0.91), ("protein_bar", 0.66)]
 
 
@@ -218,7 +246,8 @@ def test_predictor_passes_spec_arguments():
     predict = yd.ultralytics_predictor(model, 0.55, "mps")
     out = predict(FRAME)
     assert model.calls == [{"imgsz": 640, "conf": 0.55, "verbose": False, "device": "mps"}]
-    assert out[0] == ("electrolytes", pytest.approx(0.91), (170.0, 370.0, 230.0, 430.0))
+    ex, ey = at(BAY_IDS[0])
+    assert out[0] == ("electrolytes", pytest.approx(0.91), (ex - 30, ey - 30, ex + 30, ey + 30))
 
 
 def _fake_torch(mps: bool, cuda: bool):
@@ -367,7 +396,8 @@ def test_snapshot_has_yolo_counts_only_when_on():
 
 def test_worker_pipeline_with_fake_detector():
     """Detector -> tracker -> snapshot, as the worker loop wires them."""
-    det = detector(FakePredictor([box("electrolytes", 0.9, 200, 400), box("electrolytes", 0.8, 300, 500)]))
+    det = detector(FakePredictor([box("electrolytes", 0.9, *at(0, 0.3, 0.4)),
+                                  box("electrolytes", 0.8, *at(0, 0.7, 0.6))]))
     clock = Clock()
     tr = StabilityTracker([0, 1, 2], 400, 700, None, clock=clock)
     per_bay = {0: [0], 1: [], 2: []}
@@ -381,7 +411,7 @@ def test_worker_pipeline_with_fake_detector():
 
 
 def test_overlay_draws_yolo_boxes():
-    det = detector(FakePredictor([box("electrolytes", 0.9, 200, 400), box("banana", 0.9, 800, 400)]))
+    det = detector(FakePredictor([box("electrolytes", 0.9, *at(0)), box("banana", 0.9, *at(2))]))
     result = det.update(FRAME)
     status = StabilityTracker([0, 1, 2], 0, 0).update(np.zeros((720, 1280), np.uint8), {0: [], 1: [], 2: []}, 0.0,
                                                        yolo_counts=result.per_bay)

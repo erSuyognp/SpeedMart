@@ -78,6 +78,10 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
 
 Nothing here was run on hardware overnight — no board was attached.
 
+- [ ] **Wire bays 3 and 4** before flashing (they are new): bay 3 LED anode to **GPIO 17**, bay 4 LED anode to
+      **GPIO 21**, each through its own **150 Ω** resistor, both cathodes to any **GND** pin. Same as bays 0 to 2
+      (GPIO 1, 2, 18). On a **touch** T-Display-S3, 17 and 21 belong to the touch controller — this board is the
+      plain one, so they are free.
 - [ ] Find the port: `.venv\Scripts\python.exe -m backend.serial_bridge --list-ports`.
 - [ ] Flash (`pio` is not on PATH on this machine):
       ```powershell
@@ -99,8 +103,10 @@ Nothing here was run on hardware overnight — no board was attached.
       `DISP,WELCOME,Maya` · `DISP,TOTAL,$12.96,3` · `DISP,TOTAL,$8.64,1` (reads "1 item") ·
       `DISP,PAID,$12.96,A1B2C3` · `DISP,DECLINED` · `DISP,OCCUPIED,Maya` ·
       `DISP,WELCOME,Bartholomew Jones` (shrinks to fit) · `DISP,IDLE`.
+- [ ] **All five bays:** `LED,0,ON` … `LED,4,ON` light bays 0 to 4 in order left to right, `LED,<n>,OFF`
+      turns each back off. Bays **3 and 4 are new** — if either stays dark, check its resistor and GND first.
 - [ ] **Highlight:** `LED,1,ON` then `HILITE,1,ON` → bay 1 blinks about twice a second. `HILITE,1,OFF` →
-      steady on again. `LED,1,OFF` + `HILITE,1,ON` → blinks. `HILITE,ALL,OFF` → stays off.
+      steady on again. `LED,1,OFF` + `HILITE,1,ON` → blinks. `HILITE,ALL,OFF` → stays off. Repeat for bay 4.
 - [ ] While the screen animates, confirm the **other LEDs, the RGB breathing and the button** still work
       (hold GPIO 14 for 1 s → prints `BTN,0`).
 - [ ] End to end: close the monitor, start the backend, admin demo-login, start a session. The LCD shows
@@ -114,6 +120,18 @@ Nothing here was run on hardware overnight — no board was attached.
 
 Two windows, or just `scripts\run_all.ps1`. Open `http://localhost:8000/admin.html`, log in, demo-login,
 and start a session so the cart is visible.
+
+- [ ] **Recalibrate first — the shelf now has five bays.** The ROIs in `config.json` are placeholders spread
+      evenly left to right; they will not match the real shelf. Stop the worker, then:
+      ```powershell
+      .venv\Scripts\python.exe -m vision.calibrate
+      ```
+      Drag one rectangle per bay in order **bay 0 to bay 4** (the prompt names the bay and its SKU), `u` undo,
+      `r` redo all, `s` save, `q` quit. Saving rewrites only `bays[].roi`, so check with `git diff config.json`.
+      Restart the worker afterwards.
+- [ ] **Print the new tags:** `.venv\Scripts\python.exe scripts\gen_aruco.py` now writes **10 tags on 2 pages**
+      (IDs 0 to 9; 6 and 7 are sparkling water, 8 and 9 vegan trail mix). Print at 100% scale with "fit to page"
+      **off**, then measure a black square: 6.0 cm.
 
 | # | Do | Expect |
 |---|---|---|

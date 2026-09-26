@@ -97,6 +97,7 @@ class Catalog:
         self.name = {s["sku"]: s["name"] for s in catalog["skus"]}
         self.units = {int(u["tag_id"]): (u["sku"], int(u["home_bay"])) for u in catalog["units"]}
         self.bay_ids = [int(b["id"]) for b in config["bays"]]
+        self.sku_order = [s["sku"] for s in catalog["skus"]]  # catalog order; the sim never names a SKU itself
         self.tax_rate = config["store"]["tax_rate"]
 
     def tag_for(self, sku: str, skip: set[int] = frozenset()) -> int:
@@ -389,10 +390,12 @@ def main() -> int:
 
         report.run("demo login", step_demo_login, api)
         report.run("start session", step_start_session, api)
-        report.run("pick 1 electrolyte tabs", step_pick_one, api, poster, catalog, "elx")
+        first = catalog.sku_order[0]
+        report.run(f"pick 1 {catalog.name[first].lower()}", step_pick_one, api, poster, catalog, first)
         report.run("put it back", step_put_back, api, poster, catalog)
 
-        two = ("elx", "bar")
+        # First and last catalog SKUs, so the pair spans the shelf however many bays there are.
+        two = (first, catalog.sku_order[-1])
         want_two = {s: 1 for s in two}
         report.run("pick 2 of different SKUs", step_pick_two, api, poster, catalog, two)
         quoted = report.run("checkout quote", step_quote, api, catalog, gates_on,

@@ -12,7 +12,13 @@ from fastapi.testclient import TestClient
 from backend import serial_bridge, shelf_state, store
 from backend.main import app
 from backend.settings import settings
-from test_cart import FULL, TOKEN, events, snap, tmp_data, with_bays  # noqa: F401
+from test_cart import BAY_IDS, FULL, TOKEN, events, snap, tmp_data, with_bays  # noqa: F401
+N = len(BAY_IDS)
+
+
+def leds(**state: bool) -> list[str]:
+    """The LED line for every bay, all ON unless named otherwise: leds(b0=False) turns bay 0 off."""
+    return [f"LED,{b},{'OFF' if state.get(f'b{b}') is False else 'ON'}" for b in BAY_IDS]
 from test_live import admin_login, enter_store
 
 HEADERS = {"X-Internal-Token": TOKEN}
@@ -141,19 +147,19 @@ def test_shelf_change_drives_bay_leds(tmp_data, monkeypatch):
     with TestClient(app) as client:
         assert wait_for(lambda: serial_bridge.is_connected())
         client.post("/internal/shelf", json=snap(FULL), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-3:] == ["LED,0,ON", "LED,1,ON", "LED,2,ON"])
+        assert wait_for(lambda: board.port.written[-N:] == leds())
         client.post("/internal/shelf", json=snap(with_bays(b0=[1]), frame_id=2), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-3:] == ["LED,0,ON", "LED,1,ON", "LED,2,ON"])
+        assert wait_for(lambda: board.port.written[-N:] == leds())
         client.post("/internal/shelf", json=snap(with_bays(b0=[]), frame_id=3), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-3:] == ["LED,0,OFF", "LED,1,ON", "LED,2,ON"])
+        assert wait_for(lambda: board.port.written[-N:] == leds(b0=False))
         client.post("/internal/shelf", json=snap(FULL, frame_id=4), headers=HEADERS)
-        assert wait_for(lambda: board.port.written[-3:] == ["LED,0,ON", "LED,1,ON", "LED,2,ON"])
+        assert wait_for(lambda: board.port.written[-N:] == leds())
         # An unstable empty bay keeps its last stable contents, so its LED stays on.
         n = len(board.port.written)
         client.post("/internal/shelf", json=snap(with_bays(b0=[]), unstable=(0,), frame_id=5), headers=HEADERS)
         time.sleep(0.1)
         assert len(board.port.written) == n
-        assert shelf_state.bay_occupancy() == {0: True, 1: True, 2: True}
+        assert shelf_state.bay_occupancy() == {b: True for b in BAY_IDS}
 
 
 def test_incoming_lines_logged_and_button_resets(tmp_data, monkeypatch):
@@ -177,13 +183,13 @@ def test_ready_resyncs_bay_leds(tmp_data, monkeypatch):
     use_board(monkeypatch, board)
     with TestClient(app) as client:
         client.post("/internal/shelf", json=snap(with_bays(b2=[])), headers=HEADERS)
-        leds = ["LED,0,ON", "LED,1,ON", "LED,2,OFF"]
+        expected_leds = leds(b2=False)
         assert wait_for(lambda: serial_bridge.is_connected() and "LED,2,OFF" in board.port.written)
         time.sleep(0.1)  # let the connect-time sync finish
         board.port.written.clear()
         board.port.feed("READY")
         # Full resync: bay LEDs, then the current screen, then highlights (none).
-        expected = [*leds, "DISP,IDLE", "HILITE,ALL,OFF"]
+        expected = [*expected_leds, "DISP,IDLE", "HILITE,ALL,OFF"]
         assert wait_for(lambda: board.port.written == expected), board.port.written
 
 

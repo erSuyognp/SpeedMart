@@ -13,9 +13,14 @@
 
 #define PIN_POWER_ON 15  // peripheral power enable (LCD too), must be HIGH first
 #define BTN_PIN      14  // onboard BUTTON_2 (GPIO 0 is BOOT)
-#define NUM_BAYS     3
+#define NUM_BAYS     5  // the one place the bay count lives; BAY_PINS must have exactly this many entries
 
-const uint8_t BAY_PINS[NUM_BAYS] = {1, 2, 18};  // single-color LEDs, active HIGH
+// Single-color LEDs, active HIGH. Every pin is broken out on the side headers and free on the
+// plain (non-touch, no SD shield) T-Display-S3: 1, 2 are general GPIO, and 18/17/21 are the
+// board's IIC SDA / IIC SCL / Touch RES, which only the touch variant drives. None is an
+// ESP32-S3 strapping pin (0, 3, 45, 46), USB (19, 20), battery sense (4), or an LCD pin.
+const uint8_t BAY_PINS[NUM_BAYS] = {1, 2, 18, 17, 21};
+static_assert(sizeof(BAY_PINS) / sizeof(BAY_PINS[0]) == NUM_BAYS, "BAY_PINS needs one pin per bay");
 
 // Status RGB LED, common cathode: higher duty = brighter.
 #define RGB_R_PIN 10
@@ -68,8 +73,8 @@ enum ShelfMode { SHELF_IDLE, SHELF_GREEN, SHELF_RED };
 enum GateMode  { GATE_IDLE, GATE_OPEN, GATE_CLOSED };
 ShelfMode shelfMode = SHELF_IDLE;
 GateMode gateMode = GATE_IDLE;
-bool bayOn[NUM_BAYS] = {true, true, true};
-bool bayHilite[NUM_BAYS] = {false, false, false};  // blinks over bayOn; OFF falls back to bayOn
+bool bayOn[NUM_BAYS];              // every bay starts lit; set in setup()
+bool bayHilite[NUM_BAYS];          // blinks over bayOn; OFF falls back to bayOn (zero-init = false)
 #define HILITE_HALF_PERIOD_MS 250                   // 250 ms on + 250 ms off = 2 Hz
 String line;
 unsigned long btnDownAt = 0;
@@ -290,7 +295,7 @@ void setup() {
 
   Serial.begin(115200);
   pinMode(BTN_PIN, INPUT_PULLUP);
-  for (int i = 0; i < NUM_BAYS; i++) pinMode(BAY_PINS[i], OUTPUT);
+  for (int i = 0; i < NUM_BAYS; i++) { pinMode(BAY_PINS[i], OUTPUT); bayOn[i] = true; }
   for (int i = 0; i < 3; i++) {
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcAttach(RGB_PINS[i], PWM_FREQ, PWM_BITS);

@@ -23,7 +23,30 @@ from backend import cart, db, eventlog, routes_api, shelf_state, store  # noqa: 
 from backend.main import app  # noqa: E402
 
 TOKEN = "test-internal-token"
-FULL = {0: [0, 1], 1: [2, 3], 2: [4, 5]}  # every unit in its home bay
+CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+BAY_IDS = [int(b["id"]) for b in CONFIG["bays"]]
+
+
+def full_shelf() -> dict[int, list[int]]:
+    """Every unit in its home bay, one entry per bay in config.json."""
+    bays: dict[int, list[int]] = {b: [] for b in BAY_IDS}
+    for unit in sorted(CATALOG["units"], key=lambda u: u["tag_id"]):
+        bays.setdefault(int(unit["home_bay"]), []).append(int(unit["tag_id"]))
+    return bays
+
+
+def full_baseline(**taken: int) -> dict[str, int]:
+    """The baseline of a full shelf, minus the units already gone: full_baseline(elx=1) -> one elx left."""
+    counts = {s["sku"]: 0 for s in CATALOG["skus"]}
+    for unit in CATALOG["units"]:
+        counts[unit["sku"]] += 1
+    for sku, n in taken.items():
+        counts[sku] -= n
+    return counts
+
+
+FULL = full_shelf()
 
 
 def snap(bays: dict[int, list[int]], unstable: tuple[int, ...] = (), frame_id: int = 1, loose=()) -> dict:
@@ -112,7 +135,7 @@ def push(bays, **kw) -> dict:
 # --- cases listed in S1.2 ---
 
 def test_pick_then_put_back(shopping):
-    assert shopping["baseline"] == {"elx": 2, "rec": 2, "bar": 2}
+    assert shopping["baseline"] == full_baseline()
     assert store.current_cart()["items"] == []
 
     cart_now = push(with_bays(b0=[1]), frame_id=2)  # tag 0 picked
@@ -154,7 +177,7 @@ def test_unstable_bay_keeps_previous_contents(shopping):
 def test_items_missing_before_entry_are_not_charged(member_id):
     shelf_state.apply_snapshot(snap(with_bays(b0=[1], b1=[])))  # tag 0 and both recovery drinks already gone
     session = store.start_session(member_id)
-    assert session["baseline"] == {"elx": 1, "rec": 0, "bar": 2}
+    assert session["baseline"] == full_baseline(elx=1, rec=2)
     assert store.current_cart()["items"] == []
 
     cart_now = push(with_bays(b0=[], b1=[]), frame_id=2)  # shopper takes the last elx
@@ -223,7 +246,7 @@ def test_totals_one_electrolyte_at_8_percent(shopping):
 # --- extra cases ---
 
 def test_totals_multi_item_integer_cents(shopping):
-    cart_now = push({0: [1], 1: [3], 2: []}, frame_id=2)  # 1 elx, 1 rec, 2 bar
+    cart_now = push(with_bays(b0=[1], b1=[3], b2=[]), frame_id=2)  # 1 elx, 1 rec, 2 bar
     assert cart_now["subtotal_usd"] == 19.00
     assert cart_now["tax_usd"] == 1.52
     assert cart_now["total_usd"] == 20.52
@@ -235,7 +258,7 @@ def test_backend_restart_recomputes_same_cart(member_id):
     with TestClient(app) as client:
         assert client.post("/internal/shelf", json=snap(FULL), headers=headers).status_code == 200
         session = store.start_session(member_id)
-        client.post("/internal/shelf", json=snap({0: [1], 1: [2, 3, 4], 2: []}, frame_id=2), headers=headers)
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1], b1=[2, 3, 4], b2=[]), frame_id=2), headers=headers)
         before = store.current_cart()
     assert qty(before, "elx") == 1 and qty(before, "bar") == 1 and before["warnings"]
 
@@ -243,7 +266,7 @@ def test_backend_restart_recomputes_same_cart(member_id):
     with TestClient(app) as client:
         # Before vision reports, the shelf is treated as unchanged rather than empty.
         assert store.current_cart()["items"] == []
-        client.post("/internal/shelf", json=snap({0: [1], 1: [2, 3, 4], 2: []}, frame_id=900), headers=headers)
+        client.post("/internal/shelf", json=snap(with_bays(b0=[1], b1=[2, 3, 4], b2=[]), frame_id=900), headers=headers)
         after = store.current_cart()
     assert after["session_id"] == session["id"]
     for key in ("items", "subtotal_usd", "tax_usd", "total_usd", "warnings", "state"):

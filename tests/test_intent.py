@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import json
 
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi import FastAPI, Request
@@ -13,6 +15,15 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend import db, eventlog, intent, serial_bridge
 from backend.settings import settings
+
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+
+
+def skus_tagged(tag: str) -> list[str]:
+    """Every SKU carrying a catalog tag, in catalog order: what the rules planner matches on."""
+    return [s["sku"] for s in CATALOG["skus"] if tag in s["tags"]]
+
 
 # --- fixtures ---
 
@@ -128,7 +139,7 @@ def test_llm_success_path(tmp_data, llm_openai, monkeypatch):
     assert url == "https://llm.example/v1/chat/completions"
     assert kwargs["timeout"] == 3.0
     sent = json.loads(kwargs["json"]["messages"][1]["content"])
-    assert {s["sku"] for s in sent["catalog"]} == {"elx", "rec", "bar"}
+    assert {s["sku"] for s in sent["catalog"]} == {s["sku"] for s in CATALOG["skus"]}
     assert sent["budget_usd"] == 20.0 and "run" in sent["text"]
     # stored and logged
     assert c.get("/api/intent/current").json()["plan_id"] == plan["plan_id"]
@@ -165,7 +176,8 @@ def test_llm_timeout_falls_back(tmp_data, llm_openai, monkeypatch):
         raise httpx.ReadTimeout("timed out")
     monkeypatch.setattr(intent.httpx, "post", slow)
     plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Quick protein snack"}).json()
-    assert plan["source"] == "rules" and [i["sku"] for i in plan["items"]] == ["bar"]
+    # the rules planner picks every snack on the shelf; all of them fit the $20 budget
+    assert plan["source"] == "rules" and [i["sku"] for i in plan["items"]] == skus_tagged("snack")
     assert events("intent_plan")[-1]["fallback_reason"] == "llm_error:ReadTimeout"
 
 
@@ -174,7 +186,8 @@ def test_llm_off_uses_rules_without_calling(tmp_data, llm_off, monkeypatch):
         raise AssertionError("LLM must not be called when the llm flag is off")
     monkeypatch.setattr(intent.httpx, "post", boom)
     plan = logged_in_client(add_member()).post("/api/intent", json={"text": "Something to drink"}).json()
-    assert plan["source"] == "rules" and [i["sku"] for i in plan["items"]] == ["rec"]
+    assert plan["source"] == "rules"
+    assert set(skus_tagged("drink")) <= {i["sku"] for i in plan["items"]}
 
 
 # --- strict validation ---
@@ -265,7 +278,7 @@ def test_rules_respect_budget():
     _, lines, _, budget = intent.rules_plan("recovering from a run, under $10", MEMBER)
     assert budget == 1000 and lines == {"elx": 1}
     _, lines, _, _ = intent.rules_plan("vegan snacks for two", MEMBER)
-    assert lines == {"bar": 2}
+    assert lines == {sku: 2 for sku in skus_tagged("snack")}  # two of each snack still fits $20
     _, lines, _, _ = intent.rules_plan("protein snack under $3", MEMBER)
     assert lines == {}  # nothing fits: an empty plan, never an over-budget one
     _, lines, _, _ = intent.rules_plan("caviar", MEMBER)

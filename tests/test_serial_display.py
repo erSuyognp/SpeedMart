@@ -13,7 +13,7 @@ from backend.main import app
 from backend.settings import settings
 from test_cart import FULL, make_member, snap, tmp_data, with_bays  # noqa: F401
 from test_live import admin_login, enter_store
-from test_serial import HEADERS, Board, use_board, wait_for
+from test_serial import HEADERS, N, Board, leds, use_board, wait_for
 
 
 @pytest.fixture
@@ -98,8 +98,9 @@ def test_reconnect_and_ready_resend_screen_and_highlights(tmp_data, monkeypatch)
         board.unplug()
         assert wait_for(lambda: not serial_bridge.is_connected())
         board.plugged = True
-        expected = ["LED,0,ON", "LED,1,OFF", "LED,2,ON", "DISP,TOTAL,$4.32,1", "HILITE,ALL,OFF", "HILITE,2,ON"]
-        assert wait_for(lambda: len(board.ports) == 2 and board.port.written[:6] == expected), board.port.written
+        expected = [*leds(b1=False), "DISP,TOTAL,$4.32,1", "HILITE,ALL,OFF", "HILITE,2,ON"]
+        assert wait_for(lambda: len(board.ports) == 2
+                        and board.port.written[:N + 3] == expected), board.port.written
         board.port.written.clear()
         board.port.feed("READY")
         assert wait_for(lambda: board.port.written == expected), board.port.written

@@ -5,8 +5,9 @@
 Run through this before **every** judge.
 
 - [ ] **Admin reset:** `admin.html` → **Reset** (or hold the controller button 1 s). The store shows as not occupied.
-- [ ] **Shelf full:** every item is back in its home bay: electrolytes in bay 0, recovery drinks in bay 1,
-      protein bars in bay 2. No misplaced warnings on the admin page.
+- [ ] **Shelf full:** every item is back in its home bay. The bay order is whatever `config.json` `bays`
+      says (today: electrolytes, recovery drinks, protein bars, sparkling water, vegan trail mix, bays 0 to 4),
+      and `catalog.json` `units` gives each tag its home bay. No misplaced warnings on the admin page.
 - [ ] **Overlay:** the `SpeedMart shelf cam` window is visible to the judge, all bays are green, and every tag ID is shown.
 - [ ] **Vision age:** the admin badge is green (under 500 ms).
 - [ ] **LEDs:** serial badge connected, every bay LED on, gate LED idle.

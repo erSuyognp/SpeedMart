@@ -18,7 +18,8 @@ from itsdangerous import TimestampSigner  # noqa: E402
 
 from backend import routes_api, store  # noqa: E402
 from backend.main import app  # noqa: E402
-from test_cart import FULL, TOKEN, member_id, qty, simulate_restart, snap, tmp_data, with_bays  # noqa: E402,F401
+from test_cart import (BAY_IDS, FULL, TOKEN, member_id, qty,  # noqa: E402,F401
+                       simulate_restart, snap, tmp_data, with_bays)
 
 HEADERS = {"X-Internal-Token": TOKEN}
 
@@ -69,7 +70,7 @@ def test_admin_routes_need_login(tmp_data):
         admin_login(client)
         state = client.get("/admin/state").json()
         assert state["lock"] == {"occupied": False} and state["session"] is None
-        assert list(state["shelf"]["bays"]) == ["0", "1", "2"]
+        assert list(state["shelf"]["bays"]) == [str(b) for b in BAY_IDS]
         assert state["events"][-1]["type"] == "admin_login"
 
 

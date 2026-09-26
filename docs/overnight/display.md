@@ -22,8 +22,8 @@ Branch `claude/speedmart-display-bay-highlight-5d8c21`. Files touched: `firmware
 - Pins from the official `Xinyuan-LilyGO/T-Display-S3` repo, `examples/factory/pin_config.h` (cited in `main.cpp`):
   BL 38, D0..D7 = 39 40 41 42 45 46 47 48, RES 5, CS 6, DC 7, WR 8, RD 9, POWER_ON 15. They match Arduino_GFX's
   own `LILYGO_T_DISPLAY_S3` config (PDQgraphicstest `Arduino_GFX_dev_device.h`), which also uses col offset 35.
-- None of these pins collide with our LEDs (1, 2, 18, 10, 11, 12) or the button (14). GPIO 18 is SDA only on
-  the touch variant, which we do not use.
+- None of these pins collide with our LEDs (bays 1, 2, 18, 17, 21; status RGB 10, 11, 12) or the button (14).
+  GPIO 18/17 are SDA/SCL and 21 is Touch RES only on the touch variant, which we do not use.
 - Drawing is only `fillScreen`, `fillRect`, `fillCircle`, `drawLine` and the built-in 6x8 font scaled up.
   Long names shrink to fit the width.
 - No flicker: the firmware remembers the last `DISP,...` line and ignores the same line again. A new screen is one

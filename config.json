@@ -44,13 +44,15 @@
     "yolo_every_n_frames": 3
   },
   "bays": [
-    {"id": 0, "roi": [80, 200, 360, 620], "sku": "elx", "led_index": 0},
-    {"id": 1, "roi": [400, 200, 680, 620], "sku": "rec", "led_index": 1},
-    {"id": 2, "roi": [720, 200, 1000, 620], "sku": "bar", "led_index": 2}
+    {"id": 0, "roi": [40, 200, 260, 620], "sku": "elx", "led_index": 0},
+    {"id": 1, "roi": [285, 200, 505, 620], "sku": "rec", "led_index": 1},
+    {"id": 2, "roi": [530, 200, 750, 620], "sku": "bar", "led_index": 2},
+    {"id": 3, "roi": [775, 200, 995, 620], "sku": "wat", "led_index": 3},
+    {"id": 4, "roi": [1020, 200, 1240, 620], "sku": "mix", "led_index": 4}
   ],
   "serial": {
     "port": "COM4",
     "baud": 115200,
-    "gate_led_index": 3
+    "gate_led_index": 5
   }
 }

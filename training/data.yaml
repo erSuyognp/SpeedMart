@@ -6,5 +6,5 @@ train: train/images
 val: valid/images
 test: test/images
 
-nc: 3
-names: ['electrolytes', 'protein_bar', 'recovery_drink']
+nc: 5
+names: ['electrolytes', 'protein_bar', 'recovery_drink', 'sparkling_water', 'trail_mix']

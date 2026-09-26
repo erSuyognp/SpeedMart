@@ -7,6 +7,8 @@ import dataclasses
 import json
 import time
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -14,8 +16,21 @@ from backend import agent, cart, db, eventlog, shelf_state, store, ws
 from backend.settings import settings
 
 BUDGET = 20
-FULL = {0: [0, 1], 1: [2, 3], 2: [4, 5]}
-BASELINE = {"elx": 2, "rec": 2, "bar": 2}
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+
+
+def _full_shelf() -> dict[int, list[int]]:
+    """Every unit in its home bay, one entry per bay in config.json."""
+    bays: dict[int, list[int]] = {int(b["id"]): [] for b in CONFIG["bays"]}
+    for unit in sorted(CATALOG["units"], key=lambda u: u["tag_id"]):
+        bays.setdefault(int(unit["home_bay"]), []).append(int(unit["tag_id"]))
+    return bays
+
+
+FULL = _full_shelf()
+BASELINE = {sku: sum(u["sku"] == sku for u in CATALOG["units"]) for sku in (s["sku"] for s in CATALOG["skus"])}
 MEMBER = {"id": "mem_test", "name": "Maya Lin", "budget_usd": BUDGET, "dietary": None}
 
 
@@ -118,12 +133,18 @@ def test_policy_suggests_complement_within_budget():
 
 
 def test_policy_no_suggestion_when_complement_breaks_budget():
-    d = agent.policy(make_cart({"elx": 2}), MEMBER)  # 17.28 now, 21.60 with the drink (tax included)
-    assert d == {"kind": "ok", "remaining": 2.72}
+    # 17.28 in the cart. The cheapest complement of elx is sparkling water at 2.16 with tax, so an
+    # 18.00 budget leaves no room for any of them.
+    d = agent.policy(make_cart({"elx": 2}, budget=18), MEMBER)
+    assert d == {"kind": "ok", "remaining": 0.72}
 
 
 def test_policy_no_suggestion_when_complement_already_in_cart():
-    assert agent.policy(make_cart({"elx": 1, "rec": 1}), MEMBER) == {"kind": "ok", "remaining": 7.04}
+    # rec is a complement of elx and already in the cart, so it is skipped and the other one is offered.
+    d = agent.policy(make_cart({"elx": 1, "rec": 1}), MEMBER)  # 12.96 with tax
+    assert d["kind"] == "suggest" and d["sku"] == "wat"
+    # with every complement that fits the budget already in the cart there is nothing left to suggest
+    assert agent.policy(make_cart({"elx": 1, "rec": 1, "wat": 1}), MEMBER) == {"kind": "ok", "remaining": 4.88}
 
 
 def test_policy_ok_without_complements():
@@ -379,7 +400,7 @@ def test_store_pick_shows_suggestion(monkeypatch, store_env, published):
         conn.close()
     shelf_state.apply_snapshot(snap(FULL, 1))
     store.start_session(member_id)
-    shelf_state.apply_snapshot(snap({0: [1], 1: [2, 3], 2: [4, 5]}, 2))  # electrolytes picked
+    shelf_state.apply_snapshot(snap({**FULL, 0: [1]}, 2))  # electrolytes picked
     store.on_shelf_change()
     expected = "Electrolyte tabs added. Recovery drink pairs well at $4 and keeps you under budget."
     assert wait_for(lambda: any(m["type"] == "agent" and m["data"]["line"] == expected for m, _ in published))

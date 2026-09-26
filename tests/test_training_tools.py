@@ -14,7 +14,10 @@ from training import check_dataset as cd
 from training.capture import CaptureSession, draw_capture_overlay, session_name
 
 ROOT = Path(__file__).resolve().parent.parent
-CLASSES = ["electrolytes", "protein_bar", "recovery_drink"]  # Roboflow's alphabetical order
+CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+# One class per catalog SKU, in Roboflow's alphabetical order. This grows with the catalog, so the
+# fixtures below build their labels from the list rather than naming individual classes.
+CLASSES = sorted(s["yolo_class"] for s in CATALOG["skus"])
 
 
 # --- capture --------------------------------------------------------------------------------------
@@ -69,10 +72,13 @@ def test_overlay_is_preview_only():
 
 def make_dataset(root: Path, names=CLASSES, per_split=None, yaml_text: str | None = None) -> Path:
     """Roboflow YOLOv8 layout. per_split: {split: [label text per image]}."""
-    per_split = per_split or {
-        "train": ["0 0.5 0.5 0.2 0.3\n1 0.2 0.2 0.1 0.1\n", "2 0.7 0.7 0.1 0.2\n", ""],
-        "valid": ["0 0.4 0.4 0.2 0.2\n2 0.6 0.6 0.2 0.2\n1 0.1 0.1 0.05 0.05\n"],
-    }
+    if per_split is None:
+        # One box of every class per split, spread so train/ also ends up with a background image.
+        last = len(names) - 1
+        per_split = {
+            "train": ["".join(f"{i} 0.5 0.5 0.2 0.3\n" for i in range(last)), f"{last} 0.7 0.7 0.1 0.2\n", ""],
+            "valid": ["".join(f"{i} 0.4 0.4 0.2 0.2\n" for i in range(len(names)))],
+        }
     root.mkdir(parents=True, exist_ok=True)
     if yaml_text is None:
         yaml_text = ("train: ../train/images\nval: ../valid/images\ntest: ../test/images\n\n"
@@ -95,8 +101,8 @@ def test_catalog_classes_match_catalog():
 def test_good_dataset_passes_with_counts(tmp_path):
     rep = cd.check_dataset(make_dataset(tmp_path / "ds"), min_boxes=1)
     assert rep.ok, rep.errors
-    assert rep.boxes["train"] == {"electrolytes": 1, "protein_bar": 1, "recovery_drink": 1}
-    assert rep.total_boxes() == {"electrolytes": 2, "protein_bar": 2, "recovery_drink": 2}
+    assert rep.boxes["train"] == {name: 1 for name in CLASSES}
+    assert rep.total_boxes() == {name: 2 for name in CLASSES}
     assert rep.images == {"train": 3, "valid": 1}
     assert rep.background["train"] == 1
     assert not rep.warnings
@@ -107,26 +113,27 @@ def test_good_dataset_passes_with_counts(tmp_path):
 def test_warns_below_100_boxes(tmp_path):
     rep = cd.check_dataset(make_dataset(tmp_path / "ds"))
     assert rep.ok
-    assert sum("fewer" in w or "only" in w for w in rep.warnings) == 3
+    assert sum("fewer" in w or "only" in w for w in rep.warnings) == len(CLASSES)
 
 
 def test_class_name_mismatch_is_error(tmp_path):
-    rep = cd.check_dataset(make_dataset(tmp_path / "ds", names=["electrolytes", "protein bar", "recovery_drink"]),
-                           min_boxes=1)
+    typo = ["protein bar" if n == "protein_bar" else n for n in CLASSES]
+    rep = cd.check_dataset(make_dataset(tmp_path / "ds", names=typo), min_boxes=1)
     assert not rep.ok
     assert any("protein_bar" in e for e in rep.errors) and any("'protein bar'" in e for e in rep.errors)
 
 
 def test_nc_mismatch_is_error(tmp_path):
-    ds = make_dataset(tmp_path / "ds", yaml_text=f"nc: 4\nnames: {CLASSES!r}\n")
-    assert any("nc is 4" in e for e in cd.check_dataset(ds, min_boxes=1).errors)
+    wrong = len(CLASSES) + 1
+    ds = make_dataset(tmp_path / "ds", yaml_text=f"nc: {wrong}\nnames: {CLASSES!r}\n")
+    assert any(f"nc is {wrong}" in e for e in cd.check_dataset(ds, min_boxes=1).errors)
 
 
 def test_malformed_labels_are_errors(tmp_path):
     ds = make_dataset(tmp_path / "ds", per_split={"train": [
         "0 0.5 0.5 0.2\n",  # too short
         "1 0.1 0.1 0.2 0.1 0.3 0.3\n",  # polygon
-        "7 0.5 0.5 0.2 0.2\n",  # class out of range
+        f"{len(CLASSES) + 2} 0.5 0.5 0.2 0.2\n",  # class out of range
         "0 1.5 0.5 0.2 0.2\n",  # not normalized
         "x 0.5 0.5 0.2 0.2\n",  # not a number
     ], "valid": ["0 0.5 0.5 0.1 0.1\n"]})
@@ -152,19 +159,20 @@ def test_missing_data_yaml_and_missing_valid(tmp_path):
     assert any("no valid/" in w for w in cd.check_dataset(ds, min_boxes=1).warnings)
 
 
-@pytest.mark.parametrize("names_block", [
-    "names: ['electrolytes', 'protein_bar', 'recovery_drink']\n",
-    "names:\n- electrolytes\n- protein_bar\n- recovery_drink\n",
-    "names:\n  0: electrolytes\n  1: protein_bar\n  2: recovery_drink\n",
-])
-def test_fallback_yaml_parser(names_block):
-    names, nc = cd._parse_names_fallback("path: x\nnc: 3\n" + names_block + "roboflow:\n  workspace: w\n")
-    assert names == CLASSES and nc == 3
+@pytest.mark.parametrize("style", ["inline", "list", "map"])
+def test_fallback_yaml_parser(style):
+    block = {
+        "inline": f"names: {CLASSES!r}\n",
+        "list": "names:\n" + "".join(f"- {n}\n" for n in CLASSES),
+        "map": "names:\n" + "".join(f"  {i}: {n}\n" for i, n in enumerate(CLASSES)),
+    }[style]
+    names, nc = cd._parse_names_fallback(f"path: x\nnc: {len(CLASSES)}\n" + block + "roboflow:\n  workspace: w\n")
+    assert names == CLASSES and nc == len(CLASSES)
 
 
 def test_repo_data_yaml_matches_catalog():
     names, nc = cd.read_data_yaml(ROOT / "training" / "data.yaml")
-    assert sorted(names) == CLASSES and nc == 3
+    assert sorted(names) == CLASSES and nc == len(CLASSES)
 
 
 def test_cli_exit_codes(tmp_path, capsys):

@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from backend import db, serial_bridge, store
 from backend.main import app
 from identity_helpers import login_as, set_features
-from test_cart import FULL, TOKEN, make_member, member_id, snap, tmp_data, with_bays  # noqa: F401
+from test_cart import (FULL, TOKEN, full_baseline, make_member,  # noqa: F401
+                       member_id, snap, tmp_data, with_bays)
 
 pytestmark = pytest.mark.usefixtures("tmp_data")
 
@@ -83,7 +84,7 @@ def test_enter_with_face_id_opens_gate(member_id, leds):
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["session"]["state"] == "IN_STORE" and body["session"]["member_id"] == member_id
-        assert body["cart"]["items"] == [] and body["session"]["baseline"] == {"elx": 2, "rec": 2, "bar": 2}
+        assert body["cart"]["items"] == [] and body["session"]["baseline"] == full_baseline()
         assert ("GATE,OPEN", "GATE,IDLE", 3) in leds
 
         # Scanning again while inside is harmless and needs no new Face ID.

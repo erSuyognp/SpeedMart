@@ -3,7 +3,7 @@
 **The shelf builds your cart. You approve the charge.**
 
 SpeedMart is a one-shelf grab-and-go store built for HackGT 13 (Shipyard hardware track + Visa challenge).
-You sign up once with a passkey (Face ID / fingerprint). An overhead camera watches a three-bay shelf: take an
+You sign up once with a passkey (Face ID / fingerprint). An overhead camera watches a five-bay shelf: take an
 item and it appears in your phone cart in about a second, put it back and it disappears. A store agent explains
 your cart in one sentence and suggests complements that fit your budget. At the exit you review the total and
 approve it with Face ID against a scoped, single-use agent token. The shelf lights up green.

@@ -11,7 +11,17 @@ import pytest
 from vision.calibrate import SaveError, save_rois, validate_rois
 
 ROOT = Path(__file__).resolve().parent.parent
-GOOD = [[10, 20, 300, 600], [320, 20, 640, 600], [660, 20, 1000, 600]]
+CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+N_BAYS = len(CONFIG["bays"])  # calibrate.py always draws one rectangle per bay in config.json
+
+
+def strip(n: int = N_BAYS, width: int = 1280) -> list[list[int]]:
+    """n non-overlapping rectangles laid out left to right inside a `width` px frame."""
+    step = width // n
+    return [[i * step + 10, 20, (i + 1) * step - 10, 600] for i in range(n)]
+
+
+GOOD = strip()
 
 
 @pytest.fixture
@@ -22,27 +32,30 @@ def cfg(tmp_path) -> Path:
 
 
 def test_valid_rois_pass():
-    assert validate_rois(GOOD, 3, 1280, 720) is None
+    assert validate_rois(GOOD, N_BAYS, 1280, 720) is None
 
 
 def test_wrong_count_rejected():
-    assert "Need 3" in validate_rois(GOOD[:2], 3, 1280, 720)
-    assert "Need 3" in validate_rois(GOOD + [[1100, 0, 1200, 100]], 3, 1280, 720)
+    assert f"Need {N_BAYS}" in validate_rois(GOOD[:-1], N_BAYS, 1280, 720)
+    assert f"Need {N_BAYS}" in validate_rois(GOOD + [[0, 0, 40, 10]], N_BAYS, 1280, 720)
 
 
 def test_overlap_rejected():
-    rois = [GOOD[0], [290, 20, 640, 600], GOOD[2]]
-    assert "overlap" in validate_rois(rois, 3, 1280, 720)
+    rois = [list(r) for r in GOOD]
+    rois[1][0] = GOOD[0][2] - 10  # bay 1 now reaches back into bay 0
+    assert "overlap" in validate_rois(rois, N_BAYS, 1280, 720)
 
 
 def test_touching_edges_allowed():
-    rois = [[0, 0, 100, 100], [100, 0, 200, 100], [200, 0, 300, 100]]
-    assert validate_rois(rois, 3, 1280, 720) is None
+    rois = [[i * 100, 0, (i + 1) * 100, 100] for i in range(N_BAYS)]
+    assert validate_rois(rois, N_BAYS, 1280, 720) is None
 
 
 def test_outside_frame_and_non_int_rejected():
-    assert "outside" in validate_rois([GOOD[0], GOOD[1], [660, 20, 1300, 600]], 3, 1280, 720)
-    assert "integers" in validate_rois([GOOD[0], GOOD[1], [660.5, 20, 1000, 600]], 3, 1280, 720)
+    too_wide = GOOD[:-1] + [[GOOD[-1][0], 20, 1300, 600]]
+    assert "outside" in validate_rois(too_wide, N_BAYS, 1280, 720)
+    not_int = GOOD[:-1] + [[GOOD[-1][0] + 0.5, 20, GOOD[-1][2], 600]]
+    assert "integers" in validate_rois(not_int, N_BAYS, 1280, 720)
 
 
 def test_save_writes_only_rois_and_keeps_formatting(cfg):
@@ -64,17 +77,17 @@ def test_save_writes_only_rois_and_keeps_formatting(cfg):
     lines_before, lines_after = before_text.splitlines(), after_text.splitlines()
     assert len(lines_before) == len(lines_after)
     changed = [(a, b) for a, b in zip(lines_before, lines_after) if a != b]
-    assert len(changed) == 3 and all('"roi"' in a for a, _ in changed)
-    assert '"roi": [10, 20, 300, 600]' in after_text
+    assert len(changed) == N_BAYS and all('"roi"' in a for a, _ in changed)
+    assert f'"roi": [{GOOD[0][0]}, {GOOD[0][1]}, {GOOD[0][2]}, {GOOD[0][3]}]' in after_text
     assert '\n  "camera": {\n    "index"' in after_text  # 2 space indent kept
 
 
 def test_refused_save_leaves_file_untouched(cfg):
     before = cfg.read_bytes()
     with pytest.raises(SaveError, match="overlap"):
-        save_rois([GOOD[0], GOOD[0], GOOD[2]], cfg)
-    with pytest.raises(SaveError, match="Need 3"):
-        save_rois(GOOD[:2], cfg)
+        save_rois([GOOD[0]] + GOOD[1:-1] + [GOOD[0]], cfg)
+    with pytest.raises(SaveError, match=f"Need {N_BAYS}"):
+        save_rois(GOOD[:-1], cfg)
     assert cfg.read_bytes() == before
 
 
