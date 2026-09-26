@@ -3,6 +3,7 @@
 //   in:  LED,<bay>,ON|OFF   SHELF,GREEN|RED|IDLE   GATE,OPEN|CLOSED|IDLE   PING
 //        DISP,IDLE | DISP,WELCOME,<name> | DISP,TOTAL,<total>,<count> | DISP,PAID,<total>,<auth>
 //        DISP,DECLINED | DISP,OCCUPIED,<name>          onboard LCD as the store's gate display
+//        HILITE,<bay>,ON|OFF   HILITE,ALL,OFF          blink a bay LED at 2 Hz (intent feature)
 //   out: READY (boot)   PONG   BTN,0 (GPIO 14 button held 1 s)
 // Timed effects (green for 3 s) are the backend's job: it sends SHELF,IDLE afterward.
 // DISP arguments never contain commas (the backend strips them).
@@ -48,14 +49,14 @@ Arduino_GFX *gfx = new Arduino_ST7789(bus, PIN_LCD_RES, 1 /* rotation */, true /
 
 #define SCR_W 320
 #define SCR_H 170
-#define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
-const uint16_t C_BG     = RGB565(10, 12, 18);
-const uint16_t C_TEXT   = RGB565(240, 240, 240);
-const uint16_t C_DIM    = RGB565(140, 145, 155);
-const uint16_t C_ACCENT = RGB565(255, 140, 20);   // SpeedMart orange
-const uint16_t C_GREEN  = RGB565(40, 200, 90);
-const uint16_t C_RED    = RGB565(220, 30, 30);
-const uint16_t C_AMBER  = RGB565(255, 190, 40);
+#define MK565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
+const uint16_t C_BG     = MK565(10, 12, 18);
+const uint16_t C_TEXT   = MK565(240, 240, 240);
+const uint16_t C_DIM    = MK565(140, 145, 155);
+const uint16_t C_ACCENT = MK565(255, 140, 20);   // SpeedMart orange
+const uint16_t C_GREEN  = MK565(40, 200, 90);
+const uint16_t C_RED    = MK565(220, 30, 30);
+const uint16_t C_AMBER  = MK565(255, 190, 40);
 
 bool displayOk = false;
 String dispKey;       // the last DISP command drawn; the same command again is a no-op (no flicker)
@@ -68,6 +69,8 @@ enum GateMode  { GATE_IDLE, GATE_OPEN, GATE_CLOSED };
 ShelfMode shelfMode = SHELF_IDLE;
 GateMode gateMode = GATE_IDLE;
 bool bayOn[NUM_BAYS] = {true, true, true};
+bool bayHilite[NUM_BAYS] = {false, false, false};  // blinks over bayOn; OFF falls back to bayOn
+#define HILITE_HALF_PERIOD_MS 250                   // 250 ms on + 250 ms off = 2 Hz
 String line;
 unsigned long btnDownAt = 0;
 bool btnSent = false;
@@ -135,7 +138,7 @@ void animateIdle() {
   float t = millis() / 450.0;
   for (int i = 0; i < 5; i++) {
     float k = (sin(t - i * 0.9) + 1.0) / 2.0;  // 0..1
-    uint16_t c = RGB565((uint8_t)(40 + 215 * k), (uint8_t)(40 + 100 * k), (uint8_t)(45 - 25 * k));
+    uint16_t c = MK565((uint8_t)(40 + 215 * k), (uint8_t)(40 + 100 * k), (uint8_t)(45 - 25 * k));
     if (c == dotColor[i]) continue;
     dotColor[i] = c;
     gfx->fillCircle(SCR_W / 2 + (i - 2) * 24, 146, 5, c);
@@ -219,6 +222,20 @@ void renderDisplay() {
 void handleCommand(const String& cmd) {
   if (cmd == "PING") { Serial.println("PONG"); return; }
   if (cmd.startsWith("DISP,")) { handleDisp(cmd); return; }
+  if (cmd.startsWith("HILITE,")) {
+    int comma = cmd.indexOf(',', 7);
+    if (comma < 0) return;
+    String target = cmd.substring(7, comma);
+    String state = cmd.substring(comma + 1);
+    if (state != "ON" && state != "OFF") return;
+    if (target == "ALL") {
+      if (state == "OFF") for (int i = 0; i < NUM_BAYS; i++) bayHilite[i] = false;
+      return;
+    }
+    int bay = target.toInt();
+    if (bay >= 0 && bay < NUM_BAYS && (bay > 0 || target == "0")) bayHilite[bay] = state == "ON";
+    return;
+  }
   if (cmd.startsWith("LED,")) {
     int comma = cmd.indexOf(',', 4);
     if (comma < 0) return;
@@ -251,7 +268,8 @@ void pollButton() {
 }
 
 void render() {
-  for (int i = 0; i < NUM_BAYS; i++) digitalWrite(BAY_PINS[i], bayOn[i] ? HIGH : LOW);
+  bool blinkOn = (millis() / HILITE_HALF_PERIOD_MS) % 2 == 0;
+  for (int i = 0; i < NUM_BAYS; i++) digitalWrite(BAY_PINS[i], (bayHilite[i] ? blinkOn : bayOn[i]) ? HIGH : LOW);
 
   // A gate state overrides the shelf state; GATE,IDLE falls back to it.
   if (gateMode == GATE_OPEN)          setRgb(0, 200, 40);
