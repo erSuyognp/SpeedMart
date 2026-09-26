@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     eventlog.log("shutdown")
 
 
-app = FastAPI(title="Aisle", lifespan=lifespan)
+app = FastAPI(title="SpeedMart", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.env.session_secret, same_site="lax", https_only=False)
 
 

@@ -13,7 +13,7 @@
     "load_cells": false
   },
   "store": {
-    "name": "Aisle Market #01",
+    "name": "SpeedMart #01",
     "currency": "USD",
     "tax_rate": 0.08,
     "default_budget_usd": 20,
@@ -35,7 +35,7 @@
     "stable_ms": 400,
     "motion_threshold": 0.02,
     "motion_settle_ms": 300,
-    "yolo_model": "models/aisle_yolo.pt",
+    "yolo_model": "models/speedmart_yolo.pt",
     "yolo_conf": 0.55,
     "yolo_every_n_frames": 3
   },

@@ -113,7 +113,7 @@ def _load_env() -> Env:
         session_secret=g("SESSION_SECRET"),
         public_origin=g("PUBLIC_ORIGIN").rstrip("/"),
         rp_id=g("RP_ID"),
-        rp_name=g("RP_NAME", "Aisle Market"),
+        rp_name=g("RP_NAME", "SpeedMart"),
         internal_token=g("INTERNAL_TOKEN"),
         admin_password=g("ADMIN_PASSWORD"),
         entry_gate_token=g("ENTRY_GATE_TOKEN"),

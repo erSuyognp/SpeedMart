@@ -1,4 +1,4 @@
-# Aisle (SpeedMart)
+# SpeedMart
 
 ## Setup
 

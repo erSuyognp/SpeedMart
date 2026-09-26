@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from backend import eventlog
 from backend.settings import DATA_DIR, settings
 
-DB_PATH = DATA_DIR / "aisle.db"
+DB_PATH = DATA_DIR / "speedmart.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS members (
