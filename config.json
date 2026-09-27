@@ -7,7 +7,7 @@
     "stripe": true,
     "llm": true,
     "hardware_leds": true,
-    "yolo": false,
+    "yolo": true,
     "https_tunnel": true,
     "loyalty": true,
     "load_cells": false,
@@ -41,7 +41,7 @@
     "focus": 0
   },
   "vision": {
-    "mode": "fusion",
+    "mode": "yolo",
     "aruco_dict": "DICT_4X4_50",
     "clahe": true,
     "snapshot_hz": 5,
