@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
+from backend.settings import CONFIG_PATH
 from training import check_dataset as cd
 from training.capture import CaptureSession, draw_capture_overlay, session_name
 
@@ -61,7 +62,7 @@ def test_save_writes_clean_frames_into_run_folder(tmp_path):
 
 def test_overlay_is_preview_only():
     frame = np.zeros((720, 1280, 3), np.uint8)
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     s = CaptureSession(Path("x"), "run", auto=True, saved=10, saved_without_tags=3)
     view = draw_capture_overlay(frame, config["bays"], s, tags_visible=4, fps=30.0, message="saved")
     assert view.any() and not frame.any()

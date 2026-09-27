@@ -14,13 +14,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from backend.settings import CONFIG_PATH
 from vision import fusion
 from vision import yolo_detect as yd
 from vision.overlay import draw_overlay
 from vision.worker import StabilityTracker, build_snapshot, start_yolo
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
 BAYS = CONFIG["bays"]  # one bay per entry in config.json; ROIs move whenever calibrate.py runs
 ROI = {int(b["id"]): [int(v) for v in b["roi"]] for b in BAYS}
@@ -162,7 +163,10 @@ def _config_with_model(path: str) -> dict:
     return config
 
 
-def test_missing_model_file_warns_once_and_returns_none(tmp_path, caplog):
+def test_missing_model_file_warns_once_and_returns_none(tmp_path, caplog, monkeypatch):
+    fake = types.ModuleType("ultralytics")  # the real import pulls in torch: 30 s+ cold, never in tests
+    fake.YOLO = lambda path: pytest.fail("YOLO must not be constructed when the model file is missing")
+    monkeypatch.setitem(sys.modules, "ultralytics", fake)
     with caplog.at_level(logging.WARNING, logger="vision.yolo"):
         assert yd.load_yolo(_config_with_model("models/nope.pt"), CATALOG, root=tmp_path) is None
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]

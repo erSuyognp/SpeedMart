@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from backend.settings import CONFIG_PATH
 from vision.motion import MotionDetector, expand_roi
 from vision.overlay import bay_state_text, draw_overlay
 from vision.worker import (
@@ -248,7 +249,7 @@ def test_flag_off_ignores_motion():
 
 
 def test_from_config_respects_motion_freeze_flag():
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     config["features"]["motion_freeze"] = False
     assert StabilityTracker.from_config(config).motion is None
     config["features"]["motion_freeze"] = True
@@ -259,7 +260,7 @@ def test_from_config_respects_motion_freeze_flag():
 
 
 def test_from_config_defaults_for_missing_new_keys():
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     del config["vision"]["motion_margin_px"], config["vision"]["stable_remove_ms"]
     tr = StabilityTracker.from_config(config)
     assert tr.motion.margin_px == 40 and tr.stable_remove_ms == 700
@@ -325,7 +326,7 @@ def test_tuning_keys():
 
 def test_save_motion_tuning_preserves_other_keys(tmp_path):
     path = tmp_path / "config.json"
-    shutil.copyfile(ROOT / "config.json", path)
+    shutil.copyfile(CONFIG_PATH, path)
     before_text = path.read_text(encoding="utf-8")
     before = json.loads(before_text)
     d = detector()

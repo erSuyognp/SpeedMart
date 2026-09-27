@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import gen_bay_cards  # noqa: E402
+from backend.settings import CONFIG_PATH  # noqa: E402
 
 
 def test_cards_follow_config_bays_with_card_one_for_bay_zero():
@@ -19,7 +20,7 @@ def test_cards_follow_config_bays_with_card_one_for_bay_zero():
 
 
 def test_real_config_gives_one_card_per_bay():
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
     cards = gen_bay_cards.cards_from_config(config, catalog)
     assert [c[0] for c in cards] == [str(i + 1) for i in range(len(config["bays"]))]

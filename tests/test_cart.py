@@ -21,10 +21,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend import cart, db, eventlog, intent, routes_api, shelf_state, store  # noqa: E402
 from backend.main import app  # noqa: E402
+from backend.settings import CONFIG_PATH  # noqa: E402
 
 TOKEN = "test-internal-token"
 CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
-CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 BAY_IDS = [int(b["id"]) for b in CONFIG["bays"]]
 
 

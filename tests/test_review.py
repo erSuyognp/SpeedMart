@@ -165,7 +165,7 @@ def test_the_line_defaults_to_two_dollars_and_is_validated():
     from backend import settings as settings_mod
 
     root = Path(__file__).resolve().parent.parent
-    config = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(settings_mod.CONFIG_PATH.read_text(encoding="utf-8"))
     catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
     env = settings_mod.settings.env
     without = {k: v for k, v in config.items() if k != "disputes"}

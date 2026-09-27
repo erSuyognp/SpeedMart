@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.settings import CONFIG_PATH
 from vision.camera import save_camera_settings
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture
 def cfg(tmp_path) -> Path:
     path = tmp_path / "config.json"
-    shutil.copyfile(ROOT / "config.json", path)
+    shutil.copyfile(CONFIG_PATH, path)
     return path
 
 

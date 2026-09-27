@@ -21,10 +21,9 @@ Rough timings: 0–2 about 45 min · 3–4 about 45 min · 5–7 about 60 min ·
       ```powershell
       Remove-Item scripts\*.sh; git checkout -- scripts
       ```
-- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **633 passed, 1 skipped** with the committed
-      `config.json`. With a local YOLO-only config (`"yolo": true` and `vision.mode` `"yolo"`), tag-based tests fail
-      and `tests\test_live.py` waits forever for a cart change, because tag snapshots no longer move the cart; run
-      the suite with the committed config (`git stash push config.json`, run, `git stash pop`).
+- [ ] **Tests pass.** `.venv\Scripts\python.exe -m pytest -q` → expect **633 passed, 1 skipped** whatever your
+      local `config.json` says: the suite runs against `tests\fixtures\config.json` (the committed defaults),
+      and every test fails after 30 s instead of hanging (`pytest-timeout`). No stash dance needed any more.
 - [ ] **Try the new Windows runner** (it replaces the two-window fallback the overnight notes described).
       It starts uvicorn, ngrok and the vision worker, prefixes their output, and stops all three on Ctrl+C.
       ```powershell

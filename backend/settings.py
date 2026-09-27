@@ -14,7 +14,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
-CONFIG_PATH = ROOT / "config.json"
+# SPEEDMART_CONFIG (optional) points the backend at another config.json. The test suite sets it to
+# tests/fixtures/config.json so tests never depend on the local file. Unset: the repo's config.json.
+CONFIG_PATH = Path(os.environ["SPEEDMART_CONFIG"]) if os.environ.get("SPEEDMART_CONFIG") else ROOT / "config.json"
 CATALOG_PATH = ROOT / "catalog.json"
 ENV_PATH = ROOT / ".env"
 

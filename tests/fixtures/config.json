@@ -1,0 +1,69 @@
+{
+  "features": {
+    "motion_freeze": true,
+    "signup": true,
+    "passkeys": true,
+    "gates": false,
+    "stripe": true,
+    "llm": true,
+    "hardware_leds": true,
+    "yolo": false,
+    "https_tunnel": true,
+    "loyalty": true,
+    "load_cells": false,
+    "voice": true,
+    "disputes": true
+  },
+  "store": {
+    "name": "SpeedMart #01",
+    "currency": "USD",
+    "tax_rate": 0.08,
+    "default_budget_usd": 20,
+    "max_session_minutes": 15
+  },
+  "disputes": {
+    "auto_refund_max_usd": 2.00
+  },
+  "demo_bank": {
+    "opening_balance_usd": 50.00,
+    "top_up_usd": 20.00,
+    "max_top_ups": 3
+  },
+  "camera": {
+    "index": 1,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "auto_exposure": false,
+    "exposure": null,
+    "gain": null,
+    "autofocus": false,
+    "focus": 0
+  },
+  "vision": {
+    "mode": "fusion",
+    "aruco_dict": "DICT_4X4_50",
+    "clahe": true,
+    "snapshot_hz": 5,
+    "stable_ms": 400,
+    "stable_remove_ms": 700,
+    "motion_threshold": 0.02,
+    "motion_settle_ms": 300,
+    "motion_margin_px": 40,
+    "yolo_model": "models/speedmart_yolo.pt",
+    "yolo_conf": 0.55,
+    "yolo_every_n_frames": 3
+  },
+  "bays": [
+    {"id": 0, "roi": [186, 323, 354, 535], "sku": "elx", "led_index": 0},
+    {"id": 1, "roi": [363, 295, 465, 494], "sku": "rec", "led_index": 1},
+    {"id": 2, "roi": [487, 312, 660, 496], "sku": "bar", "led_index": 2},
+    {"id": 3, "roi": [671, 142, 790, 456], "sku": "wat", "led_index": 3},
+    {"id": 4, "roi": [803, 143, 1014, 452], "sku": "mix", "led_index": 4}
+  ],
+  "serial": {
+    "port": "COM4",
+    "baud": 115200,
+    "gate_led_index": 5
+  }
+}

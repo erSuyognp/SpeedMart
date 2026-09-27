@@ -13,12 +13,12 @@ import httpx
 import pytest
 
 from backend import agent, cart, db, eventlog, shelf_state, store, ws
-from backend.settings import settings
+from backend.settings import CONFIG_PATH, settings
 
 BUDGET = 20
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
-CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
 def _full_shelf() -> dict[int, list[int]]:

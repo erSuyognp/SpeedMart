@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from backend.settings import CONFIG_PATH
 from vision.calibrate import SaveError, save_rois, validate_rois
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 N_BAYS = len(CONFIG["bays"])  # calibrate.py always draws one rectangle per bay in config.json
 
 
@@ -27,7 +28,7 @@ GOOD = strip()
 @pytest.fixture
 def cfg(tmp_path) -> Path:
     path = tmp_path / "config.json"
-    shutil.copyfile(ROOT / "config.json", path)
+    shutil.copyfile(CONFIG_PATH, path)
     return path
 
 
@@ -93,7 +94,7 @@ def test_refused_save_leaves_file_untouched(cfg):
 
 def test_fallback_rewrite_uses_two_space_indent(tmp_path):
     # a layout the in-place replacer cannot handle (extra "roi" key outside bays) still saves correctly
-    config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     config["notes"] = {"roi": [1, 2, 3, 4]}
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config), encoding="utf-8")

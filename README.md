@@ -117,7 +117,8 @@ Then set up the hardware side:
    1 to 5 to the shelf front, left to right (card 1 is bay id 0). Shoppers find bays by these numbers and the
    glowing shelf map on their phone and the kiosk.
 
-Run the tests:
+Run the tests. They always use `tests/fixtures/config.json` (a copy of the committed defaults), whatever your
+local `config.json` says, and every test fails after 30 s instead of hanging (`pytest-timeout`):
 
 ```powershell
 python -m pytest -q

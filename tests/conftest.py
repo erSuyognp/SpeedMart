@@ -1,4 +1,4 @@
-"""Shared test setup: no test ever touches a real serial port."""
+"""Shared test setup: a fixed test config, no real serial port, and no wait without a timeout."""
 
 from __future__ import annotations
 
@@ -7,6 +7,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# The suite always runs against tests/fixtures/config.json (a copy of the committed defaults), never the local
+# config.json: a YOLO-only local file makes tag snapshots move nothing, so tests would wait for pushes that never
+# come. backend.settings reads SPEEDMART_CONFIG once at import, so this must come before any backend import.
+TEST_CONFIG = Path(__file__).resolve().parent / "fixtures" / "config.json"
+os.environ["SPEEDMART_CONFIG"] = str(TEST_CONFIG)
 # Same values as test_cart.py; must be set before backend.settings is imported.
 os.environ["SESSION_SECRET"] = "test-session-secret"
 os.environ["INTERNAL_TOKEN"] = "test-internal-token"
@@ -26,10 +31,38 @@ os.environ["ELEVENLABS_AGENT_ID"] = ""
 os.environ["ELEVENLABS_VOICE_ID"] = ""
 os.environ["KIOSK_TOKEN"] = ""
 
+import anyio  # noqa: E402
 import pytest  # noqa: E402
 import serial  # noqa: E402
+from starlette.testclient import WebSocketTestSession  # noqa: E402
 
 from backend import serial_bridge  # noqa: E402
+from backend.settings import CONFIG_PATH  # noqa: E402
+
+assert CONFIG_PATH == TEST_CONFIG, f"backend.settings loaded {CONFIG_PATH} instead of the test config {TEST_CONFIG}"
+
+
+# --- no wait without a timeout ---
+# Starlette's WebSocketTestSession.receive() blocks until the app sends something, so a test expecting a push that
+# never comes (a cart that did not change) would hang the whole run. Every receive in the suite gets this limit
+# instead; pytest-timeout (pytest.ini, 30 s per test) is the backstop for everything else.
+WS_RECEIVE_TIMEOUT_S = 10.0
+
+
+async def _receive_or_timeout(rx, seconds: float):
+    with anyio.fail_after(seconds):
+        return await rx.receive()
+
+
+def _timed_receive(self: WebSocketTestSession):
+    try:  # self._send_rx / self.portal: Starlette 1.7 internals behind receive()
+        return self.portal.call(_receive_or_timeout, self._send_rx, WS_RECEIVE_TIMEOUT_S)
+    except TimeoutError:
+        raise AssertionError(f"no WebSocket message from the backend within {WS_RECEIVE_TIMEOUT_S:.0f} s "
+                             "(the test waited for a push that never came)") from None
+
+
+WebSocketTestSession.receive = _timed_receive  # covers the connect handshake as well as receive_json()
 
 
 def _no_board(port, baud, **kwargs):
