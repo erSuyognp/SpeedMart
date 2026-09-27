@@ -202,6 +202,21 @@ The microphone needs a secure context, so use the https tunnel domain. Voice doe
 
 ---
 
+## Safari on iPad and iPhone
+
+Safari starts audio inside a tap only. The SDK (`@elevenlabs/client`) handles that itself: once loaded it listens
+for any tap, unlocks its speaker then and keeps it for 30 s, and the next `startSession` inside that window uses
+it. Both pages therefore fetch the SDK when they load, not at the first tap, and:
+
+- **Phone (intent.html):** the session starts right after the microphone prompt, inside the Talk tap. Answer the
+  prompt promptly: after 30 s the tap no longer counts and the agent stays silent (tap End, then Talk again).
+- **Kiosk:** Safari will not start the conversation from the socket event that says a shopper walked in, so on an
+  iPad or iPhone the guide panel shows **Tap to talk to me** while someone shops (step 3). The tap cuts the
+  scripted welcome short and starts the conversation; the button comes back when a conversation ends while the
+  visit goes on. Edge and Chrome on the Dell Venue still start the conversation on their own.
+- Silent Mode (the bell in Control Center) mutes the agent's voice but not the kiosk's own spoken lines. Open the
+  page in Safari itself, not as a Home Screen app, and always over the https tunnel.
+
 # Kiosk agent (the entrance tablet)
 
 The tablet at the door is opened as `https://<domain>/kiosk.html?k=<KIOSK_TOKEN>` and guides shoppers, first

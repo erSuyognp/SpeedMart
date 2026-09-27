@@ -5,6 +5,8 @@
 // While the entrance kiosk is in a conversation with this shopper (kiosk_voice on /ws), the button reads
 // "Talk to the kiosk" and is disabled: one conversation at a time. It comes back when the kiosk hangs up.
 // SDK API: see docs/voice.md (checked against @elevenlabs/client 1.25.0 type definitions).
+// iPad and iPhone Safari open the speaker inside a tap only. The SDK unlocks audio on any tap once it is loaded
+// and keeps that for 30 s, so init() fetches it early and the session starts right after the mic prompt.
 
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.25.0/+esm";
 const MAX_SESSION_MS = 2 * 60 * 1000;
@@ -254,6 +256,7 @@ async function init() {
     return;
   }
   $("voice").hidden = false;
+  loadSdk().catch(() => {}); // now, not at the first tap: iPad Safari needs the SDK's tap listener live before the tap
   edge = Glow.screen();
   edge.follow(agentLevel);
   setState("idle");

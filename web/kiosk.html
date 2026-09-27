@@ -430,7 +430,7 @@
     .k-caption.is-long { font-size: clamp(18px, 2.9vh, 32px); }
     .k-caption.is-old { opacity: 0.45; }
     .k-caption.is-hint { color: var(--k-muted); font-weight: 600; }
-    .k-attract {
+    .k-attract, .k-talk {
       width: 100%;
       min-height: 64px;
       padding: clamp(10px, 1.6vh, 18px) 16px;
@@ -447,6 +447,7 @@
     @keyframes k-offer { 50% { background: var(--brand, #1a56db); } }
     body.k-touring .k-attract { visibility: hidden; }
     body.k-visit .k-attract { display: none; }  /* the caption gets the whole panel while someone shops */
+    .k-talk { background: var(--brand, #1a56db); color: #fff; }  /* iPad and iPhone only: Safari starts the conversation from this tap */
 
     /* During a visit the JOIN and ENTER codes make way for the shopper panel and the EXIT code (gates on only:
        k-has-exit). Hidden panels drop out of the grid, so the columns follow what is shown. */
@@ -578,6 +579,7 @@
         <div class="k-voice"><span class="k-orb" aria-hidden="true"></span><span id="agent-state">SpeedMart guide</span></div>
         <p id="caption" class="k-caption is-hint" aria-live="polite"></p>
         <button id="tour-btn" class="k-attract" type="button">New here? Tap to learn how SpeedMart works</button>
+        <button id="talk-btn" class="k-talk" type="button" hidden>Tap to talk to me</button>
       </aside>
     </section>
 

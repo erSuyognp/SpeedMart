@@ -17,6 +17,8 @@
 //     /api/kiosk/voice-session, mode "kiosk"). Its client tools act on the current shopper through the kiosk
 //     token routes; cart lines become contextual updates so the agent mentions them without talking over itself.
 //     It ends at the exit scan, when the visit ends, after 2 minutes of silence, and after 5 minutes at most.
+//     On iPad and iPhone Safari it starts from a "Tap to talk to me" button instead: Safari opens the speaker
+//     inside a tap only, never from a socket event (docs/voice.md, "Safari on iPad and iPhone").
 //   - The glow (js/glow.js, app.css section 13), classes only: a large soft screen edge glow, faint while the
 //     agent connects, breathing while it listens, brighter while the kiosk speaks (following the agent's audio
 //     in a conversation), fading out when it goes quiet; a sweep around the shelf map (make_plan) or the shopper
@@ -347,7 +349,7 @@
     if (!visit || !body || !body.shopper) return;
     renderShopper(body.shopper);
     if (!greet || !body.greeting) return;
-    if (!script.conversation || !started) { say(body.greeting); return; }
+    if (!script.conversation || !started || tapToTalk()) { say(body.greeting); syncTalk(); return; }
     const first = body.greeting.kind === "greeting_first";
     if (first) say(body.greeting); else setCaption(body.greeting.text, false);
     const live = await startConversation();
@@ -371,6 +373,29 @@
   function loadSdk() {
     if (!sdkPromise) sdkPromise = import(SDK_URL).catch((e) => { sdkPromise = null; throw e; });
     return sdkPromise;
+  }
+
+  // iPad and iPhone Safari (iPadOS calls itself a Mac with touch; the SDK uses the same rule) open the speaker
+  // for a conversation inside a tap only, never from a socket event. Once loaded, the SDK unlocks audio on any tap
+  // and keeps that for 30 s, so init() fetches it early and the session starts straight from the shopper's tap.
+  function tapToTalk() {
+    return /iPad|iPhone|iPod/.test(navigator.platform) || (navigator.userAgent.includes("Mac") && "ontouchend" in document);
+  }
+
+  // The "Tap to talk to me" button: only where a tap is needed, while a shopper is at the shelf (step 3) and no
+  // conversation is going. It comes back when a conversation ends while the visit goes on.
+  function syncTalk() {
+    const show = !!(script && script.conversation && started && tapToTalk() && visit && visit.step === 3 && convState === "off");
+    $("talk-btn").hidden = !show;
+  }
+
+  async function onTalkTap() {
+    if (!visit || convState !== "off") return;
+    $("talk-btn").hidden = true;
+    dropQueued(() => true);               // the shopper wants to talk now: the scripted lines stop here
+    if (playing) { playing.dropped = true; if (stopPlaying) stopPlaying(); }
+    const live = await startConversation();
+    if (!live) syncTalk();                // no agent after all (no network, no session): offer the tap again
   }
 
   function sendContext(text) {
@@ -422,6 +447,7 @@
   async function startConversation() {
     if (!script.conversation || !started || !visit || convState !== "off") return false;
     convState = "starting";
+    syncTalk();
     const gen = ++convGen;
     let session, sdk;
     try {
@@ -490,6 +516,7 @@
     if (wasLive) kpost("/api/kiosk/conversation", { active: false, reason: reason }).catch(() => {});
     setMode("idle", "SpeedMart guide");
     pump();                               // cart lines are spoken by the kiosk again
+    syncTalk();
   }
 
   // --- visits (kiosk_visit on /ws) ---
@@ -501,6 +528,7 @@
     stopOfferGlow();
     if ($("caption").classList.contains("is-hint") || (changed && !playing)) showHint();
     showSteps();
+    syncTalk();
   }
 
   // The visit is over: nothing about the shopper stays on the screen or in the queue.
@@ -517,6 +545,7 @@
     }
     if (hadVisit) showHint();
     showSteps();
+    syncTalk();
   }
 
   function onVisit(data) {
@@ -574,6 +603,7 @@
     started = true;
     if (!playing) showHint();
     showSteps();
+    syncTalk();
     pump();
   }
 
@@ -594,6 +624,7 @@
       }
     }
     document.body.classList.add("kiosk-agent");
+    if (script.conversation) loadSdk().catch(() => {}); // before the Start tap: iPad Safari needs its tap listener live
     edge = Glow.screen({ variant: "kiosk" });
     edge.follow(agentLevel);
     let gates = true;
@@ -603,6 +634,7 @@
       document.body.classList.add("k-has-exit");
     }
     $("tour-btn").addEventListener("click", startTour);
+    $("talk-btn").addEventListener("click", onTalkTap);
     window.addEventListener("pagehide", () => {  // a reloaded kiosk must not keep the phone's voice blocked
       if (convState !== "live") return;
       const body = new Blob([JSON.stringify({ active: false, reason: "unload" })], { type: "application/json" });
