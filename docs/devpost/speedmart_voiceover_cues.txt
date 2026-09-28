@@ -1,0 +1,17 @@
+Voice-over cue sheet for Video Project 3.mp4 (track starts at 0:00, first line at 0:14.6)
+
+0:14.6 - 0:20.2  Here's SpeedMart: a camera-watched shelf, a kiosk, and your phone. Suyog just walked in.
+0:26.7 - 0:28.3  He grabs a water. Watch the cart.
+0:38.8 - 0:42.9  A snack too. Then both go back, and the cart empties itself. No scanning.
+0:55.3 - 0:58.1  Energy drink, hydration drink. Time to check out.
+1:00.9 - 1:06.7  Exit gate: the bill, plus his agent's permissions. It can build the cart; only Suyog can pay.
+1:07.9 - 1:12.2  Not mine? The camera's before-and-after photos settle it: removed.
+1:13.0 - 1:19.6  Down to one item. Paying means a passkey: Face ID on his own phone. Nothing typed, no card shown.
+1:22.4 - 1:31.1  The laptop hands off to the phone with a QR code. One scan, one Face ID, and the payment is approved for exactly this amount, once.
+1:39.2 - 1:42.0  Paid: $3.24, an auth code, and points earned.
+1:43.7 - 1:49.1  Changed your mind? The receipt offers a return within thirty minutes, and lists the problem he reported.
+1:51.6 - 1:56.7  A return is money moving, so it takes Face ID too. Same passkey, same phone.
+2:02.2 - 2:08.5  Now he puts the item back on its bay. No staff, no scanning: the shelf camera confirms the return itself.
+2:12.4 - 2:15.1  Detected. The refund is ready: exactly what he paid.
+2:17.2 - 2:20.3  One tap, and the refund is on its way, right on the receipt.
+2:23.5 - 2:26.1  Charge and refund, both on his card. That's SpeedMart.

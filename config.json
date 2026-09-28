@@ -18,7 +18,7 @@
     "name": "SpeedMart #01",
     "currency": "USD",
     "tax_rate": 0.08,
-    "default_budget_usd": 20,
+    "default_budget_usd": 10,
     "max_session_minutes": 15
   },
   "disputes": {
@@ -55,11 +55,11 @@
     "yolo_every_n_frames": 3
   },
   "bays": [
-    {"id": 0, "roi": [186, 323, 354, 535], "sku": "elx", "led_index": 0},
-    {"id": 1, "roi": [363, 295, 465, 494], "sku": "rec", "led_index": 1},
-    {"id": 2, "roi": [487, 312, 660, 496], "sku": "bar", "led_index": 2},
-    {"id": 3, "roi": [671, 142, 790, 456], "sku": "wat", "led_index": 3},
-    {"id": 4, "roi": [803, 143, 1014, 452], "sku": "mix", "led_index": 4}
+    {"id": 0, "roi": [30, 217, 210, 460], "sku": "elx", "led_index": 0},
+    {"id": 1, "roi": [230, 218, 361, 461], "sku": "rec", "led_index": 1},
+    {"id": 2, "roi": [377, 254, 575, 471], "sku": "bar", "led_index": 2},
+    {"id": 3, "roi": [602, 19, 779, 452], "sku": "wat", "led_index": 3},
+    {"id": 4, "roi": [813, 57, 1191, 456], "sku": "mix", "led_index": 4}
   ],
   "serial": {
     "port": "COM4",
